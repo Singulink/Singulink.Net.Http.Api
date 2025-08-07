@@ -1,9 +1,10 @@
-namespace Singulink.Net.Http.Api.Service;
+namespace Singulink.Net.Http.Api;
 
 /// <summary>
 /// Represents a session token that contains user information and the last time it was refreshed.
 /// </summary>
 public interface ISessionToken<TUserId>
+    where TUserId : notnull, IParsable<TUserId>, IEquatable<TUserId>
 {
     /// <summary>
     /// Gets the user ID associated with the session token.

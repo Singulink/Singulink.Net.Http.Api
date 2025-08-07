@@ -3,7 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
 
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Description>ASP.NET API service library for the Singulink HTTP API Tookit.</Description>
     <PackageTags>HTTP; API; Service; Server; Middleware;</PackageTags>
   </PropertyGroup>
@@ -14,4 +14,3 @@
     <ProjectReference Include="..\Singulink.Net.Http.Api\Singulink.Net.Http.Api.csproj" />
   </ItemGroup>
 </Project>
- 

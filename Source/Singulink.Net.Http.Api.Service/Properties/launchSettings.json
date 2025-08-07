@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Singulink.Net.Http.Api.Service": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:60561;http://localhost:60562"
+    }
+  }
+}

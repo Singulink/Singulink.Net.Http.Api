@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
@@ -9,8 +8,7 @@ namespace Singulink.Net.Http.Api.Client;
 /// <summary>
 /// Base class for API clients.
 /// </summary>
-/// <param name="httpClientFactory">Optional HTTP client factory to create HTTP clients.</param>
-public abstract class ApiClientBase(IHttpClientFactory? httpClientFactory = null)
+public abstract class ApiClientBase
 {
     private readonly struct VoidResponse;
 
@@ -24,6 +22,16 @@ public abstract class ApiClientBase(IHttpClientFactory? httpClientFactory = null
             PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
         });
     });
+
+    private readonly IHttpClientFactory? _httpClientFactory;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
+    /// </summary>
+    public ApiClientBase(IHttpClientFactory? httpClientFactory = null)
+    {
+        _httpClientFactory = httpClientFactory;
+    }
 
     /// <summary>
     /// Creates an API request with the specified HTTP method, path, and optional query string parameters.
@@ -126,7 +134,7 @@ public abstract class ApiClientBase(IHttpClientFactory? httpClientFactory = null
         }
     }
 
-    private HttpClient GetHttpClient() => httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
+    private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
     private Uri GetApiUrl(HttpClient client, string path, ReadOnlySpan<(string Name, object Value)> queryStringParams)
     {

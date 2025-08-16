@@ -5,7 +5,7 @@ namespace Singulink.Net.Http.Api;
 #pragma warning disable RCS1194 // Implement exception constructors
 
 /// <summary>
-/// Represents an exception that occurs when a requested resource is not found (HTTP 404 Not Found).
+/// Represents an exception that occurs when a requested API resource is not found (HTTP 404 Not Found).
 /// </summary>
 public class NotFoundApiException : ApiException
 {

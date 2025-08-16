@@ -10,8 +10,6 @@ namespace Singulink.Net.Http.Api.Client;
 /// </summary>
 public abstract class ApiClientBase
 {
-    private readonly struct VoidResponse;
-
     private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
 
     private static readonly Lazy<HttpClient> _defaultHttpClient = new(() => {
@@ -28,7 +26,7 @@ public abstract class ApiClientBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
     /// </summary>
-    public ApiClientBase(IHttpClientFactory? httpClientFactory = null)
+    protected ApiClientBase(IHttpClientFactory? httpClientFactory = null)
     {
         _httpClientFactory = httpClientFactory;
     }
@@ -47,11 +45,6 @@ public abstract class ApiClientBase
     }
 
     /// <summary>
-    /// Invoked when an API request is being sent. Can be overridden to customize the request before sending it (e.g., adding headers).
-    /// </summary>
-    protected virtual void OnRequestSending(ApiRequest request) { }
-
-    /// <summary>
     /// Gets the default base address for the API client that is used if HTTP client does not have a base address set.
     /// </summary>
     protected abstract Uri GetDefaultBaseAddress();
@@ -59,77 +52,91 @@ public abstract class ApiClientBase
     /// <summary>
     /// Sends an API request with no response content expected.
     /// </summary>
-    protected Task SendAsync(ApiRequest request) => SendAsync<VoidResponse>(request);
+    protected Task SendAsync(ApiRequest request, CancellationToken cancellationToken = default) => SendAsync<VoidApiResponse>(request, cancellationToken);
 
     /// <summary>
-    /// Sends an API request and expects a response of type <typeparamref name="T"/>. T is JSON deserialized if it is not one of the following types: <see
-    /// cref="HttpResponseMessage"/>, <see cref="string"/>, <see cref="Stream"/>.
+    /// Sends an API request and expects a response of type <typeparamref name="T"/>. <typeparamref name="T"/> is JSON deserialized if it is not one of the
+    /// following types: <see cref="HttpResponseMessage"/>, <see cref="string"/>, <see cref="Stream"/>.
     /// </summary>
     /// <exception cref="HttpRequestException">An error occurred while sending the request.</exception>
-    /// <exception cref="NotFoundApiException">A 404 (Not Found) response was returned.</exception>
+    /// <exception cref="BadRequestApiException">A 400 (Bad Request) response was returned.</exception>
     /// <exception cref="UnauthorizedApiException">A 401 (Unauthorized) response was returned.</exception>
     /// <exception cref="ForbiddenApiException">A 403 (Forbidden) response was returned.</exception>
-    /// <exception cref="ValidationApiException">A 400 (Bad Request) response was returned.</exception>
-    /// <exception cref="UserChangedApiException">A 440 (User Changed) response was returned.</exception>
-    /// <exception cref="ApiException">A response other than 200 (OK) or one of the other known/expected error codes was returned.</exception>
-    protected async Task<T> SendAsync<T>(ApiRequest request)
+    /// <exception cref="NotFoundApiException">A 404 (Not Found) response was returned.</exception>
+    /// <exception cref="UserChangedApiException">A 412 (Precondition Failed) response was returned.</exception>
+    /// <exception cref="ValidationApiException">A 422 (Unprocessable Content/Entity) response was returned.</exception>
+    /// <exception cref="UserRequiredApiException">A 428 (Precondition Required) response was returned.</exception>
+    /// <exception cref="ApiException">A response other than 2xx or one of the other known/expected error codes was returned.</exception>
+    protected virtual async Task<T> SendAsync<T>(ApiRequest request, CancellationToken cancellationToken = default)
     {
-        OnRequestSending(request);
         HttpResponseMessage response;
 
         try
         {
-            response = await request.Client.SendAsync(request.Message).ConfigureAwait(false);
+            var completionOption = typeof(T) == typeof(VoidApiResponse)
+                ? HttpCompletionOption.ResponseHeadersRead
+                : HttpCompletionOption.ResponseContentRead;
+
+            response = await request.Client.SendAsync(request.Message, completionOption, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        finally
         {
-            throw new HttpRequestException("Connection problem - please try again.", ex);
+            request.Dispose();
         }
 
         try
         {
-            if (response.StatusCode is HttpStatusCode.OK)
+            if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             {
-                if (typeof(T) == typeof(VoidResponse))
+                if (typeof(T) == typeof(VoidApiResponse))
                     return default!;
 
                 if (typeof(T) == typeof(HttpResponseMessage))
                     return (T)(object)response;
 
                 if (typeof(T) == typeof(string))
-                    return (T)(object)await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    return (T)(object)await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
                 if (typeof(T) == typeof(Stream))
-                    return (T)(object)await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                    return (T)(object)await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
-                return await response.Content.ReadFromJsonAsync<T>().ConfigureAwait(false) ?? throw new FormatException("Empty response.");
+                return await response.Content.ReadFromJsonAsync<T>(cancellationToken).ConfigureAwait(false) ?? throw new FormatException("Empty response.");
             }
 
-            string errorMessage = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            string errorContentType = response.Content.Headers.ContentType?.MediaType;
+            string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            string errorMessage = null;
+            ApiErrorContent errorContent = null;
+
+            if (errorContentType is "text/plain")
+            {
+                errorMessage = errorContentString;
+            }
+            else if (!string.IsNullOrWhiteSpace(errorContentString))
+            {
+                errorContent = new(errorContentType ?? "unknown", errorContentString);
+            }
 
             if (string.IsNullOrWhiteSpace(errorMessage))
-                errorMessage = $"Unknown service error ({response.StatusCode}) - please try again later or update your app if there is an update available.";
+                errorMessage = $"Unknown service error ({response.StatusCode}).";
 
-            if (response.StatusCode is HttpStatusCode.NotFound)
-                throw new NotFoundApiException(errorMessage);
+            var ex = response.StatusCode switch
+            {
+                HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.Forbidden => new ForbiddenApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.NotFound => new NotFoundApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
+                HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
+                _ => new ApiException(response.StatusCode, errorMessage) { ErrorContent = errorContent },
+            };
 
-            if (response.StatusCode is HttpStatusCode.Unauthorized)
-                throw new UnauthorizedApiException(errorMessage);
-
-            if (response.StatusCode is HttpStatusCode.Forbidden)
-                throw new ForbiddenApiException(errorMessage);
-
-            if (response.StatusCode is HttpStatusCode.BadRequest)
-                throw new ValidationApiException(errorMessage);
-
-            if ((int)response.StatusCode is 440)
-                throw new UserChangedApiException(errorMessage);
-
-            throw new ApiException(response.StatusCode, errorMessage);
+            throw ex;
         }
         finally
         {
-            request.Message.Dispose();
             response.Dispose();
         }
     }
@@ -143,24 +150,25 @@ public abstract class ApiClientBase
         if (queryStringParams.Length is 0)
             return uri;
 
-        var qs = new StringBuilder();
-
-        bool first = true;
+        StringBuilder qs = null;
 
         foreach (var (name, value) in queryStringParams)
         {
             if (value is null || GetValueString(value) is not string strValue)
                 continue;
 
-            if (!first)
+            if (qs is null)
+                qs = new();
+            else
                 qs.Append('&');
 
             qs.Append(name);
             qs.Append('=');
             qs.Append(Uri.EscapeDataString(strValue));
-
-            first = false;
         }
+
+        if (qs is null)
+            return uri;
 
         return new UriBuilder(uri) { Query = qs.ToString() }.Uri;
 

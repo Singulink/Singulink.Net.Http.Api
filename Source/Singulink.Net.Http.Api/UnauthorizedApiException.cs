@@ -5,7 +5,7 @@ namespace Singulink.Net.Http.Api;
 #pragma warning disable RCS1194 // Implement exception constructors
 
 /// <summary>
-/// Represents an exception that occurs when the user is unauthorized (HTTP 401 Unauthorized).
+/// Represents an exception that occurs when the API request is unauthorized (HTTP 401 Unauthorized).
 /// </summary>
 public class UnauthorizedApiException : ApiException
 {

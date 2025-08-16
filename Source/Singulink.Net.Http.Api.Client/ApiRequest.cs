@@ -5,7 +5,7 @@ namespace Singulink.Net.Http.Api.Client;
 /// <summary>
 /// Represents an API request that can be sent from an <see cref="ApiClientBase"/> implementation.
 /// </summary>
-public readonly record struct ApiRequest
+public readonly record struct ApiRequest : IDisposable
 {
     internal HttpClient Client { get; }
 
@@ -30,5 +30,13 @@ public readonly record struct ApiRequest
             Message.Content = JsonContent.Create(contentObj);
         else
             Message.Content = null;
+    }
+
+    /// <summary>
+    /// Disposes the request message and releases any resources associated with it.
+    /// </summary>
+    public void Dispose()
+    {
+        Message.Dispose();
     }
 }

@@ -15,6 +15,11 @@ public class ApiException : Exception
     public HttpStatusCode StatusCode { get; }
 
     /// <summary>
+    /// Gets the error content associated with the API exception if the error response was not in <c>text/plain</c> or a known/expected format.
+    /// </summary>
+    public ApiErrorContent? ErrorContent { get; init; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ApiException"/> class with a specified HTTP status code and error message.
     /// </summary>
     public ApiException(HttpStatusCode statusCode, string message) : base(message)

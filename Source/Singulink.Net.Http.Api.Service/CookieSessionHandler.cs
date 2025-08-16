@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -35,14 +34,14 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
     public HttpContext Context { get; }
 
     /// <summary>
-    /// Gets the key for the session cookie.
+    /// Gets the key for the session cookie. Default if not overridden is <c>"session"</c>.
     /// </summary>
-    public abstract string SessionCookieKey { get; }
+    public virtual string SessionCookieKey { get; } = "session";
 
     /// <summary>
-    /// Gets the key for the user ID header.
+    /// Gets the key for the user ID precondition header. Default if not overridden is <c>"If-UserId"</c>.
     /// </summary>
-    public abstract string UserIdHeaderKey { get; }
+    public virtual string UserIdPreconditionHeaderKey { get; } = "If-UserId";
 
     /// <summary>
     /// Gets the refresh interval for the session token.
@@ -66,20 +65,19 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
             string GetDevice()
             {
                 if (!Context.Request.Headers.TryGetValue(HeaderNames.UserAgent, out var userAgentValues))
-                    throw new UnauthorizedApiException("User agent required in request headers.");
+                    throw new BadRequestApiException("User agent required in request headers.");
 
-                if (userAgentValues.Count is not 1)
-                    throw new UnauthorizedApiException("Multiple user agents in request headers.");
+                string deviceUserAgentValue = userAgentValues[0]?.Trim();
 
-                if (userAgentValues is not [string userAgentValue] || userAgentValue.Length is 0)
-                    throw new UnauthorizedApiException("Empty user agent in request headers.");
+                if (string.IsNullOrEmpty(deviceUserAgentValue))
+                    throw new BadRequestApiException("Empty user agent in request headers.");
 
-                var userAgent = HttpUserAgentParser.Parse(userAgentValue);
+                var userAgent = HttpUserAgentParser.Parse(deviceUserAgentValue);
 
                 if (userAgent.Name is not null && userAgent.Version is not null && userAgent.Platform?.PlatformType is { } platformType)
                     return $"{platformType} ({userAgent.Name} {userAgent.Version})";
 
-                return userAgentValue;
+                return deviceUserAgentValue;
             }
         }
     }
@@ -129,7 +127,7 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
             var sessionToken = JsonSerializer.Deserialize<TSessionToken>(sessionCookieData) ?? throw new UnauthorizedApiException("Empty session cookie data.");
 
             if (!sessionToken.UserId.Equals(userId))
-                throw new UserChangedApiException("Request user does not match session user.");
+                throw new UserChangedApiException($"Request user identified in the '{UserIdPreconditionHeaderKey}' header does not match session user.");
 
             if (forceRefresh || sessionToken.RefreshedUtc.Add(RefreshInterval) < DateTime.UtcNow)
             {
@@ -190,14 +188,14 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
 
     private TUserId GetRequiredHeaderUserId()
     {
-        if (!Context.Request.Headers.TryGetValue(UserIdHeaderKey, out var userIdValues))
-            throw new ValidationException($"Request is missing '{UserIdHeaderKey}' header.");
+        if (!Context.Request.Headers.TryGetValue(UserIdPreconditionHeaderKey, out var userIdValues))
+            throw new UserRequiredApiException($"Request is missing required '{UserIdPreconditionHeaderKey}' precondition header.");
 
         if (userIdValues.Count is not 1)
-            throw new ValidationException($"Request contains multiple '{UserIdHeaderKey}' headers.");
+            throw new BadRequestApiException($"Request contains multiple '{UserIdPreconditionHeaderKey}' headers.");
 
         if (!TUserId.TryParse(userIdValues[0], CultureInfo.InvariantCulture, out TUserId userId))
-            throw new ValidationException($"Invalid '{UserIdHeaderKey}' header value.");
+            throw new BadRequestApiException($"Invalid '{UserIdPreconditionHeaderKey}' header value.");
 
         return userId;
     }

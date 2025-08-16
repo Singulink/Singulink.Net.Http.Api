@@ -39,9 +39,17 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
     public virtual string SessionCookieKey { get; } = "session";
 
     /// <summary>
-    /// Gets the key for the user ID precondition header. Default if not overridden is <c>"If-UserId"</c>.
+    /// Gets the key for the user ID precondition header. Default if not overridden is <c>"If-UserId"</c>. Can return <see langword="null"/> to disable the
+    /// precondition header check entirely.
     /// </summary>
-    public virtual string UserIdPreconditionHeaderKey { get; } = "If-UserId";
+    public virtual string? UserIdPreconditionHeaderKey { get; } = "If-UserId";
+
+    /// <summary>
+    /// Gets a value indicating whether the user ID precondition header is required. Ignored if <see cref="UserIdPreconditionHeaderKey"/> is <see
+    /// langword="null"/>. If overridden to return <see langword="false"/>, the precondition header is optional and only checked if it is provided in the
+    /// request.
+    /// </summary>
+    public virtual bool IsUserIdPreconditionRequired => true;
 
     /// <summary>
     /// Gets the refresh interval for the session token.
@@ -107,17 +115,15 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
         if (sessionCookie is null)
             return null;
 
-        TUserId userId = GetRequiredHeaderUserId();
-
-        // TODO: Optimize with span instead of allocating with string splitting
+        // TODO: Optimize with span split instead of allocating string split
 
         string[] sessionCookieParts = sessionCookie.Split(' ');
 
-        if (sessionCookieParts.Length is not 2)
-            throw new UnauthorizedApiException("Invalid session cookie.");
-
         try
         {
+            if (sessionCookieParts.Length is not 2)
+                throw new UnauthorizedApiException("Invalid session cookie.");
+
             Span<byte> sessionCookieData = Convert.FromBase64String(sessionCookieParts[0]);
             Span<byte> signature = Convert.FromBase64String(sessionCookieParts[1]);
 
@@ -125,9 +131,7 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
                 throw new UnauthorizedApiException("Invalid session cookie signature.");
 
             var sessionToken = JsonSerializer.Deserialize<TSessionToken>(sessionCookieData) ?? throw new UnauthorizedApiException("Empty session cookie data.");
-
-            if (!sessionToken.UserId.Equals(userId))
-                throw new UserChangedApiException($"Request user identified in the '{UserIdPreconditionHeaderKey}' header does not match session user.");
+            ValidateUserIdPreconditionHeader(sessionToken.UserId);
 
             if (forceRefresh || sessionToken.RefreshedUtc.Add(RefreshInterval) < DateTime.UtcNow)
             {
@@ -145,6 +149,11 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
             }
 
             return sessionToken;
+        }
+        catch (UnauthorizedApiException)
+        {
+            ClearSessionCookie();
+            throw;
         }
         catch (Exception ex) when (ex is FormatException or JsonException)
         {
@@ -186,17 +195,26 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
     /// </summary>
     protected abstract Task<TSessionToken> RefreshSessionTokenAsync(TSessionToken sessionToken);
 
-    private TUserId GetRequiredHeaderUserId()
+    private void ValidateUserIdPreconditionHeader(TUserId sessionUserId)
     {
+        if (UserIdPreconditionHeaderKey is null)
+            return;
+
         if (!Context.Request.Headers.TryGetValue(UserIdPreconditionHeaderKey, out var userIdValues))
-            throw new UserRequiredApiException($"Request is missing required '{UserIdPreconditionHeaderKey}' precondition header.");
+        {
+            if (IsUserIdPreconditionRequired)
+                throw new UserRequiredApiException($"Request is missing required '{UserIdPreconditionHeaderKey}' precondition header.");
+
+            return;
+        }
 
         if (userIdValues.Count is not 1)
             throw new BadRequestApiException($"Request contains multiple '{UserIdPreconditionHeaderKey}' headers.");
 
-        if (!TUserId.TryParse(userIdValues[0], CultureInfo.InvariantCulture, out TUserId userId))
+        if (!TUserId.TryParse(userIdValues[0], CultureInfo.InvariantCulture, out var userId))
             throw new BadRequestApiException($"Invalid '{UserIdPreconditionHeaderKey}' header value.");
 
-        return userId;
+        if (!userId.Equals(sessionUserId))
+            throw new UserChangedApiException($"Request user identified in the '{UserIdPreconditionHeaderKey}' header does not match session user.");
     }
 }

@@ -10,6 +10,17 @@ namespace Singulink.Net.Http.Api.Client;
 /// </summary>
 public abstract class ApiClientBase
 {
+    /// <summary>
+    /// The default key for the user ID precondition header that is used to ensure the cookie session user ID matches the expected user ID making the API
+    /// request. Value is <c>"If-UserId"</c>.
+    /// </summary>
+    /// <remarks>
+    /// If the API is making authenticated requests then this header should be set to the user ID of the authenticated user by the API client implementation in
+    /// the <see cref="SendAsync{T}(ApiRequest, CancellationToken)"/> method before calling the base implementation. It matches the default key used by
+    /// <c>CookieSessionHandler</c> implementations.
+    /// </remarks>
+    protected const string UserIdPreconditionHeaderKey = "If-UserId";
+
     private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
 
     private static readonly Lazy<HttpClient> _defaultHttpClient = new(() => {

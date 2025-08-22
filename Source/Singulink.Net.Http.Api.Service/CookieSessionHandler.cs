@@ -39,10 +39,10 @@ public abstract class CookieSessionHandler<TUserId, TSessionToken>
     public virtual string SessionCookieKey { get; } = "session";
 
     /// <summary>
-    /// Gets the key for the user ID precondition header. Default if not overridden is <c>"If-UserId"</c>. Can return <see langword="null"/> to disable the
+    /// Gets the key for the user ID precondition header. Default if not overridden is <c>"If-User-Id"</c>. Can return <see langword="null"/> to disable the
     /// precondition header check entirely.
     /// </summary>
-    public virtual string? UserIdPreconditionHeaderKey { get; } = "If-UserId";
+    public virtual string? UserIdPreconditionHeaderKey { get; } = "If-User-Id";
 
     /// <summary>
     /// Gets a value indicating whether the user ID precondition header is required. Ignored if <see cref="UserIdPreconditionHeaderKey"/> is <see

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -12,14 +13,14 @@ public abstract class ApiClientBase
 {
     /// <summary>
     /// The default key for the user ID precondition header that is used to ensure the cookie session user ID matches the expected user ID making the API
-    /// request. Value is <c>"If-UserId"</c>.
+    /// request. Value is <c>"If-User-Id"</c>.
     /// </summary>
     /// <remarks>
-    /// If the API is making authenticated requests then this header should be set to the user ID of the authenticated user by the API client implementation in
-    /// the <see cref="SendAsync{T}(ApiRequest, CancellationToken)"/> method before calling the base implementation. It matches the default key used by
-    /// <c>CookieSessionHandler</c> implementations.
+    /// If the API is making authorized requests then this header should be set to the user ID of the authenticated user by the API client implementation in the
+    /// <see cref="SendAsync{TResponse}(HttpRequestMessage, object?, CancellationToken)"/> method before calling the base implementation. It matches the default
+    /// key expected by <c>CookieSessionHandler</c>.
     /// </remarks>
-    protected const string UserIdPreconditionHeaderKey = "If-UserId";
+    protected const string UserIdPreconditionHeaderKey = "If-User-ID";
 
     private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
 
@@ -35,6 +36,12 @@ public abstract class ApiClientBase
     private readonly IHttpClientFactory? _httpClientFactory;
 
     /// <summary>
+    /// Gets the JSON serializer options used for serializing and deserializing API request and response content. Defaults to options provided by <see
+    /// cref="JsonSerializerDefaults.Web"/>.
+    /// </summary>
+    protected virtual JsonSerializerOptions SerializerOptions { get; } = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
     /// </summary>
     protected ApiClientBase(IHttpClientFactory? httpClientFactory = null)
@@ -48,26 +55,46 @@ public abstract class ApiClientBase
     /// <param name="method">The HTTP method for the request (e.g., GET, POST).</param>
     /// <param name="path">The API path to which the request will be sent.</param>
     /// <param name="queryStringParams">Optional query string parameters to include in the request.</param>
-    protected ApiRequest CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object Value)> queryStringParams)
+    protected HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object Value)> queryStringParams)
     {
-        var client = GetHttpClient();
-        var url = GetApiUrl(client, path, queryStringParams);
-        return new ApiRequest(client, method, url);
+        var url = GetApiUrl(path, queryStringParams);
+        return new HttpRequestMessage(method, url);
     }
 
     /// <summary>
     /// Gets the default base address for the API client that is used if HTTP client does not have a base address set.
     /// </summary>
-    protected abstract Uri GetDefaultBaseAddress();
+    protected abstract Uri GetBaseAddress();
 
     /// <summary>
-    /// Sends an API request with no response content expected.
+    /// Sends an API request.
     /// </summary>
-    protected Task SendAsync(ApiRequest request, CancellationToken cancellationToken = default) => SendAsync<VoidApiResponse>(request, cancellationToken);
+    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    protected Task SendAsync(HttpRequestMessage request, CancellationToken cancellationToken = default)
+    {
+        return SendAsync<VoidApiResponse>(request, null, cancellationToken);
+    }
 
     /// <summary>
-    /// Sends an API request and expects a response of type <typeparamref name="T"/>. <typeparamref name="T"/> is JSON deserialized if it is not one of the
-    /// following types: <see cref="HttpResponseMessage"/>, <see cref="string"/>, <see cref="Stream"/>.
+    /// Sends an API request with the specified content.
+    /// </summary>
+    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    protected Task SendAsync(HttpRequestMessage request, object? content, CancellationToken cancellationToken = default)
+    {
+        return SendAsync<VoidApiResponse>(request, content, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends an API request and returns the response.
+    /// </summary>
+    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    protected async Task<TResponse> SendAsync<TResponse>(HttpRequestMessage request, CancellationToken cancellationToken = default)
+    {
+        return await SendAsync<TResponse>(request, null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends an API request with the specified content and returns the response.
     /// </summary>
     /// <exception cref="HttpRequestException">An error occurred while sending the request.</exception>
     /// <exception cref="BadRequestApiException">A 400 (Bad Request) response was returned.</exception>
@@ -78,17 +105,36 @@ public abstract class ApiClientBase
     /// <exception cref="ValidationApiException">A 422 (Unprocessable Content/Entity) response was returned.</exception>
     /// <exception cref="UserRequiredApiException">A 428 (Precondition Required) response was returned.</exception>
     /// <exception cref="ApiException">A response other than 2xx or one of the other known/expected error codes was returned.</exception>
-    protected virtual async Task<T> SendAsync<T>(ApiRequest request, CancellationToken cancellationToken = default)
+    protected virtual async Task<TResponse> SendAsync<TResponse>(HttpRequestMessage request, object? content, CancellationToken cancellationToken = default)
     {
         HttpResponseMessage response;
 
         try
         {
-            var completionOption = typeof(T) == typeof(VoidApiResponse)
+            if (content is not null)
+            {
+                if (request.Content is not null)
+                    throw new ArgumentException("Request content has already been set.");
+
+                if (content is HttpContent httpContent)
+                {
+                    request.Content = httpContent;
+                }
+                else if (content is string strContent)
+                {
+                    request.Content = new StringContent(strContent);
+                }
+                else
+                {
+                    request.Content = JsonContent.Create(content, options: SerializerOptions);
+                }
+            }
+
+            var completionOption = typeof(TResponse) == typeof(VoidApiResponse)
                 ? HttpCompletionOption.ResponseHeadersRead
                 : HttpCompletionOption.ResponseContentRead;
 
-            response = await request.Client.SendAsync(request.Message, completionOption, cancellationToken).ConfigureAwait(false);
+            response = await GetHttpClient().SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -99,19 +145,16 @@ public abstract class ApiClientBase
         {
             if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             {
-                if (typeof(T) == typeof(VoidApiResponse))
+                if (typeof(TResponse) == typeof(VoidApiResponse))
                     return default!;
 
-                if (typeof(T) == typeof(HttpResponseMessage))
-                    return (T)(object)response;
+                if (typeof(TResponse) == typeof(HttpResponseMessage))
+                    return (TResponse)(object)response;
 
-                if (typeof(T) == typeof(string))
-                    return (T)(object)await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                if (typeof(TResponse) == typeof(string))
+                    return (TResponse)(object)await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-                if (typeof(T) == typeof(Stream))
-                    return (T)(object)await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-
-                return await response.Content.ReadFromJsonAsync<T>(cancellationToken).ConfigureAwait(false) ?? throw new FormatException("Empty response.");
+                return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken).ConfigureAwait(false) ?? throw new FormatException("Empty response.");
             }
 
             string errorContentType = response.Content.Headers.ContentType?.MediaType;
@@ -121,13 +164,9 @@ public abstract class ApiClientBase
             ApiErrorContent errorContent = null;
 
             if (errorContentType is "text/plain")
-            {
                 errorMessage = errorContentString;
-            }
             else if (!string.IsNullOrWhiteSpace(errorContentString))
-            {
-                errorContent = new(errorContentType ?? "unknown", errorContentString);
-            }
+                errorContent = new(errorContentString, errorContentType ?? "unknown");
 
             if (string.IsNullOrWhiteSpace(errorMessage))
                 errorMessage = $"Unknown service error ({response.StatusCode}).";
@@ -148,15 +187,16 @@ public abstract class ApiClientBase
         }
         finally
         {
-            response.Dispose();
+            if (typeof(TResponse) != typeof(HttpResponseMessage))
+                response.Dispose();
         }
     }
 
     private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
-    private Uri GetApiUrl(HttpClient client, string path, ReadOnlySpan<(string Name, object Value)> queryStringParams)
+    private Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object Value)> queryStringParams)
     {
-        var uri = new Uri(client.BaseAddress ?? GetDefaultBaseAddress(), path);
+        var uri = new Uri(GetBaseAddress(), path);
 
         if (queryStringParams.Length is 0)
             return uri;

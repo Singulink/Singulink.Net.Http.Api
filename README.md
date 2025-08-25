@@ -8,9 +8,9 @@ Details of each component are provided below:
 
 | Library | Status | Package |
 | --- | --- | --- |
-| **Singulink.Net.Http.Api** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api/) |
-| **Singulink.Net.Http.Api.Client** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client/) |
-| **Singulink.Net.Http.Api.Service** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Service.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Service/) |
+| **Singulink.Net.Http.Api** | Internal | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api/) |
+| **Singulink.Net.Http.Api.Client** | Internal| [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client/) |
+| **Singulink.Net.Http.Api.Service** | Internal | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Service.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Service/) |
 
 **Supported Runtimes**: .NET 8.0+
 
@@ -30,4 +30,8 @@ These packages are part of our **Singulink Libraries** collection. Visit https:/
 
 ## Further Reading
 
+API documentation coming soon...
+
+<!--
 You can view API documentation on the [project documentation site](https://www.singulink.com/Docs/Singulink.Net.Http.Api/index.html).
+-->

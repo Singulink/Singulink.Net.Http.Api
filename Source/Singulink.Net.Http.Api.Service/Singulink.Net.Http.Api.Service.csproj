@@ -3,12 +3,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
 
-    <Version>1.4.0</Version>
+    <Version>1.5.0</Version>
     <Description>ASP.NET API service library for the Singulink HTTP API Tookit.</Description>
     <PackageTags>HTTP; API; Service; Server; Middleware;</PackageTags>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MyCSharp.HttpUserAgentParser" Version="3.0.25" />
+    <PackageReference Include="MyCSharp.HttpUserAgentParser" Version="3.0.27" />
+    <PackageReference Include="Singulink.Enums" Version="2.3.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Singulink.Net.Http.Api\Singulink.Net.Http.Api.csproj" />

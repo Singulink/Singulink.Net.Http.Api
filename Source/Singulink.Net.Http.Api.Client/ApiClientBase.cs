@@ -55,7 +55,7 @@ public abstract class ApiClientBase
     /// <param name="method">The HTTP method for the request (e.g., GET, POST).</param>
     /// <param name="path">The API path to which the request will be sent.</param>
     /// <param name="queryStringParams">Optional query string parameters to include in the request.</param>
-    protected HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object Value)> queryStringParams)
+    protected HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var url = GetApiUrl(path, queryStringParams);
         return new HttpRequestMessage(method, url);
@@ -194,7 +194,7 @@ public abstract class ApiClientBase
 
     private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
-    private Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object Value)> queryStringParams)
+    private Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var uri = new Uri(GetBaseAddress(), path);
 

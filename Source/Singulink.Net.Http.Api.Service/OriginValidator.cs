@@ -3,40 +3,40 @@ using System.Collections.Immutable;
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Validates whether an origin is trusted based on a list of trusted origins.
+/// Validates origins against a list of allowed origins.
 /// </summary>
 public class OriginValidator : IOriginValidator
 {
-    private readonly ImmutableArray<string> _trustedOrigins;
+    private readonly ImmutableArray<string> _allowedOrigins;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="OriginValidator"/> class with the specified trusted origins.
+    /// Initializes a new instance of the <see cref="OriginValidator"/> class with the specified allowed origins.
     /// </summary>
-    /// <param name="trustedOrigins">The trusted origins to register. Can use a wildcard at the start of the origin to match subdomains (e.g.
+    /// <param name="allowedOrigins">The allowed origins to register. Can use a wildcard at the start of the origin to match subdomains (e.g.
     /// <c>*.example.com</c>).</param>
-    public OriginValidator(params string[] trustedOrigins)
+    public OriginValidator(params string[] allowedOrigins)
     {
-        _trustedOrigins = trustedOrigins.ToImmutableArray();
+        _allowedOrigins = allowedOrigins.ToImmutableArray();
     }
 
     /// <summary>
-    /// Determines whether the specified origin is trusted.
+    /// Determines whether the specified origin is allowed.
     /// </summary>
-    public bool IsTrusted(string origin)
+    public bool IsAllowed(string origin)
     {
         if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri? uri))
             return false;
 
         string host = uri.Host;
 
-        foreach (string trustedOrigin in _trustedOrigins)
+        foreach (string allowedOrigin in _allowedOrigins)
         {
-            if (trustedOrigin.StartsWith('*'))
+            if (allowedOrigin.StartsWith('*'))
             {
-                if (host.EndsWith(trustedOrigin[1..], StringComparison.OrdinalIgnoreCase))
+                if (host.EndsWith(allowedOrigin[1..], StringComparison.OrdinalIgnoreCase))
                     return true;
             }
-            else if (host.Equals(trustedOrigin, StringComparison.OrdinalIgnoreCase))
+            else if (host.Equals(allowedOrigin, StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

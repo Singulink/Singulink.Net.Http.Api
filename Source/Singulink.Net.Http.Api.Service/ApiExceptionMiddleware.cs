@@ -24,7 +24,7 @@ public class ApiExceptionMiddleware
     {
         try
         {
-            await _next(context).ConfigureAwait(false);
+            await _next(context);
         }
         catch (ApiException ex)
         {
@@ -34,7 +34,7 @@ public class ApiExceptionMiddleware
             if (Trace.Listeners.Count > 0)
                 Trace.TraceWarning($"[Singulink.Net.Http.Api] Expected API exception handled ({ex.StatusCode}): {ex}");
 
-            await context.Response.WriteAsync(ex.Message).ConfigureAwait(false);
+            await context.Response.WriteAsync(ex.Message);
         }
     }
 }

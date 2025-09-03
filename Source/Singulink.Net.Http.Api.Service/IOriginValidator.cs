@@ -1,12 +1,12 @@
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Validates whether an origin is trusted.
+/// Provides validation to determine whether an origin is allowed.
 /// </summary>
 public interface IOriginValidator
 {
     /// <summary>
-    /// Determines whether the specified origin is trusted.
+    /// Determines whether the specified origin is allowed.
     /// </summary>
-    bool IsTrusted(string origin);
+    bool IsAllowed(string origin);
 }

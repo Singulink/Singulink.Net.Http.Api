@@ -6,46 +6,38 @@ namespace Singulink.Net.Http.Api.Service;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers the specified trusted origins and adds CORS services to the service collection.
+    /// Registers allowed origins and CORS services.
     /// </summary>
-    /// <param name="services">The service collection to add the trusted origins to.</param>
-    /// <param name="trustedOrigins">The trusted origins to register. Can use wildcards at the start of the origin to match subdomains (e.g.
+    /// <param name="services">The service collection to add the allowed origins to.</param>
+    /// <param name="allowedOrigins">The allowed origins to register. Can use wildcards at the start of the origin to match subdomains (e.g.
     /// <c>*.example.com</c>).</param>
-    public static IServiceCollection AddTrustedOrigins(this IServiceCollection services, params string[] trustedOrigins)
+    public static IServiceCollection AddAllowedOrigins(this IServiceCollection services, params string[] allowedOrigins)
     {
-        services.AddSingleton<IOriginValidator>(new OriginValidator(trustedOrigins));
+        services.AddSingleton<IOriginValidator>(new OriginValidator(allowedOrigins));
         services.AddCors();
 
         return services;
     }
-}
-
-/// <summary>
-/// Extension methods for configuring an <see cref="IApplicationBuilder"/> to use HTTP API services.
-/// </summary>
-public static class ApplicationBuilderExtensions
-{
-    /// <summary>
-    /// Configures the application to use CORS with the trusted origins registered in the service collection.
-    /// </summary>
-    public static IApplicationBuilder UseTrustedOrigins(this IApplicationBuilder app)
-    {
-        var originValidator = app.ApplicationServices.GetRequiredService<IOriginValidator>();
-
-        app.UseCors(policy => policy
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials()
-            .SetIsOriginAllowed(originValidator.IsTrusted));
-
-        return app;
-    }
 
     /// <summary>
-    /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling API exceptions.
+    /// Registers services required for enabling HTTP session handling.
     /// </summary>
-    public static IApplicationBuilder UseApiExceptionHandling(this IApplicationBuilder app)
+    /// <typeparam name="TSessionToken">The session token type.</typeparam>
+    /// <typeparam name="TSessionData">The session storage entry type.</typeparam>
+    /// <typeparam name="TSessionStoreContextFactory">The factory type for creating session store contexts.</typeparam>
+    /// <param name="services">The service collection to add session handling services to.</param>
+    /// <param name="configure">An optional action to configure options.</param>
+    public static IServiceCollection AddHttpSessionHandling<TSessionToken, TSessionData, TSessionStoreContextFactory>(
+        this IServiceCollection services,
+        Action<SessionHandlingOptions>? configure = null)
+        where TSessionToken : class, ISessionToken
+        where TSessionData : class, ISessionData
+        where TSessionStoreContextFactory : class, ISessionStoreContextFactory<TSessionToken, TSessionData>
     {
-        return app.UseMiddleware<ApiExceptionMiddleware>();
+        services.Configure<SessionHandlingOptions>(options => configure?.Invoke(options));
+        services.AddSingleton<ISessionStoreContextFactory<TSessionToken, TSessionData>, TSessionStoreContextFactory>();
+        services.AddSingleton<IHttpSessionContextFactory<TSessionToken>, HttpSessionContextFactory<TSessionToken, TSessionData>>();
+
+        return services;
     }
 }

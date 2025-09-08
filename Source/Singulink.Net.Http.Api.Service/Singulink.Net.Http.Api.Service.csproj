@@ -8,7 +8,7 @@
     <PackageTags>HTTP; API; Service; Server; Middleware;</PackageTags>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MyCSharp.HttpUserAgentParser" Version="3.0.27" />
+    <PackageReference Include="MyCSharp.HttpUserAgentParser" Version="3.0.28" />
     <PackageReference Include="Singulink.Enums" Version="2.3.1" />
   </ItemGroup>
   <ItemGroup>

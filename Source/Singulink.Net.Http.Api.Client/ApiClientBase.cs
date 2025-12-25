@@ -89,6 +89,7 @@ public abstract class ApiClientBase
     /// </summary>
     /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
     protected async Task<TResponse> SendAsync<TResponse>(HttpRequestMessage request, CancellationToken cancellationToken = default)
+        where TResponse : notnull
     {
         return await SendAsync<TResponse>(request, null, cancellationToken).ConfigureAwait(false);
     }
@@ -106,6 +107,7 @@ public abstract class ApiClientBase
     /// <exception cref="UserRequiredApiException">A 428 (Precondition Required) response was returned.</exception>
     /// <exception cref="ApiException">A response other than 2xx or one of the other known/expected error codes was returned.</exception>
     protected virtual async Task<TResponse> SendAsync<TResponse>(HttpRequestMessage request, object? content, CancellationToken cancellationToken = default)
+        where TResponse : notnull
     {
         HttpResponseMessage response;
 

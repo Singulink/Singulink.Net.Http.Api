@@ -31,7 +31,7 @@ public class OriginValidator : IOriginValidator
 
         foreach (string allowedOrigin in _allowedOrigins)
         {
-            if (allowedOrigin.StartsWith('*'))
+            if (allowedOrigin.StartsWith("*."))
             {
                 if (host.EndsWith(allowedOrigin[1..], StringComparison.OrdinalIgnoreCase))
                     return true;

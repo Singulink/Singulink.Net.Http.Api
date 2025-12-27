@@ -11,6 +11,8 @@ namespace Singulink.Net.Http.Api.Client;
 /// </summary>
 public abstract class ApiClientBase
 {
+    private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
+
     /// <summary>
     /// The default key for the user ID precondition header that is used to ensure the cookie session user ID matches the expected user ID making the API
     /// request. Value is <c>"If-User-Id"</c>.
@@ -20,7 +22,7 @@ public abstract class ApiClientBase
     /// <see cref="SendAsync{TResponse}(HttpRequestMessage, object?, CancellationToken)"/> method before calling the base implementation. It matches the default
     /// key expected by <c>CookieSessionHandler</c>.
     /// </remarks>
-    protected const string DefaultUserIdPreconditionHeader = "If-User-ID";
+    protected const string DefaultUserIdPreconditionHeaderName = "If-User-ID";
 
     /// <summary>
     /// The default name of the cookie that holds the encrypted session token. Value is <c>"session-token"</c>.
@@ -46,7 +48,7 @@ public abstract class ApiClientBase
     /// Gets the JSON serializer options used for serializing and deserializing API request and response content. Defaults to options provided by <see
     /// cref="JsonSerializerDefaults.Web"/>.
     /// </summary>
-    protected virtual JsonSerializerOptions SerializerOptions { get; } = new(JsonSerializerDefaults.Web);
+    protected virtual JsonSerializerOptions SerializerOptions { get; }
 
     /// <summary>
     /// Gets the name of the cookie that holds the encrypted session token. Defaults to <see cref="DefaultSessionCookieName"/>.
@@ -105,6 +107,7 @@ public abstract class ApiClientBase
             ChangedCallback = sessionTokenChanged,
             IsPersistentSession = sessionToken is not null,
         };
+        SerializerOptions = _defaultSerializerOptions;
     }
 
     /// <summary>
@@ -114,6 +117,7 @@ public abstract class ApiClientBase
     {
         _httpClientFactory = parent._httpClientFactory;
         _sessionState = parent._sessionState;
+        SerializerOptions = parent.SerializerOptions;
     }
 
     /// <summary>

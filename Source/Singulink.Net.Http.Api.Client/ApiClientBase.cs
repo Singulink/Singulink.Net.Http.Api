@@ -20,7 +20,12 @@ public abstract class ApiClientBase
     /// <see cref="SendAsync{TResponse}(HttpRequestMessage, object?, CancellationToken)"/> method before calling the base implementation. It matches the default
     /// key expected by <c>CookieSessionHandler</c>.
     /// </remarks>
-    protected const string UserIdPreconditionHeaderKey = "If-User-ID";
+    protected const string DefaultUserIdPreconditionHeader = "If-User-ID";
+
+    /// <summary>
+    /// The default name of the cookie that holds the encrypted session token. Value is <c>"session-token"</c>.
+    /// </summary>
+    protected const string DefaultSessionCookieName = "session-token";
 
     private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
 
@@ -30,10 +35,12 @@ public abstract class ApiClientBase
 
         return new HttpClient(new SocketsHttpHandler {
             PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
+            UseCookies = false,
         });
     });
 
     private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly SessionState _sessionState;
 
     /// <summary>
     /// Gets the JSON serializer options used for serializing and deserializing API request and response content. Defaults to options provided by <see
@@ -42,11 +49,71 @@ public abstract class ApiClientBase
     protected virtual JsonSerializerOptions SerializerOptions { get; } = new(JsonSerializerDefaults.Web);
 
     /// <summary>
+    /// Gets the name of the cookie that holds the encrypted session token. Defaults to <see cref="DefaultSessionCookieName"/>.
+    /// </summary>
+    protected virtual string SessionCookieName => DefaultSessionCookieName;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the session token should be persisted via the session token changed callback.
+    /// </summary>
+    protected bool RememberMe
+    {
+        get => _sessionState.RememberMe;
+        set
+        {
+            if (_sessionState.RememberMe != value)
+            {
+                _sessionState.RememberMe = value;
+                _sessionState.ChangedCallback?.Invoke(value ? _sessionState.Token : null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the current session token.
+    /// </summary>
+    protected string? SessionToken
+    {
+        get => _sessionState.Token;
+        private set
+        {
+            if (_sessionState.Token != value)
+            {
+                _sessionState.Token = value;
+
+                if (_sessionState.RememberMe)
+                    _sessionState.ChangedCallback?.Invoke(value);
+            }
+        }
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
     /// </summary>
-    protected ApiClientBase(IHttpClientFactory? httpClientFactory = null)
+    protected ApiClientBase(IHttpClientFactory? httpClientFactory = null) : this(httpClientFactory, null, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory, session token and session token changed callback.
+    /// </summary>
+    protected ApiClientBase(IHttpClientFactory? httpClientFactory, string? sessionToken, Action<string?>? sessionTokenChanged)
     {
         _httpClientFactory = httpClientFactory;
+        _sessionState = new SessionState {
+            Token = sessionToken,
+            ChangedCallback = sessionTokenChanged,
+            RememberMe = sessionToken is not null,
+        };
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class that shares the session state with the specified parent client.
+    /// </summary>
+    protected ApiClientBase(ApiClientBase parent)
+    {
+        _httpClientFactory = parent._httpClientFactory;
+        _sessionState = parent._sessionState;
     }
 
     /// <summary>
@@ -116,9 +183,10 @@ public abstract class ApiClientBase
             if (content is not null)
             {
                 if (request.Content is not null)
+                {
                     throw new ArgumentException("Request content has already been set.");
-
-                if (content is HttpContent httpContent)
+                }
+                else if (content is HttpContent httpContent)
                 {
                     request.Content = httpContent;
                 }
@@ -132,6 +200,9 @@ public abstract class ApiClientBase
                 }
             }
 
+            if (!OperatingSystem.IsBrowser() && _sessionState.Token is not null)
+                request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+
             var completionOption = typeof(TResponse) == typeof(VoidApiResponse)
                 ? HttpCompletionOption.ResponseHeadersRead
                 : HttpCompletionOption.ResponseContentRead;
@@ -142,6 +213,9 @@ public abstract class ApiClientBase
         {
             request.Dispose();
         }
+
+        if (!OperatingSystem.IsBrowser())
+            UpdateSessionToken(response);
 
         try
         {
@@ -194,6 +268,35 @@ public abstract class ApiClientBase
         }
     }
 
+    private void UpdateSessionToken(HttpResponseMessage response)
+    {
+        if (response.Headers.TryGetValues("Set-Cookie", out var values))
+        {
+            foreach (string value in values)
+            {
+                var span = value.AsSpan();
+                int separatorIndex = span.IndexOf(';');
+
+                if (separatorIndex >= 0)
+                    span = span[..separatorIndex];
+
+                int eqIndex = span.IndexOf('=');
+
+                if (eqIndex > 0)
+                {
+                    var name = span[..eqIndex].Trim();
+
+                    if (name.SequenceEqual(SessionCookieName))
+                    {
+                        string val = span[(eqIndex + 1)..].Trim().ToString();
+                        SessionToken = string.IsNullOrEmpty(val) ? null : val;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
     private Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object? Value)> queryStringParams)
@@ -203,27 +306,30 @@ public abstract class ApiClientBase
         if (queryStringParams.Length is 0)
             return uri;
 
-        StringBuilder qs = null;
+        var builder = new UriBuilder(uri);
+        string query = builder.Query;
+        StringBuilder qs;
+
+        if (query.Length > 1)
+            qs = new StringBuilder(query);
+        else
+            qs = new StringBuilder();
 
         foreach (var (name, value) in queryStringParams)
         {
             if (value is null || GetValueString(value) is not string strValue)
                 continue;
 
-            if (qs is null)
-                qs = new();
-            else
+            if (qs.Length > 0)
                 qs.Append('&');
 
-            qs.Append(name);
+            qs.Append(Uri.EscapeDataString(name));
             qs.Append('=');
             qs.Append(Uri.EscapeDataString(strValue));
         }
 
-        if (qs is null)
-            return uri;
-
-        return new UriBuilder(uri) { Query = qs.ToString() }.Uri;
+        builder.Query = qs.ToString();
+        return builder.Uri;
 
         static string? GetValueString(object value)
         {
@@ -239,5 +345,14 @@ public abstract class ApiClientBase
 
             return value.ToString();
         }
+    }
+
+    private sealed class SessionState
+    {
+        public string? Token { get; set; }
+
+        public bool RememberMe { get; set; }
+
+        public Action<string?>? ChangedCallback { get; set; }
     }
 }

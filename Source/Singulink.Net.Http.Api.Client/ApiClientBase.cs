@@ -56,14 +56,14 @@ public abstract class ApiClientBase
     /// <summary>
     /// Gets or sets a value indicating whether the session token should be persisted via the session token changed callback.
     /// </summary>
-    protected bool RememberMe
+    protected bool IsPersistentSession
     {
-        get => _sessionState.RememberMe;
+        get => _sessionState.IsPersistentSession;
         set
         {
-            if (_sessionState.RememberMe != value)
+            if (_sessionState.IsPersistentSession != value)
             {
-                _sessionState.RememberMe = value;
+                _sessionState.IsPersistentSession = value;
                 _sessionState.ChangedCallback?.Invoke(value ? _sessionState.Token : null);
             }
         }
@@ -81,7 +81,7 @@ public abstract class ApiClientBase
             {
                 _sessionState.Token = value;
 
-                if (_sessionState.RememberMe)
+                if (_sessionState.IsPersistentSession)
                     _sessionState.ChangedCallback?.Invoke(value);
             }
         }
@@ -103,7 +103,7 @@ public abstract class ApiClientBase
         _sessionState = new SessionState {
             Token = sessionToken,
             ChangedCallback = sessionTokenChanged,
-            RememberMe = sessionToken is not null,
+            IsPersistentSession = sessionToken is not null,
         };
     }
 
@@ -351,7 +351,7 @@ public abstract class ApiClientBase
     {
         public string? Token { get; set; }
 
-        public bool RememberMe { get; set; }
+        public bool IsPersistentSession { get; set; }
 
         public Action<string?>? ChangedCallback { get; set; }
     }

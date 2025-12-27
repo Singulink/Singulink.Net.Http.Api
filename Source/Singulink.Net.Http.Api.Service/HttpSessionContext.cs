@@ -133,7 +133,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         if (!sessionOptions.HasAllFlags(SessionAccessOptions.AllowAllOrigins) && !IsRequestOriginAllowed())
             throw new ForbiddenApiException("Cross-origin request was blocked.");
 
-        string sessionCookie = HttpContext.Request.Cookies[_options.SessionCookie];
+        string sessionCookie = HttpContext.Request.Cookies[_options.SessionCookieName];
 
         if (sessionCookie is null)
             return null;
@@ -217,36 +217,36 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             MaxAge = sessionToken.IsPersistent ? sessionToken.ValidFor : null,
         };
 
-        HttpContext.Response.Cookies.Append(_options.SessionCookie, cookie, options);
+        HttpContext.Response.Cookies.Append(_options.SessionCookieName, cookie, options);
     }
 
     /// <inheritdoc/>
     public override void ClearToken()
     {
-        HttpContext.Response.Cookies.Delete(_options.SessionCookie);
+        HttpContext.Response.Cookies.Delete(_options.SessionCookieName);
     }
 
     private void ValidateUserIdPreconditionHeader(TSessionToken sessionToken, bool optional)
     {
-        if (_options.UserIdPreconditionHeader is null)
+        if (_options.UserIdPreconditionHeaderName is null)
             return;
 
-        if (!HttpContext.Request.Headers.TryGetValue(_options.UserIdPreconditionHeader, out var userIdValues))
+        if (!HttpContext.Request.Headers.TryGetValue(_options.UserIdPreconditionHeaderName, out var userIdValues))
         {
             if (optional)
                 return;
 
-            throw new UserRequiredApiException($"Request is missing required '{_options.UserIdPreconditionHeader}' precondition header.");
+            throw new UserRequiredApiException($"Request is missing required '{_options.UserIdPreconditionHeaderName}' precondition header.");
         }
 
         if (userIdValues.Count is not 1)
-            throw new BadRequestApiException($"Request contains multiple '{_options.UserIdPreconditionHeader}' headers.");
+            throw new BadRequestApiException($"Request contains multiple '{_options.UserIdPreconditionHeaderName}' headers.");
 
         if (userIdValues[0] is not { Length: > 0 } userId)
-            throw new BadRequestApiException($"Empty user ID in '{_options.UserIdPreconditionHeader}' header.");
+            throw new BadRequestApiException($"Empty user ID in '{_options.UserIdPreconditionHeaderName}' header.");
 
         if (userId != sessionToken.UserId)
-            throw new UserChangedApiException($"Request user identified in the '{_options.UserIdPreconditionHeader}' header does not match session user.");
+            throw new UserChangedApiException($"Request user identified in the '{_options.UserIdPreconditionHeaderName}' header does not match session user.");
     }
 
     private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken)

@@ -12,7 +12,7 @@ public sealed class SessionHandlingOptions
     /// <summary>
     /// Gets or sets the name of the cookie that holds the encrypted session token. Default is <c>"session-token"</c>.
     /// </summary>
-    public string SessionCookie {
+    public string SessionCookieName {
         get;
         set {
             ArgumentException.ThrowIfNullOrEmpty(value, nameof(value));
@@ -21,9 +21,9 @@ public sealed class SessionHandlingOptions
     } = "session-token";
 
     /// <summary>
-    /// Gets or sets the key for the user ID precondition header. Default is <c>"If-User-Id"</c>.
+    /// Gets or sets the name for the user ID precondition header. Default is <c>"If-User-Id"</c>.
     /// </summary>
-    public string UserIdPreconditionHeader {
+    public string UserIdPreconditionHeaderName {
         get;
         set {
             ArgumentException.ThrowIfNullOrEmpty(value, nameof(value));

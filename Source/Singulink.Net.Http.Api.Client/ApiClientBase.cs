@@ -24,7 +24,7 @@ public abstract class ApiClientBase
     /// <see cref="SendAsync{TResponse}(HttpRequestMessage, object?, CancellationToken)"/> method before calling the base implementation. It matches the default
     /// key expected by <c>CookieSessionHandler</c>.
     /// </remarks>
-    protected const string DefaultUserIdPreconditionHeaderName = "If-User-ID";
+    protected const string DefaultUserIdPreconditionHeaderName = "If-User-Id";
 
     /// <summary>
     /// The default name of the cookie that holds the encrypted session token. Value is <c>"session-token"</c>.

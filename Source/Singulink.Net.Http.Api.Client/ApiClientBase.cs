@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 
@@ -12,6 +13,7 @@ namespace Singulink.Net.Http.Api.Client;
 public abstract class ApiClientBase
 {
     private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly ApiClientBase? _parentClient;
 
     /// <summary>
     /// The default key for the user ID precondition header that is used to ensure the cookie session user ID matches the expected user ID making the API
@@ -48,7 +50,7 @@ public abstract class ApiClientBase
     /// Gets the JSON serializer options used for serializing and deserializing API request and response content. Defaults to options provided by <see
     /// cref="JsonSerializerDefaults.Web"/>.
     /// </summary>
-    protected virtual JsonSerializerOptions SerializerOptions { get; }
+    protected virtual JsonSerializerOptions SerializerOptions => _parentClient?.SerializerOptions ?? _defaultSerializerOptions;
 
     /// <summary>
     /// Gets the name of the cookie that holds the encrypted session token. Defaults to <see cref="DefaultSessionCookieName"/>.
@@ -107,7 +109,6 @@ public abstract class ApiClientBase
             ChangedCallback = sessionTokenChanged,
             IsPersistentSession = sessionToken is not null,
         };
-        SerializerOptions = _defaultSerializerOptions;
     }
 
     /// <summary>
@@ -117,7 +118,7 @@ public abstract class ApiClientBase
     {
         _httpClientFactory = parent._httpClientFactory;
         _sessionState = parent._sessionState;
-        SerializerOptions = parent.SerializerOptions;
+        _parentClient = parent;
     }
 
     /// <summary>
@@ -126,7 +127,7 @@ public abstract class ApiClientBase
     /// <param name="method">The HTTP method for the request (e.g., GET, POST).</param>
     /// <param name="path">The API path to which the request will be sent.</param>
     /// <param name="queryStringParams">Optional query string parameters to include in the request.</param>
-    protected HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
+    protected virtual HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var url = GetApiUrl(path, queryStringParams);
         return new HttpRequestMessage(method, url);
@@ -184,28 +185,7 @@ public abstract class ApiClientBase
 
         try
         {
-            if (content is not null)
-            {
-                if (request.Content is not null)
-                {
-                    throw new ArgumentException("Request content has already been set.");
-                }
-                else if (content is HttpContent httpContent)
-                {
-                    request.Content = httpContent;
-                }
-                else if (content is string strContent)
-                {
-                    request.Content = new StringContent(strContent);
-                }
-                else
-                {
-                    request.Content = JsonContent.Create(content, options: SerializerOptions);
-                }
-            }
-
-            if (!OperatingSystem.IsBrowser() && _sessionState.Token is not null)
-                request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+            PrepareRequest(request, content);
 
             var completionOption = typeof(TResponse) == typeof(VoidApiResponse)
                 ? HttpCompletionOption.ResponseHeadersRead
@@ -223,53 +203,135 @@ public abstract class ApiClientBase
 
         try
         {
-            if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
-            {
-                if (typeof(TResponse) == typeof(VoidApiResponse))
-                    return default!;
+            await ThrowOnErrorResponse(response, cancellationToken).ConfigureAwait(false);
 
-                if (typeof(TResponse) == typeof(HttpResponseMessage))
-                    return (TResponse)(object)response;
+            if (typeof(TResponse) == typeof(VoidApiResponse))
+                return default!;
 
-                if (typeof(TResponse) == typeof(string))
-                    return (TResponse)(object)await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (typeof(TResponse) == typeof(HttpResponseMessage))
+                return (TResponse)(object)response;
 
-                return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken).ConfigureAwait(false) ?? throw new FormatException("Empty response.");
-            }
+            if (typeof(TResponse) == typeof(string))
+                return (TResponse)(object)await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-            string errorContentType = response.Content.Headers.ContentType?.MediaType;
-            string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-            string errorMessage = null;
-            ApiErrorContent errorContent = null;
-
-            if (errorContentType is "text/plain")
-                errorMessage = errorContentString;
-            else if (!string.IsNullOrWhiteSpace(errorContentString))
-                errorContent = new(errorContentString, errorContentType ?? "unknown");
-
-            if (string.IsNullOrWhiteSpace(errorMessage))
-                errorMessage = $"Unknown service error ({response.StatusCode}).";
-
-            var ex = response.StatusCode switch
-            {
-                HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.Forbidden => new ForbiddenApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.NotFound => new NotFoundApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
-                HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
-                _ => new ApiException(response.StatusCode, errorMessage) { ErrorContent = errorContent },
-            };
-
-            throw ex;
+            return await response.Content.ReadFromJsonAsync<TResponse>(SerializerOptions, cancellationToken).ConfigureAwait(false) ?? throw new FormatException("Empty response.");
         }
         finally
         {
             if (typeof(TResponse) != typeof(HttpResponseMessage))
                 response.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Sends an API request and returns a streaming response.
+    /// </summary>
+    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    protected IAsyncEnumerable<TItem> SendStreamingAsync<TItem>(HttpRequestMessage request, CancellationToken cancellationToken = default)
+    {
+        return SendStreamingAsync<TItem>(request, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends an API request with the specified content and returns a streaming response.
+    /// </summary>
+    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    protected virtual async IAsyncEnumerable<TItem> SendStreamingAsync<TItem>(
+        HttpRequestMessage request, object? content, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        HttpResponseMessage response;
+
+        try
+        {
+            PrepareRequest(request, content);
+            response = await GetHttpClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            request.Dispose();
+        }
+
+        if (!OperatingSystem.IsBrowser())
+            UpdateSessionToken(response);
+
+        try
+        {
+            await ThrowOnErrorResponse(response, cancellationToken).ConfigureAwait(false);
+
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+
+            await using (stream.ConfigureAwait(false))
+            {
+                await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<TItem>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false))
+                {
+                    if (item is not null)
+                        yield return item;
+                }
+            }
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Prepares the request by setting content and session cookie header.
+    /// </summary>
+    private void PrepareRequest(HttpRequestMessage request, object? content)
+    {
+        if (content is not null)
+        {
+            if (request.Content is not null)
+                throw new ArgumentException("Request content has already been set.");
+
+            if (content is HttpContent httpContent)
+                request.Content = httpContent;
+            else if (content is string strContent)
+                request.Content = new StringContent(strContent);
+            else
+                request.Content = JsonContent.Create(content, options: SerializerOptions);
+        }
+
+        if (!OperatingSystem.IsBrowser() && _sessionState.Token is not null)
+            request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+    }
+
+    /// <summary>
+    /// Throws an appropriate API exception if the response indicates an error.
+    /// </summary>
+    private async ValueTask ThrowOnErrorResponse(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
+            return;
+
+        string? errorContentType = response.Content.Headers.ContentType?.MediaType;
+        string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+        string? errorMessage = null;
+        ApiErrorContent? errorContent = null;
+
+        if (errorContentType is "text/plain")
+            errorMessage = errorContentString;
+        else if (!string.IsNullOrWhiteSpace(errorContentString))
+            errorContent = new(errorContentString, errorContentType ?? "unknown");
+
+        if (string.IsNullOrWhiteSpace(errorMessage))
+            errorMessage = $"Unknown service error ({response.StatusCode}).";
+
+        var ex = response.StatusCode switch
+        {
+            HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.Forbidden => new ForbiddenApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.NotFound => new NotFoundApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
+            HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
+            _ => new ApiException(response.StatusCode, errorMessage) { ErrorContent = errorContent },
+        };
+
+        throw ex;
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

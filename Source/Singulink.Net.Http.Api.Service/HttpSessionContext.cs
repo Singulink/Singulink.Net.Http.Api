@@ -121,7 +121,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     /// <inheritdoc/>
     public override async ValueTask<TSessionToken> GetRequiredTokenAsync(SessionAccessOptions sessionOptions = default)
     {
-        return await GetTokenAsync(sessionOptions) ?? throw new UnauthorizedApiException("User not logged in.");
+        return await GetTokenAsync(sessionOptions) ?? throw new UnauthorizedApiException("User is not signed in.");
     }
 
     /// <inheritdoc/>

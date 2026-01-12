@@ -181,7 +181,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     /// <inheritdoc/>
     public override async Task<TSessionToken> SignInAsync(bool persistent, Func<SignInInfo, Task<TSessionToken>> createSessionFunc)
     {
-        var signInInfo = new SignInInfo(Device, IpAddressString, persistent ? _options.PersistentSessionExpiry : _options.TempSessionExpiry, persistent);
+        var signInInfo = new SignInInfo(Device, IpAddress, persistent ? _options.PersistentSessionExpiry : _options.TempSessionExpiry, persistent);
         var token = await createSessionFunc(signInInfo);
 
         // TODO: Clear token? Cache on HTTP context (here and in GetTokenAsync)?
@@ -271,7 +271,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             if (sessionData.Generation != sessionToken.Generation + 1 ||
                 timeSinceDataRefresh > _options.MultipleRefreshGracePeriod ||
                 sessionData.Device != Device ||
-                sessionData.IpAddress != IpAddressString)
+                !Equals(sessionData.IpAddress, IpAddress))
             {
                 // Remove session as it may have been compromised.
 
@@ -284,7 +284,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             var utcNow = DateTime.UtcNow;
 
             sessionData.Device = Device;
-            sessionData.IpAddress = IpAddressString;
+            sessionData.IpAddress = IpAddress;
             sessionData.RefreshedUtc = utcNow;
             sessionData.ValidFor = sessionData.IsPersistent ? _options.PersistentSessionExpiry : _options.TempSessionExpiry;
 

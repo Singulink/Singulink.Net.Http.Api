@@ -1,3 +1,6 @@
+using System.Collections.Concurrent;
+using System.Reflection;
+
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
@@ -5,6 +8,27 @@ namespace Singulink.Net.Http.Api.Service;
 /// </summary>
 public static class HttpContextExtensions
 {
+    private static readonly ConcurrentDictionary<ParameterInfo, (bool IsRequired, SessionAccessOptions Options)> _bindSessionTokenParamCache = [];
+
+    /// <summary>
+    /// Binds a session token from the HTTP context based on the parameter's nullability and attributes.
+    /// </summary>
+    public static async ValueTask<TSessionToken?> BindSessionTokenAsync<TSessionToken>(this HttpContext httpContext, ParameterInfo parameter)
+        where TSessionToken : class, ISessionToken
+    {
+        var (isRequired, options) = _bindSessionTokenParamCache.GetOrAdd(parameter, p =>
+        {
+            var nullabilityInfo = new NullabilityInfoContext().Create(parameter);
+
+            var sessionAccessAttr = p.GetCustomAttribute<SessionAccessAttribute>();
+            return (nullabilityInfo.WriteState is NullabilityState.NotNull, sessionAccessAttr?.Options ?? default);
+        });
+
+        return isRequired ?
+            await httpContext.GetRequiredSessionTokenAsync<TSessionToken>(options) :
+            await httpContext.GetSessionTokenAsync<TSessionToken>(options);
+    }
+
     /// <summary>
     /// Gets the session context from the HTTP context.
     /// </summary>

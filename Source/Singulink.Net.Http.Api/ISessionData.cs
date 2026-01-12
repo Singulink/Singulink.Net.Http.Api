@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Singulink.Net.Http.Api;
 
 /// <summary>
@@ -13,7 +15,7 @@ public interface ISessionData : ISessionTokenRefreshInfo
     /// <summary>
     /// Gets or sets the last IP address associated with the session.
     /// </summary>
-    string IpAddress { get; set; }
+    IPAddress? IpAddress { get; set; }
 
     /// <summary>
     /// Gets or sets the date and time when the session was last refreshed (in UTC).

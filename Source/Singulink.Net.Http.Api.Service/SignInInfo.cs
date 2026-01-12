@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
@@ -5,7 +7,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// </summary>
 public class SignInInfo
 {
-    internal SignInInfo(string device, string ipAddress, TimeSpan sessionExpiry, bool persistent)
+    internal SignInInfo(string device, IPAddress? ipAddress, TimeSpan sessionExpiry, bool persistent)
     {
         Device = device;
         IpAddress = ipAddress;
@@ -21,7 +23,7 @@ public class SignInInfo
     /// <summary>
     /// Gets the IP address of the device making the sign-in request.
     /// </summary>
-    public string IpAddress { get; }
+    public IPAddress? IpAddress { get; }
 
     /// <summary>
     /// Gets the duration after which the session will expire.

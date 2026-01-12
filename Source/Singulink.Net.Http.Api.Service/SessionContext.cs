@@ -21,11 +21,6 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     public abstract IPAddress? IpAddress { get; }
 
     /// <summary>
-    /// Gets the IP address of the current request as a string. If the IP address cannot be determined, returns "Unknown".
-    /// </summary>
-    public string IpAddressString => field ??= IpAddress?.ToString() ?? "Unknown";
-
-    /// <summary>
     /// Gets the session token from the current request. If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
     /// </summary>
     /// <param name="sessionOptions">Option flags for retrieving the session token.</param>

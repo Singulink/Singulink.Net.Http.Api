@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <Version>1.10.0</Version>
+    <Description>SignalR client library for the Singulink HTTP API Toolkit.</Description>
+    <PackageTags>HTTP; API; Client; SignalR;</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Client\Singulink.Net.Http.Api.Client.csproj" />
+  </ItemGroup>
+</Project>

@@ -5,7 +5,7 @@ namespace Singulink.Net.Http.Api;
 #pragma warning disable RCS1194 // Implement exception constructors
 
 /// <summary>
-/// Represents an exception that occurs when an API request user ID precondition header is required but missing (HTTP 428 Precondition Required).
+/// Represents an exception that occurs when an API request user ID precondition is required but missing (HTTP 428 Precondition Required).
 /// </summary>
 public class UserRequiredApiException : ApiException
 {

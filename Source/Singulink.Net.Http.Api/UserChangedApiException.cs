@@ -5,7 +5,7 @@ namespace Singulink.Net.Http.Api;
 #pragma warning disable RCS1194 // Implement exception constructors
 
 /// <summary>
-/// Represents an exception that occurs when an API request user ID precondition header does not match the current user (HTTP 412 Precondition Failed).
+/// Represents an exception that occurs when an API request user ID precondition does not match the current user (HTTP 412 Precondition Failed).
 /// </summary>
 public class UserChangedApiException : ApiException
 {

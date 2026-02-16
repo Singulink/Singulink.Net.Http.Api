@@ -28,7 +28,30 @@ where TSessionToken : class, ISessionToken
     /// Gets the device information from the User-Agent header in the request. Returns a parsed device platform, name and version if it could be identified,
     /// otherwise returns the raw user agent string.
     /// </summary>
-    public override string Device => field ??= GetDeviceFromUserAgent();
+    public override string Device
+    {
+        get {
+            return field ??= GetDeviceFromUserAgent();
+
+            string GetDeviceFromUserAgent()
+            {
+                if (!HttpContext.Request.Headers.TryGetValue(HeaderNames.UserAgent, out var userAgentValues))
+                    throw new BadRequestApiException("User agent required in request headers.");
+
+                string deviceUserAgentValue = userAgentValues[0]?.Trim();
+
+                if (string.IsNullOrEmpty(deviceUserAgentValue))
+                    throw new BadRequestApiException("Empty user agent in request headers.");
+
+                var userAgent = HttpUserAgentParser.Parse(deviceUserAgentValue);
+
+                if (userAgent.Name is not null && userAgent.Version is not null && userAgent.Platform?.PlatformType is { } platformType)
+                    return $"{platformType} ({userAgent.Name} {userAgent.Version})";
+
+                return deviceUserAgentValue;
+            }
+        }
+    }
 
     /// <summary>
     /// Gets the HTTP context for the current request.
@@ -69,24 +92,6 @@ where TSessionToken : class, ISessionToken
         HttpContext context, ParameterInfo parameter)
     {
         return ValueTask.FromResult(context.GetSessionContext<TSessionToken>());
-    }
-
-    private string GetDeviceFromUserAgent()
-    {
-        if (!HttpContext.Request.Headers.TryGetValue(HeaderNames.UserAgent, out var userAgentValues))
-            throw new BadRequestApiException("User agent required in request headers.");
-
-        string deviceUserAgentValue = userAgentValues[0]?.Trim();
-
-        if (string.IsNullOrEmpty(deviceUserAgentValue))
-            throw new BadRequestApiException("Empty user agent in request headers.");
-
-        var userAgent = HttpUserAgentParser.Parse(deviceUserAgentValue);
-
-        if (userAgent.Name is not null && userAgent.Version is not null && userAgent.Platform?.PlatformType is { } platformType)
-            return $"{platformType} ({userAgent.Name} {userAgent.Version})";
-
-        return deviceUserAgentValue;
     }
 }
 
@@ -156,7 +161,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             if (sessionToken is null)
                 goto InvalidSessionCookie;
 
-            ValidateUserIdPreconditionHeader(sessionToken, sessionOptions.HasAllFlags(SessionAccessOptions.OptionalUserIdPrecondition));
+            ValidateUserIdPrecondition(sessionToken, sessionOptions.HasAllFlags(SessionAccessOptions.OptionalUserIdPrecondition));
 
             if (sessionOptions.HasAllFlags(SessionAccessOptions.ForceRefresh) || sessionToken.RefreshedUtc.Add(sessionToken.RefreshAfter) < DateTime.UtcNow)
             {
@@ -221,32 +226,26 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     }
 
     /// <inheritdoc/>
-    public override void ClearToken()
-    {
-        HttpContext.Response.Cookies.Delete(_options.SessionCookieName);
-    }
+    public override void ClearToken() => HttpContext.Response.Cookies.Delete(_options.SessionCookieName);
 
-    private void ValidateUserIdPreconditionHeader(TSessionToken sessionToken, bool optional)
+    private void ValidateUserIdPrecondition(TSessionToken sessionToken, bool optional)
     {
-        if (_options.UserIdPreconditionHeaderName is null)
-            return;
-
-        if (!HttpContext.Request.Headers.TryGetValue(_options.UserIdPreconditionHeaderName, out var userIdValues))
+        if (!HttpContext.Request.Query.TryGetValue(_options.UserIdPreconditionQueryName, out var userIdValues))
         {
             if (optional)
                 return;
 
-            throw new UserRequiredApiException($"Request is missing required '{_options.UserIdPreconditionHeaderName}' precondition header.");
+            throw new UserRequiredApiException($"Request is missing required '{_options.UserIdPreconditionQueryName}' precondition query parameter.");
         }
 
         if (userIdValues.Count is not 1)
-            throw new BadRequestApiException($"Request contains multiple '{_options.UserIdPreconditionHeaderName}' headers.");
+            throw new BadRequestApiException($"Request contains multiple '{_options.UserIdPreconditionQueryName}' query parameter values.");
 
         if (userIdValues[0] is not { Length: > 0 } userId)
-            throw new BadRequestApiException($"Empty user ID in '{_options.UserIdPreconditionHeaderName}' header.");
+            throw new BadRequestApiException($"Empty user ID in '{_options.UserIdPreconditionQueryName}' query parameter.");
 
         if (userId != sessionToken.UserId)
-            throw new UserChangedApiException($"Request user identified in the '{_options.UserIdPreconditionHeaderName}' header does not match session user.");
+            throw new UserChangedApiException($"Request user identified in the '{_options.UserIdPreconditionQueryName}' query parameter does not match session user.");
     }
 
     private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken)

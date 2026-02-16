@@ -17,7 +17,7 @@ public enum SessionAccessOptions
     ForceRefresh = 1,
 
     /// <summary>
-    /// Indicates that the user ID precondition header should be optional (i.e. it is only checked to see if it matches the session token user ID if it is
+    /// Indicates that the user ID precondition should be optional (i.e. it is only checked to see if it matches the session token user ID if it is
     /// provided in the request).
     /// </summary>
     OptionalUserIdPrecondition = 2,

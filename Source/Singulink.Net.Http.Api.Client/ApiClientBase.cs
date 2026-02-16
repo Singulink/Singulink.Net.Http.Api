@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -12,19 +13,15 @@ namespace Singulink.Net.Http.Api.Client;
 /// </summary>
 public abstract class ApiClientBase
 {
-    private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
-    private readonly ApiClientBase? _parentClient;
-
     /// <summary>
-    /// The default key for the user ID precondition header that is used to ensure the cookie session user ID matches the expected user ID making the API
-    /// request. Value is <c>"If-User-Id"</c>.
+    /// The default query parameter name for the user ID precondition that is used to ensure the cookie session user ID matches the expected user ID
+    /// making the API request. Value is <c>"if-userId"</c>.
     /// </summary>
     /// <remarks>
-    /// If the API is making authorized requests then this header should be set to the user ID of the authenticated user by the API client implementation in the
-    /// <see cref="SendAsync{TResponse}(HttpRequestMessage, object?, CancellationToken)"/> method before calling the base implementation. It matches the default
-    /// key expected by <c>CookieSessionHandler</c>.
+    /// The user ID precondition can be included automatically by overriding <see cref="GetDefaultQueryParams(string)"/> to yield a tuple with this key and the
+    /// user ID value, or it can be passed explicitly in per-call query string parameters.
     /// </remarks>
-    protected const string DefaultUserIdPreconditionHeaderName = "If-User-Id";
+    protected const string DefaultUserIdPreconditionQueryName = "if-userId";
 
     /// <summary>
     /// The default name of the cookie that holds the encrypted session token. Value is <c>"session-token"</c>.
@@ -32,6 +29,11 @@ public abstract class ApiClientBase
     protected const string DefaultSessionCookieName = "session-token";
 
     private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
+
+    private static string? _defaultUserAgent;
+
+    private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly ApiClientBase? _parentClient;
 
     private static readonly Lazy<HttpClient> _defaultHttpClient = new(() => {
         if (OperatingSystem.IsBrowser())
@@ -56,6 +58,24 @@ public abstract class ApiClientBase
     /// Gets the name of the cookie that holds the encrypted session token. Defaults to <see cref="DefaultSessionCookieName"/>.
     /// </summary>
     protected virtual string SessionCookieName => DefaultSessionCookieName;
+
+    /// <summary>
+    /// Gets the user agent string sent with requests. On non-browser platforms, this is automatically applied to HTTP requests. If a parent client
+    /// exists, returns the parent's value by default.
+    /// </summary>
+    protected virtual string UserAgent
+    {
+        get {
+            return _parentClient?.UserAgent ?? (_defaultUserAgent ??= GetDefaultUserAgent());
+
+            static string GetDefaultUserAgent()
+            {
+                var assemblyName = typeof(ApiClientBase).Assembly.GetName();
+                string version = assemblyName.Version?.ToString() ?? "1.0";
+                return $"{assemblyName.Name}/{version}";
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets a value indicating whether the session token should be persisted via the session token changed callback.
@@ -119,6 +139,21 @@ public abstract class ApiClientBase
         _httpClientFactory = parent._httpClientFactory;
         _sessionState = parent._sessionState;
         _parentClient = parent;
+    }
+
+    /// <summary>
+    /// Gets the default query string parameters to include in all API requests and hub connections. Per-call parameters with the same key override
+    /// default parameters. If a parent client exists, returns the parent's defaults. Override this method to inject common parameters such as the user
+    /// ID precondition.
+    /// </summary>
+    /// <param name="path">The request path, which can be used to conditionally include or exclude default parameters.</param>
+    /// <returns>A span of default query string parameters. Returns an empty span if there are no defaults.</returns>
+    protected virtual ReadOnlySpan<(string Name, object? Value)> GetDefaultQueryParams(string path)
+    {
+        if (_parentClient is not null)
+            return _parentClient.GetDefaultQueryParams(path);
+
+        return [];
     }
 
     /// <summary>
@@ -293,8 +328,13 @@ public abstract class ApiClientBase
                 request.Content = JsonContent.Create(content, options: SerializerOptions);
         }
 
-        if (!OperatingSystem.IsBrowser() && _sessionState.Token is not null)
-            request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+        if (!OperatingSystem.IsBrowser())
+        {
+            if (_sessionState.Token is not null)
+                request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+        }
     }
 
     /// <summary>
@@ -365,26 +405,51 @@ public abstract class ApiClientBase
 
     private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
-    private Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object? Value)> queryStringParams)
+    /// <summary>
+    /// Builds a full API URL from the base address, path, and query string parameters. Default query parameters from <see cref="GetDefaultQueryParams"/>
+    /// are automatically merged with per-call parameters (per-call parameters with the same key take precedence).
+    /// </summary>
+    protected Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var uri = new Uri(GetBaseAddress(), path);
+        ReadOnlySpan<(string Name, object? Value)> defaults = GetDefaultQueryParams(path);
 
-        if (queryStringParams.Length is 0)
+        if (defaults.Length is 0 && queryStringParams.Length is 0)
             return uri;
 
         var builder = new UriBuilder(uri);
         string query = builder.Query;
-        StringBuilder qs;
+        StringBuilder qs = query.Length > 1 ? new StringBuilder(query) : new StringBuilder();
 
-        if (query.Length > 1)
-            qs = new StringBuilder(query);
-        else
-            qs = new StringBuilder();
-
+        // Add call params
         foreach (var (name, value) in queryStringParams)
+            AppendParam(qs, name, value);
+
+        // Add defaults that are not overridden by call params
+        foreach (var (name, value) in defaults)
         {
-            if (value is null || GetValueString(value) is not string strValue)
-                continue;
+            bool overridden = false;
+
+            foreach (var (callName, _) in queryStringParams)
+            {
+                if (string.Equals(name, callName, StringComparison.OrdinalIgnoreCase))
+                {
+                    overridden = true;
+                    break;
+                }
+            }
+
+            if (!overridden)
+                AppendParam(qs, name, value);
+        }
+
+        builder.Query = qs.ToString();
+        return builder.Uri;
+
+        static void AppendParam(StringBuilder qs, string name, object? value)
+        {
+            if (GetValueString(value) is not string strValue)
+                return;
 
             if (qs.Length > 0)
                 qs.Append('&');
@@ -394,11 +459,14 @@ public abstract class ApiClientBase
             qs.Append(Uri.EscapeDataString(strValue));
         }
 
-        builder.Query = qs.ToString();
-        return builder.Uri;
-
-        static string? GetValueString(object value)
+        static string? GetValueString(object? value)
         {
+            if (value is null)
+                return null;
+
+            if (value is byte[] bytes)
+                return Convert.ToBase64String(bytes);
+
             if (value is IFormattable formattable)
             {
                 string format = null;

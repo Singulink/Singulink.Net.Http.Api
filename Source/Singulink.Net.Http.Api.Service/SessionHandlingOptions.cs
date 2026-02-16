@@ -21,15 +21,15 @@ public sealed class SessionHandlingOptions
     } = "session-token";
 
     /// <summary>
-    /// Gets or sets the name for the user ID precondition header. Default is <c>"If-User-Id"</c>.
+    /// Gets or sets the query parameter name for the user ID precondition. Default is <c>"if-userId"</c>.
     /// </summary>
-    public string UserIdPreconditionHeaderName {
+    public string UserIdPreconditionQueryName {
         get;
         set {
             ArgumentException.ThrowIfNullOrEmpty(value, nameof(value));
             field = value;
         }
-    } = "If-User-Id";
+    } = "if-userId";
 
     /// <summary>
     /// Gets or sets the forced session access options that are applied to all session token retrievals. Default is <see cref="SessionAccessOptions.None"/>.

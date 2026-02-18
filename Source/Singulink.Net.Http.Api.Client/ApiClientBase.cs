@@ -1,10 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Components.WebAssembly.Http;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -28,24 +28,17 @@ public abstract class ApiClientBase
     /// </summary>
     protected const string DefaultSessionCookieName = "session-token";
 
-    private const int DefaultHttpClientRefreshDnsTimeout = 60 * 1000;
+    private const int DefaultHttpClientRefreshDnsTimeout = 120 * 1000;
 
-    private static string? _defaultUserAgent;
+    internal static readonly HttpMessageHandler? HttpMessageHandler = OperatingSystem.IsBrowser() ? null : new SocketsHttpHandler {
+        PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
+        UseCookies = false,
+    };
+
+    private static readonly HttpClient _httpClient = HttpMessageHandler is not null ? new HttpClient(HttpMessageHandler) : new HttpClient();
 
     private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ApiClientBase? _parentClient;
-
-    private static readonly Lazy<HttpClient> _defaultHttpClient = new(() => {
-        if (OperatingSystem.IsBrowser())
-            return new HttpClient();
-
-        return new HttpClient(new SocketsHttpHandler {
-            PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
-            UseCookies = false,
-        });
-    });
-
-    private readonly IHttpClientFactory? _httpClientFactory;
     private readonly SessionState _sessionState;
 
     /// <summary>
@@ -66,7 +59,10 @@ public abstract class ApiClientBase
     protected virtual string UserAgent
     {
         get {
-            return _parentClient?.UserAgent ?? (_defaultUserAgent ??= GetDefaultUserAgent());
+            if (_parentClient is not null)
+                return _parentClient.UserAgent;
+
+            return field ??= GetDefaultUserAgent();
 
             static string GetDefaultUserAgent()
             {
@@ -114,16 +110,15 @@ public abstract class ApiClientBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
     /// </summary>
-    protected ApiClientBase(IHttpClientFactory? httpClientFactory = null) : this(httpClientFactory, null, null)
+    protected ApiClientBase() : this(null, null)
     {
     }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory, session token and session token changed callback.
     /// </summary>
-    protected ApiClientBase(IHttpClientFactory? httpClientFactory, string? sessionToken, Action<string?>? sessionTokenChanged)
+    protected ApiClientBase(string? sessionToken, Action<string?>? sessionTokenChanged)
     {
-        _httpClientFactory = httpClientFactory;
         _sessionState = new SessionState {
             Token = sessionToken,
             ChangedCallback = sessionTokenChanged,
@@ -136,24 +131,8 @@ public abstract class ApiClientBase
     /// </summary>
     protected ApiClientBase(ApiClientBase parent)
     {
-        _httpClientFactory = parent._httpClientFactory;
         _sessionState = parent._sessionState;
         _parentClient = parent;
-    }
-
-    /// <summary>
-    /// Gets the default query string parameters to include in all API requests and hub connections. Per-call parameters with the same key override
-    /// default parameters. If a parent client exists, returns the parent's defaults. Override this method to inject common parameters such as the user
-    /// ID precondition.
-    /// </summary>
-    /// <param name="path">The request path, which can be used to conditionally include or exclude default parameters.</param>
-    /// <returns>A span of default query string parameters. Returns an empty span if there are no defaults.</returns>
-    protected virtual ReadOnlySpan<(string Name, object? Value)> GetDefaultQueryParams(string path)
-    {
-        if (_parentClient is not null)
-            return _parentClient.GetDefaultQueryParams(path);
-
-        return [];
     }
 
     /// <summary>
@@ -172,6 +151,21 @@ public abstract class ApiClientBase
     /// Gets the default base address for the API client that is used if HTTP client does not have a base address set.
     /// </summary>
     protected abstract Uri GetBaseAddress();
+
+    /// <summary>
+    /// Gets the default query string parameters to include in API requests and hub connections. Per-call parameters with the same key override
+    /// default parameters. If a parent client exists, returns the parent's defaults. Override this method to inject common parameters such as the user
+    /// ID precondition.
+    /// </summary>
+    /// <param name="path">The request path, which can be used to conditionally include or exclude default parameters.</param>
+    /// <returns>A span of default query string parameters. Returns an empty span if there are no defaults.</returns>
+    protected virtual ReadOnlySpan<(string Name, object? Value)> GetDefaultQueryParams(string path)
+    {
+        if (_parentClient is not null)
+            return _parentClient.GetDefaultQueryParams(path);
+
+        return [];
+    }
 
     /// <summary>
     /// Sends an API request.
@@ -226,7 +220,7 @@ public abstract class ApiClientBase
                 ? HttpCompletionOption.ResponseHeadersRead
                 : HttpCompletionOption.ResponseContentRead;
 
-            response = await GetHttpClient().SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
+            response = await _httpClient.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -279,7 +273,7 @@ public abstract class ApiClientBase
         try
         {
             PrepareRequest(request, content);
-            response = await GetHttpClient().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -328,7 +322,11 @@ public abstract class ApiClientBase
                 request.Content = JsonContent.Create(content, options: SerializerOptions);
         }
 
-        if (!OperatingSystem.IsBrowser())
+        if (OperatingSystem.IsBrowser())
+        {
+            request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        }
+        else
         {
             if (_sessionState.Token is not null)
                 request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
@@ -402,8 +400,6 @@ public abstract class ApiClientBase
             }
         }
     }
-
-    private HttpClient GetHttpClient() => _httpClientFactory?.CreateClient() ?? _defaultHttpClient.Value;
 
     /// <summary>
     /// Builds a full API URL from the base address, path, and query string parameters. Default query parameters from <see cref="GetDefaultQueryParams"/>

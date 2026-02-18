@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -12,7 +13,7 @@ public abstract class SignalRApiClientBase : ApiClientBase
     /// <summary>
     /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class with an optional HTTP client factory.
     /// </summary>
-    protected SignalRApiClientBase(IHttpClientFactory? httpClientFactory = null) : base(httpClientFactory)
+    protected SignalRApiClientBase() : base()
     {
     }
 
@@ -20,8 +21,8 @@ public abstract class SignalRApiClientBase : ApiClientBase
     /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class with an optional HTTP client factory, session token and session token
     /// changed callback.
     /// </summary>
-    protected SignalRApiClientBase(IHttpClientFactory? httpClientFactory, string? sessionToken, Action<string?>? sessionTokenChanged)
-        : base(httpClientFactory, sessionToken, sessionTokenChanged)
+    protected SignalRApiClientBase(string? sessionToken, Action<string?>? sessionTokenChanged)
+        : base(sessionToken, sessionTokenChanged)
     {
     }
 
@@ -34,14 +35,11 @@ public abstract class SignalRApiClientBase : ApiClientBase
 
     /// <summary>
     /// Creates a new <see cref="HubConnectionBuilder"/> for building hub connections. Default implementation returns a builder with automatic reconnect
-    /// enabled. Override to customize the builder (e.g. add <c>MessagePackHubProtocol</c>, adjust reconnect policy, etc.).
+    /// enabled. Override to customize the builder (e.g. adjust reconnect policy, etc.).
     /// </summary>
-    protected virtual HubConnectionBuilder CreateHubConnectionBuilder()
-    {
-        var builder = new HubConnectionBuilder();
-        builder.WithAutomaticReconnect();
-        return builder;
-    }
+    protected virtual IHubConnectionBuilder CreateHubConnectionBuilder() => new HubConnectionBuilder()
+            .AddJsonProtocol(options => options.PayloadSerializerOptions = SerializerOptions)
+            .WithAutomaticReconnect();
 
     /// <summary>
     /// Creates a new <see cref="HubConnection"/> for the specified hub path with optional query string parameters. Default query
@@ -69,15 +67,14 @@ public abstract class SignalRApiClientBase : ApiClientBase
         params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var hubUri = GetApiUrl(path, queryStringParams);
-        var builder = CreateHubConnectionBuilder();
-
-        builder.WithUrl(hubUri, options =>
+        var builder = CreateHubConnectionBuilder().WithUrl(hubUri, options =>
         {
-            if (OperatingSystem.IsBrowser())
-            {
-                options.Transports = HttpTransportType.WebSockets;
-            }
-            else
+            options.Transports = HttpTransportType.WebSockets;
+
+            if (HttpMessageHandler is not null)
+                options.HttpMessageHandlerFactory = _ => HttpMessageHandler;
+
+            if (!OperatingSystem.IsBrowser())
             {
                 string? sessionToken = SessionToken;
 

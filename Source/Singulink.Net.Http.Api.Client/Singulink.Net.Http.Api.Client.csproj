@@ -2,10 +2,14 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
 
-    <Version>1.10.0</Version>
+    <Version>1.10.1</Version>
     <Description>API client library for the Singulink HTTP API Tookit.</Description>
     <PackageTags>HTTP; API; Client;</PackageTags>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Singulink.Net.Http.Api.Client.SignalR" PublicKey="002400000480000094000000060200000024000052534131000400000100010071EA14A9C9F75F6259D4D6A2AAE17FE8A2D742FCF413DC872447728B1E936187F6626D35EC9E7F7CA4CB47C507045AEA377637E8ADDD35912810EB26BD1D4C7EDB6C3C9A5685783A101233E7DCEAEAC81F6E4CC095C17B65EEDE1A885FF47E5479E46CAC2AC0A52B88806CF38A77BA8533D4B0026A63CDB7BCA9ED23AB5580C0" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.1" />

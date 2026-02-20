@@ -30,10 +30,7 @@ public abstract class ApiClientBase
 
     private const int DefaultHttpClientRefreshDnsTimeout = 120 * 1000;
 
-    internal static readonly HttpMessageHandler? HttpMessageHandler = OperatingSystem.IsBrowser() ? null : new SocketsHttpHandler {
-        PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
-        UseCookies = false,
-    };
+    internal static readonly HttpMessageHandler? HttpMessageHandler = OperatingSystem.IsBrowser() ? null : new SharedApiSocketsHttpHandler();
 
     private static readonly HttpClient _httpClient = HttpMessageHandler is not null ? new HttpClient(HttpMessageHandler) : new HttpClient();
 
@@ -484,5 +481,20 @@ public abstract class ApiClientBase
         public bool IsPersistentSession { get; set; }
 
         public Action<string?>? ChangedCallback { get; set; }
+    }
+
+    private class SharedApiSocketsHttpHandler : DelegatingHandler
+    {
+        public SharedApiSocketsHttpHandler()
+            : base(new SocketsHttpHandler {
+                PooledConnectionLifetime = TimeSpan.FromMilliseconds(DefaultHttpClientRefreshDnsTimeout),
+                UseCookies = false,
+            }) { }
+
+        protected override void Dispose(bool disposing)
+        {
+            // Do not dispose the inner handler
+            base.Dispose(false);
+        }
     }
 }

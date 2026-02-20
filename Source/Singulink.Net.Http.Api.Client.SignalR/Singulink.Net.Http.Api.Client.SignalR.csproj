@@ -1,8 +1,8 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
 
-    <Version>1.10.1</Version>
+    <Version>1.10.2</Version>
     <Description>SignalR client library for the Singulink HTTP API Toolkit.</Description>
     <PackageTags>HTTP; API; Client; SignalR;</PackageTags>
   </PropertyGroup>

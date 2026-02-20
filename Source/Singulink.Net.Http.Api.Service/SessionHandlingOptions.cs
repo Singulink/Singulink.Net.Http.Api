@@ -44,10 +44,10 @@ public sealed class SessionHandlingOptions
     } = SessionAccessOptions.None;
 
     /// <summary>
-    /// Gets or sets the grace period where multiple refresh requests for the same session token generation are allowed. This is to allow for concurrent requests that
-    /// may all try to refresh the token at the same time. Default is 10 seconds.
+    /// Gets or sets the grace period where multiple refresh requests for the same session token generation are allowed. This is to allow for concurrent
+    /// requests that may all try to refresh the token at the same time. Default is 30 seconds.
     /// </summary>
-    public TimeSpan MultipleRefreshGracePeriod { get; set; } = TimeSpan.FromSeconds(10);
+    public TimeSpan MultipleRefreshGracePeriod { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
     /// Gets or sets the expiry duration for temporary (non-persistent) sessions. Default is 1 day.

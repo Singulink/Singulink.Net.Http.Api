@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Net.Http.Headers;
 using MyCSharp.HttpUserAgentParser;
@@ -14,7 +15,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// Provides an abstraction for handling user sessions and tokens in an HTTP context.
 /// </summary>
 public abstract class HttpSessionContext<TSessionToken> : SessionContext<TSessionToken>, IBindableFromHttpContext<HttpSessionContext<TSessionToken>>
-where TSessionToken : class, ISessionToken
+    where TSessionToken : class, ISessionToken
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="HttpSessionContext{TSessionToken}"/> class.
@@ -35,20 +36,20 @@ where TSessionToken : class, ISessionToken
 
             string GetDeviceFromUserAgent()
             {
-                if (!HttpContext.Request.Headers.TryGetValue(HeaderNames.UserAgent, out var userAgentValues))
+                if (!HttpContext.Request.Headers.TryGetValue(HeaderNames.UserAgent, out var values))
                     throw new BadRequestApiException("User agent required in request headers.");
 
-                string deviceUserAgentValue = userAgentValues[0]?.Trim();
+                string value = values[0]?.Trim();
 
-                if (string.IsNullOrEmpty(deviceUserAgentValue))
+                if (string.IsNullOrEmpty(value))
                     throw new BadRequestApiException("Empty user agent in request headers.");
 
-                var userAgent = HttpUserAgentParser.Parse(deviceUserAgentValue);
+                var userAgent = HttpUserAgentParser.Parse(value);
 
                 if (userAgent.Name is not null && userAgent.Version is not null && userAgent.Platform?.PlatformType is { } platformType)
                     return $"{platformType} ({userAgent.Name} {userAgent.Version})";
 
-                return deviceUserAgentValue;
+                return value;
             }
         }
     }

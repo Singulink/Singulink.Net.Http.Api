@@ -212,12 +212,7 @@ public abstract class ApiClientBase
         try
         {
             PrepareRequest(request, content);
-
-            var completionOption = typeof(TResponse) == typeof(VoidApiResponse)
-                ? HttpCompletionOption.ResponseHeadersRead
-                : HttpCompletionOption.ResponseContentRead;
-
-            response = await _httpClient.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -325,10 +320,10 @@ public abstract class ApiClientBase
         }
         else
         {
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+
             if (_sessionState.Token is not null)
                 request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
-
-            request.Headers.UserAgent.ParseAdd(UserAgent);
         }
     }
 

@@ -10,11 +10,6 @@ public interface ISessionToken
     /// </summary>
     public string UserId { get; }
 
-    // /// <summary>
-    // /// Gets the ID of the session.
-    // /// </summary>
-    // long SessionId { get; }
-
     /// <summary>
     /// Gets the date and time when the session token was refreshed (in UTC).
     /// </summary>

@@ -141,7 +141,21 @@ public abstract class ApiClientBase
     protected virtual HttpRequestMessage CreateRequest(HttpMethod method, string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         var url = GetApiUrl(path, queryStringParams);
-        return new HttpRequestMessage(method, url);
+        var request = new HttpRequestMessage(method, url);
+
+        if (OperatingSystem.IsBrowser())
+        {
+            request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        }
+        else
+        {
+            request.Headers.UserAgent.ParseAdd(UserAgent);
+
+            if (_sessionState.Token is not null)
+                request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
+        }
+
+        return request;
     }
 
     /// <summary>
@@ -211,7 +225,7 @@ public abstract class ApiClientBase
 
         try
         {
-            PrepareRequest(request, content);
+            SetRequestContent(request, content);
             response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -264,7 +278,7 @@ public abstract class ApiClientBase
 
         try
         {
-            PrepareRequest(request, content);
+            SetRequestContent(request, content);
             response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -299,7 +313,7 @@ public abstract class ApiClientBase
     /// <summary>
     /// Prepares the request by setting content and session cookie header.
     /// </summary>
-    private void PrepareRequest(HttpRequestMessage request, object? content)
+    private void SetRequestContent(HttpRequestMessage request, object? content)
     {
         if (content is not null)
         {
@@ -312,18 +326,6 @@ public abstract class ApiClientBase
                 request.Content = new StringContent(strContent);
             else
                 request.Content = JsonContent.Create(content, options: SerializerOptions);
-        }
-
-        if (OperatingSystem.IsBrowser())
-        {
-            request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
-        }
-        else
-        {
-            request.Headers.UserAgent.ParseAdd(UserAgent);
-
-            if (_sessionState.Token is not null)
-                request.Headers.Add("Cookie", $"{SessionCookieName}={_sessionState.Token}");
         }
     }
 
@@ -399,6 +401,9 @@ public abstract class ApiClientBase
     /// </summary>
     protected Uri GetApiUrl(string path, ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
+        if (path.Contains("://"))
+            throw new ArgumentException("Path cannot be an absolute URI.", nameof(path));
+
         var uri = new Uri(GetBaseAddress(), path);
         ReadOnlySpan<(string Name, object? Value)> defaults = GetDefaultQueryParams(path);
 
@@ -486,10 +491,6 @@ public abstract class ApiClientBase
                 UseCookies = false,
             }) { }
 
-        protected override void Dispose(bool disposing)
-        {
-            // Do not dispose the inner handler
-            base.Dispose(false);
-        }
+        protected override void Dispose(bool disposing) { }
     }
 }

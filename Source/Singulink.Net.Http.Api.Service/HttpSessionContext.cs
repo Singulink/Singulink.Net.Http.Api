@@ -221,7 +221,14 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     public override void ClearToken()
     {
         _skipDeferredRefresh = true;
-        HttpContext.Response.Cookies.Delete(_options.SessionCookieName);
+
+        // Domain/Path must match the values used when the cookie was issued; otherwise the browser keeps the original cookie alongside the deletion attempt.
+        HttpContext.Response.Cookies.Delete(_options.SessionCookieName, new CookieOptions {
+            Domain = _options.CookieDomain,
+            Path = _options.CookiePath,
+            Secure = true,
+            SameSite = SameSiteMode.None,
+        });
     }
 
     private void SetTokenInternal(TSessionToken sessionToken)
@@ -234,6 +241,8 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             IsEssential = true,
             Secure = true,
             SameSite = SameSiteMode.None,
+            Domain = _options.CookieDomain,
+            Path = _options.CookiePath,
             MaxAge = sessionToken.IsPersistent ? sessionToken.ValidFor : null,
         };
 

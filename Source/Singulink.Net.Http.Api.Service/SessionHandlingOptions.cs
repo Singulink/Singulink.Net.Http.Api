@@ -21,6 +21,25 @@ public sealed class SessionHandlingOptions
     } = "session-token";
 
     /// <summary>
+    /// Gets or sets the domain that the session cookie applies to. Leave <see langword="null"/> (the default) to scope the cookie to the host that issued
+    /// it. Set to a parent domain (e.g. <c>".example.com"</c>) to share the session across subdomains — in that case the same value must be configured on
+    /// every application that participates in the shared session, and they must all share the same data-protection key ring so the encrypted cookie can be
+    /// read across hosts.
+    /// </summary>
+    public string? CookieDomain { get; set; }
+
+    /// <summary>
+    /// Gets or sets the path that the session cookie applies to. Default is <c>"/"</c>.
+    /// </summary>
+    public string CookiePath {
+        get;
+        set {
+            ArgumentException.ThrowIfNullOrEmpty(value, nameof(value));
+            field = value;
+        }
+    } = "/";
+
+    /// <summary>
     /// Gets or sets the query parameter name for the user ID precondition. Default is <c>"if-userId"</c>.
     /// </summary>
     public string UserIdPreconditionQueryName {

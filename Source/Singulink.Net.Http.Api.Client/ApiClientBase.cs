@@ -1,9 +1,11 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
 
 namespace Singulink.Net.Http.Api.Client;
@@ -30,11 +32,17 @@ public abstract class ApiClientBase
 
     private const int DefaultHttpClientRefreshDnsTimeout = 120 * 1000;
 
+    private const string SerializationUnreferencedCodeMessage =
+        "JSON serialization and deserialization might require types that cannot be statically analyzed. Use a constructor that accepts a source-generated " +
+        "JsonSerializerContext (IJsonTypeInfoResolver) to ensure compatibility with trimming.";
+
+    private const string SerializationSuppressionJustification =
+        "The trimming requirement is enforced on the reflection-based constructors via RequiresUnreferencedCode. The trim-safe constructors supply a " +
+        "source-generated IJsonTypeInfoResolver, so no unreferenced code is used at runtime.";
+
     internal static readonly HttpMessageHandler? HttpMessageHandler = OperatingSystem.IsBrowser() ? null : new SharedApiSocketsHttpHandler();
 
     private static readonly HttpClient _httpClient = HttpMessageHandler is not null ? new HttpClient(HttpMessageHandler) : new HttpClient();
-
-    private readonly JsonSerializerOptions _defaultSerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ApiClientBase? _parentClient;
     private readonly SessionState _sessionState;
 
@@ -42,7 +50,7 @@ public abstract class ApiClientBase
     /// Gets the JSON serializer options used for serializing and deserializing API request and response content. Defaults to options provided by <see
     /// cref="JsonSerializerDefaults.Web"/>.
     /// </summary>
-    protected virtual JsonSerializerOptions SerializerOptions => _parentClient?.SerializerOptions ?? _defaultSerializerOptions;
+    protected JsonSerializerOptions SerializerOptions { get; }
 
     /// <summary>
     /// Gets the name of the cookie that holds the encrypted session token. Defaults to <see cref="DefaultSessionCookieName"/>.
@@ -105,31 +113,110 @@ public abstract class ApiClientBase
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory.
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default <see
+    /// cref="JsonSerializerDefaults.Web"/> options.
     /// </summary>
-    protected ApiClientBase() : this(null, null)
+    /// <remarks>
+    /// This constructor uses reflection-based JSON serialization which is not compatible with trimming. To support trimming, use a constructor that
+    /// accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationUnreferencedCodeMessage)]
+    protected ApiClientBase() : this(new JsonSerializerOptions(JsonSerializerDefaults.Web), sessionState: CreateSessionState(null, null))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApiClientBase"/> class with an optional HTTP client factory, session token and session token changed callback.
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default <see
+    /// cref="JsonSerializerDefaults.Web"/> options, the specified session token and session token changed callback.
     /// </summary>
+    /// <remarks>
+    /// This constructor uses reflection-based JSON serialization which is not compatible with trimming. To support trimming, use a constructor that
+    /// accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationUnreferencedCodeMessage)]
     protected ApiClientBase(string? sessionToken, Action<string?>? sessionTokenChanged)
+        : this(new JsonSerializerOptions(JsonSerializerDefaults.Web), sessionState: CreateSessionState(sessionToken, sessionTokenChanged))
     {
-        _sessionState = new SessionState {
-            Token = sessionToken,
-            ChangedCallback = sessionTokenChanged,
-            IsPersistentSession = sessionToken is not null,
-        };
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApiClientBase"/> class that shares the session state with the specified parent client.
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using the specified JSON serializer options, with an optional session token and
+    /// session token changed callback.
+    /// </summary>
+    /// <param name="serializerOptions">The JSON serializer options used for serializing and deserializing API request and response content.</param>
+    /// <param name="sessionToken">The initial session token.</param>
+    /// <param name="sessionTokenChanged">A callback invoked when the session token changes.</param>
+    /// <remarks>
+    /// This constructor accepts arbitrary serializer options whose trimming compatibility cannot be statically verified, so it is not compatible with
+    /// trimming. To support trimming, use a constructor that accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a <see
+    /// cref="System.Text.Json.Serialization.JsonSerializerContext"/>).
+    /// </remarks>
+    [RequiresUnreferencedCode(SerializationUnreferencedCodeMessage)]
+    protected ApiClientBase(JsonSerializerOptions serializerOptions, string? sessionToken = null, Action<string?>? sessionTokenChanged = null)
+        : this(serializerOptions, sessionState: CreateSessionState(sessionToken, sessionTokenChanged))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using JSON serialization backed by the specified source-generated type
+    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>). This constructor is compatible with trimming.
+    /// </summary>
+    /// <param name="serializerContext">The source-generated JSON type information resolver used for serialization and deserialization.</param>
+    /// <param name="configureOptions">An optional callback to further configure the JSON serializer options created from the resolver.</param>
+    protected ApiClientBase(IJsonTypeInfoResolver serializerContext, Action<JsonSerializerOptions>? configureOptions = null)
+        : this(serializerContext, null, null, configureOptions)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using JSON serialization backed by the specified source-generated type
+    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>), with the specified session token and session token
+    /// changed callback. This constructor is compatible with trimming.
+    /// </summary>
+    /// <param name="serializerContext">The source-generated JSON type information resolver used for serialization and deserialization.</param>
+    /// <param name="sessionToken">The initial session token.</param>
+    /// <param name="sessionTokenChanged">A callback invoked when the session token changes.</param>
+    /// <param name="configureOptions">An optional callback to further configure the JSON serializer options created from the resolver.</param>
+    protected ApiClientBase(
+        IJsonTypeInfoResolver serializerContext,
+        string? sessionToken,
+        Action<string?>? sessionTokenChanged,
+        Action<JsonSerializerOptions>? configureOptions = null)
+        : this(CreateOptions(serializerContext, configureOptions), sessionState: CreateSessionState(sessionToken, sessionTokenChanged))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class that shares the session state and JSON serializer options with the specified
+    /// parent client.
     /// </summary>
     protected ApiClientBase(ApiClientBase parent)
     {
+        SerializerOptions = parent.SerializerOptions;
         _sessionState = parent._sessionState;
         _parentClient = parent;
+    }
+
+    private ApiClientBase(JsonSerializerOptions serializerOptions, SessionState sessionState)
+    {
+        SerializerOptions = serializerOptions;
+        _sessionState = sessionState;
+    }
+
+    private static SessionState CreateSessionState(string? sessionToken, Action<string?>? sessionTokenChanged) => new() {
+        Token = sessionToken,
+        ChangedCallback = sessionTokenChanged,
+        IsPersistentSession = sessionToken is not null,
+    };
+
+    private static JsonSerializerOptions CreateOptions(IJsonTypeInfoResolver serializerContext, Action<JsonSerializerOptions>? configureOptions)
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+        configureOptions?.Invoke(options);
+        options.TypeInfoResolver = serializerContext;
+
+        return options;
     }
 
     /// <summary>
@@ -218,6 +305,7 @@ public abstract class ApiClientBase
     /// <exception cref="ValidationApiException">A 422 (Unprocessable Content/Entity) response was returned.</exception>
     /// <exception cref="UserRequiredApiException">A 428 (Precondition Required) response was returned.</exception>
     /// <exception cref="ApiException">A response other than 2xx or one of the other known/expected error codes was returned.</exception>
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = SerializationSuppressionJustification)]
     protected virtual async Task<TResponse> SendAsync<TResponse>(HttpRequestMessage request, object? content, CancellationToken cancellationToken = default)
         where TResponse : notnull
     {
@@ -271,6 +359,7 @@ public abstract class ApiClientBase
     /// Sends an API request with the specified content and returns a streaming response.
     /// </summary>
     /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = SerializationSuppressionJustification)]
     protected virtual async IAsyncEnumerable<TItem> SendStreamingAsync<TItem>(
         HttpRequestMessage request, object? content, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -313,6 +402,7 @@ public abstract class ApiClientBase
     /// <summary>
     /// Prepares the request by setting content and session cookie header.
     /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = SerializationSuppressionJustification)]
     private void SetRequestContent(HttpRequestMessage request, object? content)
     {
         if (content is not null)

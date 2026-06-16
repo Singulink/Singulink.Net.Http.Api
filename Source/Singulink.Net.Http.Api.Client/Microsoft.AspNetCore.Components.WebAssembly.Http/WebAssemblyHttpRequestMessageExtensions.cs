@@ -22,7 +22,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserRequestCredentials(this HttpRequestMessage requestMessage, BrowserRequestCredentials requestCredentials)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         string stringOption = requestCredentials switch
         {
@@ -45,7 +45,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserRequestCache(this HttpRequestMessage requestMessage, BrowserRequestCache requestCache)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         string stringOption = requestCache switch
         {
@@ -71,7 +71,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserRequestMode(this HttpRequestMessage requestMessage, BrowserRequestMode requestMode)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         string stringOption = requestMode switch
         {
@@ -107,7 +107,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserRequestOption(this HttpRequestMessage requestMessage, string name, object value)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         IDictionary<string, object> fetchOptions;
         if (requestMessage.Options.TryGetValue(FetchRequestOptionsKey, out var entry))
@@ -137,7 +137,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserRequestStreamingEnabled(this HttpRequestMessage requestMessage, bool streamingEnabled)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         requestMessage.Options.Set(WebAssemblyEnableStreamingRequestKey, streamingEnabled);
 
@@ -155,7 +155,7 @@ internal static class WebAssemblyHttpRequestMessageExtensions
     /// </remarks>
     public static HttpRequestMessage SetBrowserResponseStreamingEnabled(this HttpRequestMessage requestMessage, bool streamingEnabled)
     {
-        ArgumentNullException.ThrowIfNull(requestMessage);
+        // ArgumentNullException.ThrowIfNull(requestMessage);
 
         requestMessage.Options.Set(WebAssemblyEnableStreamingResponseKey, streamingEnabled);
 

@@ -12,7 +12,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Copyright>© Singulink. All rights reserved.</Copyright>
     <PackageIcon>Singulink Icon 128x128.png</PackageIcon>
-    <PackageProjectUrl>https://github.com/Singulink/Singulink.UI</PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Singulink/Singulink.Net.Http.Api</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

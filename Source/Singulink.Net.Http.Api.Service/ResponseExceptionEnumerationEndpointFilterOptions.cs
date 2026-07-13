@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Singulink.Net.Http.Api.Service;
@@ -18,6 +19,21 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         return this;
     }
 
+    /// <summary>
+    /// Adds a callback that will be invoked whenever an unhandled exception is thrown during enumeration of an enumerable result.
+    /// </summary>
+    /// <remarks>
+    /// Exceptions are always converted into the enumerable result, but by default they are only logged to trace. Adding a callback removes the default logging
+    /// behaviour and allows you to customize behaviour.
+    /// </remarks>
+    public ResponseExceptionEnumerationEndpointFilterOptions AddExceptionObserver(Action<Exception> callback)
+    {
+        _unhandledExceptionCallback += callback;
+        return this;
+    }
+
+    internal Action<Exception>? _unhandledExceptionCallback;
+
     internal readonly List<HelperBase> _enumerableTypes = [];
 
     internal abstract class HelperBase
@@ -25,12 +41,28 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         public abstract bool TryWrap(
             IAsyncEnumerable<ISupportsResponseException?> enumerable,
             bool isDevelopment,
+            Action<Exception>? unhandledExceptionCallback,
             [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseException?>? wrapped);
 
         public abstract bool TryWrap(
             IEnumerable<ISupportsResponseException?> enumerable,
             bool isDevelopment,
+            Action<Exception>? unhandledExceptionCallback,
             [NotNullWhen(true)] out IEnumerable<ISupportsResponseException?>? wrapped);
+    }
+
+    private static void DefaultUnhandledExceptionCallback(Exception ex)
+    {
+        if (ex is ApiException apiEx)
+        {
+            if (Trace.Listeners.Count > 0)
+                Trace.TraceWarning($"[Singulink.Net.Http.Api] Expected API exception handled ({apiEx.StatusCode}): {apiEx}");
+        }
+        else
+        {
+            if (Trace.Listeners.Count > 0)
+                Trace.TraceWarning($"[Singulink.Net.Http.Api] Unexpected exception suppressed: {ex}");
+        }
     }
 
     private sealed class Helper<T> : HelperBase
@@ -39,11 +71,12 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         public override bool TryWrap(
             IAsyncEnumerable<ISupportsResponseException?> enumerable,
             bool isDevelopment,
+            Action<Exception>? unhandledExceptionCallback,
             [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseException?>? wrapped)
         {
             if (enumerable is IAsyncEnumerable<T> typedEnumerable)
             {
-                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment);
+                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback);
                 return true;
             }
 
@@ -54,11 +87,12 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         public override bool TryWrap(
             IEnumerable<ISupportsResponseException?> enumerable,
             bool isDevelopment,
+            Action<Exception>? unhandledExceptionCallback,
             [NotNullWhen(true)] out IEnumerable<ISupportsResponseException?>? wrapped)
         {
             if (enumerable is IEnumerable<T> typedEnumerable)
             {
-                wrapped = new EnumerableWrapper(typedEnumerable, isDevelopment);
+                wrapped = new EnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback);
                 return true;
             }
 
@@ -70,16 +104,18 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         {
             private readonly IAsyncEnumerable<T> _enumerable;
             private readonly bool _isDevelopment;
+            private readonly Action<Exception> _unhandledExceptionCallback;
 
-            public AsyncEnumerableWrapper(IAsyncEnumerable<T> enumerable, bool isDevelopment)
+            public AsyncEnumerableWrapper(IAsyncEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
+                _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
             public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             {
-                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(cancellationToken), _isDevelopment);
+                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(cancellationToken), _isDevelopment, _unhandledExceptionCallback);
             }
         }
 
@@ -87,12 +123,14 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         {
             private IAsyncEnumerator<T>? _enumerator;
             private readonly bool _isDevelopment;
+            private readonly Action<Exception> _unhandledExceptionCallback;
             private T? _current;
 
-            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment)
+            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
+                _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
             public T Current => _current!;
@@ -124,6 +162,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
                 }
                 catch (Exception ex)
                 {
+                    _unhandledExceptionCallback(ex);
                     _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment));
                     _enumerator = null;
                     return true;
@@ -135,16 +174,18 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         {
             private readonly IEnumerable<T> _enumerable;
             private readonly bool _isDevelopment;
+            private readonly Action<Exception> _unhandledExceptionCallback;
 
-            public EnumerableWrapper(IEnumerable<T> enumerable, bool isDevelopment)
+            public EnumerableWrapper(IEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
+                _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
             public IEnumerator<T> GetEnumerator()
             {
-                return new EnumeratorWrapper(_enumerable.GetEnumerator(), _isDevelopment);
+                return new EnumeratorWrapper(_enumerable.GetEnumerator(), _isDevelopment, _unhandledExceptionCallback);
             }
 
             IEnumerator IEnumerable.GetEnumerator()
@@ -157,12 +198,14 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         {
             private IEnumerator<T>? _enumerator;
             private readonly bool _isDevelopment;
+            private readonly Action<Exception> _unhandledExceptionCallback;
             private T? _current;
 
-            public EnumeratorWrapper(IEnumerator<T> enumerator, bool isDevelopment)
+            public EnumeratorWrapper(IEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
+                _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
             public T Current => _current!;
@@ -196,6 +239,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
                 }
                 catch (Exception ex)
                 {
+                    _unhandledExceptionCallback(ex);
                     _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment));
                     _enumerator = null;
                     return true;

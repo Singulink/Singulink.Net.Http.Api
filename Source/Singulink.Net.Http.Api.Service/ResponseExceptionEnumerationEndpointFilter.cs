@@ -11,6 +11,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilter(ResponseException
     private readonly ResponseExceptionEnumerationEndpointFilterOptions.HelperBase[] _helpers = [.. options._enumerableTypes];
     private readonly ConditionalWeakTable<Type, ResponseExceptionEnumerationEndpointFilterOptions.HelperBase?> _lookupCache = [];
     private readonly bool _isDevelopment = isDevelopment;
+    private readonly Action<Exception>? _unhandledExceptionCallback = options._unhandledExceptionCallback;
 
     /// <inheritdoc />
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
@@ -31,7 +32,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilter(ResponseException
                 // Loop through all helpers to find one that can wrap this type
                 foreach (var helper in _helpers.AsSpan())
                 {
-                    if (helper.TryWrap(asyncEnumerable, _isDevelopment, out var wrapped))
+                    if (helper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, out var wrapped))
                     {
                         cachedHelper = helper;
                         result = wrapped;
@@ -45,7 +46,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilter(ResponseException
             else if (cachedHelper is { })
             {
                 // Use the cached helper to wrap the enumerable
-                bool success = cachedHelper.TryWrap(asyncEnumerable, _isDevelopment, out var wrapped);
+                bool success = cachedHelper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, out var wrapped);
                 Debug.Assert(success, "The cached helper should always be able to wrap the type it was cached for.");
                 result = wrapped;
             }
@@ -62,7 +63,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilter(ResponseException
                 // Loop through all helpers to find one that can wrap this type
                 foreach (var helper in _helpers.AsSpan())
                 {
-                    if (helper.TryWrap(enumerable, _isDevelopment, out var wrapped))
+                    if (helper.TryWrap(enumerable, _isDevelopment, _unhandledExceptionCallback, out var wrapped))
                     {
                         cachedHelper = helper;
                         result = wrapped;
@@ -76,7 +77,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilter(ResponseException
             else if (cachedHelper is { })
             {
                 // Use the cached helper to wrap the enumerable
-                bool success = cachedHelper.TryWrap(enumerable, _isDevelopment, out var wrapped);
+                bool success = cachedHelper.TryWrap(enumerable, _isDevelopment, _unhandledExceptionCallback, out var wrapped);
                 Debug.Assert(success, "The cached helper should always be able to wrap the type it was cached for.");
                 result = wrapped;
             }

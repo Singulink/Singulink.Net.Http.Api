@@ -33,8 +33,14 @@ public static class WebApplicationExtensions
     /// <inheritdoc cref="UseApiExceptionHandling(IApplicationBuilder)" path="/summary" />
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This overload also registers a <see cref="ResponseExceptionEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
     /// application, so it must be called after all endpoints have been mapped.
+    /// </para>
+    /// <para>
+    /// By default, suppressed exceptions are logged to trace; this behaviour can be customized by calling
+    /// <see cref="ResponseExceptionEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
+    /// </para>
     /// </remarks>
     public static TBuilder UseApiExceptionHandling<TBuilder>(
         this TBuilder app,

@@ -23,8 +23,13 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
     /// Adds a callback that will be invoked whenever an unhandled exception is thrown during enumeration of an enumerable result.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Exceptions are always converted into the enumerable result, but by default they are only logged to trace. Adding a callback removes the default logging
     /// behaviour and allows you to customize behaviour.
+    /// </para>
+    /// <para>
+    /// Note: this is called before the exception is converted and reported from the endpoint.
+    /// </para>
     /// </remarks>
     public ResponseExceptionEnumerationEndpointFilterOptions AddExceptionObserver(Action<Exception> callback)
     {

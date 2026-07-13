@@ -59,7 +59,7 @@ public sealed class ResponseExceptionInfo()
         {
             string contentType = "text/plain";
             int statusCode = 500;
-            string message = $"{exception.GetType().FullName}: {exception.Message}\n{exception.StackTrace}";
+            string message = $"{exception.GetType().FullName}: {exception.Message}{Environment.NewLine}{exception.StackTrace}";
             return new ResponseExceptionInfo(statusCode, message, contentType);
         }
         else

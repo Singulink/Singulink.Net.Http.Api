@@ -3,7 +3,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// <summary>
 /// Extension methods for configuring <see cref="WebApplication"/> and its related interfaces to use HTTP API services.
 /// </summary>
-public static class WebApplicationBuilderExtensions
+public static class WebApplicationExtensions
 {
     /// <summary>
     /// Configures the application to use CORS with the allowed origins registered in the service collection.

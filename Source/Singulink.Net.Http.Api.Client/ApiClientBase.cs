@@ -395,6 +395,7 @@ public abstract class ApiClientBase
                         if (canBeResponseException && item is IStoresResponseException { Info: { } info })
                         {
                             ThrowOnErrorResponse((HttpStatusCode)info.StatusCode, info.ContentType, info.Message);
+                            continue;
                         }
 
                         yield return item;

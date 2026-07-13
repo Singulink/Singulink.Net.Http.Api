@@ -29,7 +29,13 @@ public static class WebApplicationBuilderExtensions
         return app.UseMiddleware<ApiExceptionMiddleware>();
     }
 
-    /// <inheritdoc cref="UseApiExceptionHandling(IApplicationBuilder)" />
+    /// <summary>
+    /// <inheritdoc cref="UseApiExceptionHandling(IApplicationBuilder)" path="/summary" />
+    /// </summary>
+    /// <remarks>
+    /// This overload also registers a <see cref="ResponseExceptionEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
+    /// application, so it must be called after all endpoints have been mapped.
+    /// </remarks>
     public static TBuilder UseApiExceptionHandling<TBuilder>(
         this TBuilder app,
         Action<ResponseExceptionEnumerationEndpointFilterOptions> configureEnumerationOptions)
@@ -37,33 +43,27 @@ public static class WebApplicationBuilderExtensions
     {
         app.UseApiExceptionHandling();
 
-        // Add our filter to all endpoints in the application.
-        app.MapGroup(string.Empty).UseApiExceptionEnumerationHandling(configureEnumerationOptions);
-
-        return app;
-    }
-
-    /// <summary>
-    /// Configures the application to use <see cref="ResponseExceptionEnumerationEndpointFilter" /> for handling API exceptions.
-    /// </summary>
-    public static IEndpointConventionBuilder UseApiExceptionEnumerationHandling(
-        this IEndpointConventionBuilder builder,
-        Action<ResponseExceptionEnumerationEndpointFilterOptions> configureOptions)
-    {
         ResponseExceptionEnumerationEndpointFilterOptions options = new();
-        configureOptions(options);
+        configureEnumerationOptions(options);
 
-        if (options._enumerableTypes.Count > 0)
+        if (options._enumerableTypes.Count is 0)
+            return app;
+
+        bool isDevelopment = app.ApplicationServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
+        ResponseExceptionEnumerationEndpointFilter filter = new(options, isDevelopment);
+
+        // The filter has to wrap the I{Async}Enumerable<T> result itself, so it must run as an endpoint filter. Endpoint filters can only be attached while
+        // an endpoint is being built, so we replace every currently registered endpoint data source with a decorator that rebuilds its endpoints with the
+        // filter attached (the same mechanism a route group uses to apply a filter to its children, minus the route prefix). This requires the endpoints to
+        // already be mapped, hence the "call after mapping" requirement documented above.
+        var sources = app.DataSources.ToArray();
+        app.DataSources.Clear();
+
+        foreach (var source in sources)
         {
-            // Note: we have to use an endpoint filter as we need to wrap the I{Async}Enumerable<T> itself.
-            builder.Add((endpointBuilder) =>
-            {
-                bool isDevelopment = endpointBuilder.ApplicationServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
-                ResponseExceptionEnumerationEndpointFilter inst = new(options, isDevelopment);
-                endpointBuilder.FilterFactories.Add((_, next) => async (context) => await inst.InvokeAsync(context, next));
-            });
+            app.DataSources.Add(new ResponseExceptionEnumerationEndpointDataSource(source, app.ApplicationServices, filter));
         }
 
-        return builder;
+        return app;
     }
 }

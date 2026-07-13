@@ -28,13 +28,15 @@ public class ApiExceptionMiddleware
         }
         catch (ApiException ex)
         {
-            context.Response.ContentType = "text/plain";
-            context.Response.StatusCode = (int)ex.StatusCode;
+            var info = ResponseExceptionInfo.FromApiException(ex);
+
+            context.Response.ContentType = info.ContentType;
+            context.Response.StatusCode = info.StatusCode;
 
             if (Trace.Listeners.Count > 0)
                 Trace.TraceWarning($"[Singulink.Net.Http.Api] Expected API exception handled ({ex.StatusCode}): {ex}");
 
-            await context.Response.WriteAsync(ex.Message);
+            await context.Response.WriteAsync(info.Message);
         }
     }
 }

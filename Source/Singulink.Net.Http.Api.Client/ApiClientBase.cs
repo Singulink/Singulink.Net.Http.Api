@@ -384,12 +384,21 @@ public abstract class ApiClientBase
 
             var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
+            bool canBeResponseException = typeof(TItem).IsAssignableTo(typeof(ISupportsResponseException));
+
             await using (stream.ConfigureAwait(false))
             {
                 await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<TItem>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false))
                 {
                     if (item is not null)
+                    {
+                        if (canBeResponseException && item is IStoresResponseException { Info: { } info })
+                        {
+                            ThrowOnErrorResponse((HttpStatusCode)info.StatusCode, info.ContentType, info.Message);
+                        }
+
                         yield return item;
+                    }
                 }
             }
         }
@@ -430,6 +439,17 @@ public abstract class ApiClientBase
         string? errorContentType = response.Content.Headers.ContentType?.MediaType;
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
+        ThrowOnErrorResponse(response.StatusCode, errorContentType, errorContentString);
+    }
+
+    /// <summary>
+    /// Throws an appropriate API exception if the response indicates an error.
+    /// </summary>
+    private void ThrowOnErrorResponse(HttpStatusCode statusCode, string? errorContentType, string errorContentString)
+    {
+        if (statusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
+            return;
+
         string? errorMessage = null;
         ApiErrorContent? errorContent = null;
 
@@ -439,9 +459,9 @@ public abstract class ApiClientBase
             errorContent = new(errorContentString, errorContentType ?? "unknown");
 
         if (string.IsNullOrWhiteSpace(errorMessage))
-            errorMessage = $"Unknown service error ({response.StatusCode}).";
+            errorMessage = $"Unknown service error ({statusCode}).";
 
-        var ex = response.StatusCode switch
+        var ex = statusCode switch
         {
             HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
             HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
@@ -450,7 +470,7 @@ public abstract class ApiClientBase
             HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
             HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
             HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
-            _ => new ApiException(response.StatusCode, errorMessage) { ErrorContent = errorContent },
+            _ => new ApiException(statusCode, errorMessage) { ErrorContent = errorContent },
         };
 
         throw ex;

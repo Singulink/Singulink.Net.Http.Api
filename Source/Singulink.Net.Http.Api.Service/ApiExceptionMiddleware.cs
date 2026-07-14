@@ -30,7 +30,7 @@ public class ApiExceptionMiddleware
         {
             var info = ResponseExceptionInfo.FromApiException(ex);
 
-            context.Response.ContentType = "text/plain";
+            context.Response.ContentType = "text/singulink-response-exception-info-v1";
             context.Response.StatusCode = info.StatusCode;
 
             if (Trace.Listeners.Count > 0)

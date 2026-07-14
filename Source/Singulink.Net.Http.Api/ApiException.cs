@@ -16,7 +16,8 @@ public class ApiException : Exception
     public HttpStatusCode StatusCode { get; }
 
     /// <summary>
-    /// Gets the error content associated with the API exception if the error response was not in <c>text/plain</c> or a known/expected format.
+    /// Gets the error content associated with the API exception if the error response was not in <c>text/singulink-response-exception-info-v1</c> or a
+    /// known/expected format.
     /// </summary>
     public ApiErrorContent? ErrorContent { get; init; }
 
@@ -32,23 +33,12 @@ public class ApiException : Exception
     /// <para>
     /// An error code of <c>""</c> is normalized to <see langword="null" />.
     /// </para>
-    /// <para>
-    /// Only valid on built-in derived <see cref="ApiException"/> types.
-    /// </para>
     /// </remarks>
     public string? ErrorCode
     {
         get;
         init
         {
-            var type = GetType();
-
-            if ((type == typeof(ApiException) || type.Assembly != typeof(ApiException).Assembly) && !string.IsNullOrEmpty(ErrorCode))
-            {
-                static void Throw() => throw new InvalidOperationException("ErrorCode can only be set on built-in derived ApiException types.");
-                Throw();
-            }
-
             if (value.AsSpan().ContainsAnyExcept(_validErrorCodeChars))
             {
                 static void Throw() => throw new ArgumentException("Error code must only consist of valid ASCII letters, digits, hyphens, and underscores.", nameof(value));

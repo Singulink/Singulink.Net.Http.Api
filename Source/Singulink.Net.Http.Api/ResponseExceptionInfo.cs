@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 
@@ -97,32 +96,22 @@ internal readonly struct ResponseExceptionInfo
     {
         result = default;
 
-        // Assume we got a valid message for all status codes that we have specific subtypes for
-        bool isValidMessage = IsRecognizedStatusCode(statusCode);
-
-        // If it should be a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
+        // If it is a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
         // Note: to ensure that we can round-trip, we require that no error code gets encoded as [] <message>
         string errorCode = string.Empty;
         string message;
 
-        if (isValidMessage)
+        if (responseContent is ['[', .. var rest] && rest.IndexOf(']') is >= 0 and { } endBracketIndex)
         {
-            if (responseContent is ['[', .. var rest] && rest.IndexOf(']') is >= 0 and { } endBracketIndex)
-            {
-                if (endBracketIndex > 0)
-                    errorCode = rest[..endBracketIndex].ToString();
+            if (endBracketIndex > 0)
+                errorCode = rest[..endBracketIndex].ToString();
 
-                message = rest[(endBracketIndex + 1)..].TrimStart().ToString();
-            }
-            else
-            {
-                // Invalid format, return false
-                return false;
-            }
+            message = rest[(endBracketIndex + 1)..].TrimStart().ToString();
         }
         else
         {
-            message = responseContent.ToString();
+            // Invalid format, return false
+            return false;
         }
 
         // If we got here, then we have a valid status code and message, so we can create the result
@@ -132,43 +121,15 @@ internal readonly struct ResponseExceptionInfo
 
     public string ToEnumerationString()
     {
-        if (IsRecognizedStatusCode(StatusCode))
-        {
-            return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
-        }
-        else
-        {
-            Debug.Assert(ErrorCode.Length == 0, "Error code should be empty for unrecognized status codes.");
-            return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} {Message}");
-        }
+        return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
     }
 
     public string ToResponseString()
     {
-        if (IsRecognizedStatusCode(StatusCode))
-        {
-            return $"[{ErrorCode}] {Message}";
-        }
-        else
-        {
-            Debug.Assert(ErrorCode.Length == 0, "Error code should be empty for unrecognized status codes.");
-            return Message;
-        }
+        return $"[{ErrorCode}] {Message}";
     }
 
-    private static bool IsRecognizedStatusCode(int statusCode) => (HttpStatusCode)statusCode switch
-    {
-        HttpStatusCode.BadRequest => true,
-        HttpStatusCode.Unauthorized => true,
-        HttpStatusCode.Forbidden => true,
-        HttpStatusCode.NotFound => true,
-        HttpStatusCode.PreconditionFailed => true,
-        HttpStatusCode.UnprocessableEntity => true,
-        HttpStatusCode.PreconditionRequired => true,
-        _ => false,
-    };
-
-    public void Throw(string rawContent, string? errorContentType = "text/plain")
+    public void Throw(string rawContent, string? errorContentType = "text/singulink-response-exception-info-v1")
     {
         if ((HttpStatusCode)StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             return;
@@ -176,7 +137,7 @@ internal readonly struct ResponseExceptionInfo
         string? errorMessage = null;
         ApiErrorContent? errorContent = null;
 
-        if (errorContentType is "text/plain")
+        if (errorContentType is "text/singulink-response-exception-info-v1")
             errorMessage = Message;
         else if (!string.IsNullOrWhiteSpace(Message))
             errorContent = new(rawContent, errorContentType ?? "unknown");

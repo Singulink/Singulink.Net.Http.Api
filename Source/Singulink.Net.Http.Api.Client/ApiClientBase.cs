@@ -440,7 +440,7 @@ public abstract class ApiClientBase
         string? errorContentType = response.Content.Headers.ContentType?.MediaType;
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        ResponseExceptionInfo.Parse((int)response.StatusCode, errorContentType).Throw(errorContentString, errorContentType: errorContentType);
+        ResponseExceptionInfo.Parse((int)response.StatusCode, errorContentString).Throw(errorContentString, errorContentType: errorContentType);
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

@@ -392,9 +392,9 @@ public abstract class ApiClientBase
                 {
                     if (item is not null)
                     {
-                        if (canBeResponseException && item is IStoresResponseException { Info: { } info })
+                        if (canBeResponseException && item is IStoresResponseException { ExceptionInfo: { } info })
                         {
-                            ThrowOnErrorResponse((HttpStatusCode)info.StatusCode, info.ContentType, info.Message);
+                            ResponseExceptionInfo.Parse(info).Throw(info);
                             continue;
                         }
 
@@ -440,41 +440,7 @@ public abstract class ApiClientBase
         string? errorContentType = response.Content.Headers.ContentType?.MediaType;
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        ThrowOnErrorResponse(response.StatusCode, errorContentType, errorContentString);
-    }
-
-    /// <summary>
-    /// Throws an appropriate API exception if the response indicates an error.
-    /// </summary>
-    private void ThrowOnErrorResponse(HttpStatusCode statusCode, string? errorContentType, string errorContentString)
-    {
-        if (statusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
-            return;
-
-        string? errorMessage = null;
-        ApiErrorContent? errorContent = null;
-
-        if (errorContentType is "text/plain")
-            errorMessage = errorContentString;
-        else if (!string.IsNullOrWhiteSpace(errorContentString))
-            errorContent = new(errorContentString, errorContentType ?? "unknown");
-
-        if (string.IsNullOrWhiteSpace(errorMessage))
-            errorMessage = $"Unknown service error ({statusCode}).";
-
-        var ex = statusCode switch
-        {
-            HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.Forbidden => new ForbiddenApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.NotFound => new NotFoundApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
-            _ => new ApiException(statusCode, errorMessage) { ErrorContent = errorContent },
-        };
-
-        throw ex;
+        ResponseExceptionInfo.Parse((int)response.StatusCode, errorContentType).Throw(errorContentString, errorContentType: errorContentType);
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

@@ -16,11 +16,11 @@ public interface ISupportsResponseException<TSelf> : ISupportsResponseException 
 {
     /// <summary>
     /// Creates a new instance of <typeparamref name="TSelf"/> (or a derived type) that represents a response exception based on the provided
-    /// <paramref name="info" />.
+    /// <paramref name="exceptionInfo" />.
     /// </summary>
     /// <remarks>
     /// The value returned from this type must implement <see cref="IStoresResponseException" /> (which will be checked by the caller), and should represent the
-    /// provided <paramref name="info" />.
+    /// provided <paramref name="exceptionInfo" />.
     /// </remarks>
-    static abstract TSelf CreateResponseExceptionValue(ResponseExceptionInfo info);
+    static abstract TSelf CreateResponseExceptionValue(string exceptionInfo);
 }

@@ -168,7 +168,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
                 catch (Exception ex)
                 {
                     _unhandledExceptionCallback(ex);
-                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment));
+                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
                     _enumerator = null;
                     _ = (IStoresResponseException)_current;
                     return true;
@@ -246,7 +246,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
                 catch (Exception ex)
                 {
                     _unhandledExceptionCallback(ex);
-                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment));
+                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
                     _enumerator = null;
                     _ = (IStoresResponseException)_current;
                     return true;

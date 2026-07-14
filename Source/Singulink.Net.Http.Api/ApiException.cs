@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Net;
 
 namespace Singulink.Net.Http.Api;
@@ -18,6 +19,45 @@ public class ApiException : Exception
     /// Gets the error content associated with the API exception if the error response was not in <c>text/plain</c> or a known/expected format.
     /// </summary>
     public ApiErrorContent? ErrorContent { get; init; }
+
+    private static readonly SearchValues<char> _validErrorCodeChars = SearchValues.Create("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_");
+
+    /// <summary>
+    /// Gets the application-specific error code associated with the API exception, if available.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Must only consist of valid ASCII letters, digits, hyphens, and underscores.
+    /// </para>
+    /// <para>
+    /// An error code of <c>""</c> is normalized to <see langword="null" />.
+    /// </para>
+    /// <para>
+    /// Only valid on built-in derived <see cref="ApiException"/> types.
+    /// </para>
+    /// </remarks>
+    public string? ErrorCode
+    {
+        get;
+        init
+        {
+            var type = GetType();
+
+            if ((type == typeof(ApiException) || type.Assembly != typeof(ApiException).Assembly) && !string.IsNullOrEmpty(ErrorCode))
+            {
+                static void Throw() => throw new InvalidOperationException("ErrorCode can only be set on built-in derived ApiException types.");
+                Throw();
+            }
+
+            if (value.AsSpan().ContainsAnyExcept(_validErrorCodeChars))
+            {
+                static void Throw() => throw new ArgumentException("Error code must only consist of valid ASCII letters, digits, hyphens, and underscores.", nameof(value));
+                Throw();
+            }
+
+            field = value?.Length is not > 0 ? null : value;
+        }
+    }
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiException"/> class with a specified HTTP status code and error message.

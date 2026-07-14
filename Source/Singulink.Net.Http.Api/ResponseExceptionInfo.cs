@@ -18,7 +18,7 @@ internal readonly struct ResponseExceptionInfo
 
             mimeType = mimeType.ToLowerInvariant();
 
-            if (mimeType.Contains(';'))
+            if (mimeType.Contains(';') && mimeType.Any(char.IsWhiteSpace))
                 mimeType = string.Join(";", mimeType.Split(';').Select((x) => x.Trim()));
         }
 

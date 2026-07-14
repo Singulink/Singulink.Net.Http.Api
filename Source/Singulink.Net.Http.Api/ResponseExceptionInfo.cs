@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 
@@ -152,8 +151,7 @@ internal readonly struct ResponseExceptionInfo
             return true;
         }
 
-        // If it is a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
-        // Note: to ensure that we can round-trip, we require that no error code gets encoded as [] <message>
+        // We should have [<error-code>] <message> format
         string errorCode = string.Empty;
         string message;
 

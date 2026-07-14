@@ -16,7 +16,7 @@ public class ApiException : Exception
     public HttpStatusCode StatusCode { get; }
 
     /// <summary>
-    /// Gets the error content associated with the API exception if the error response was not in <c>text/singulink-response-exception-info-v1</c> or a
+    /// Gets the error content associated with the API exception if the error response was not in <c>text/plain</c> or a
     /// known/expected format.
     /// </summary>
     public ApiErrorContent? ErrorContent { get; init; }

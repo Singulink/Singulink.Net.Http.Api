@@ -384,12 +384,22 @@ public abstract class ApiClientBase
 
             var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
+            bool canBeResponseException = typeof(TItem).IsAssignableTo(typeof(ISupportsResponseException));
+
             await using (stream.ConfigureAwait(false))
             {
                 await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<TItem>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false))
                 {
                     if (item is not null)
+                    {
+                        if (canBeResponseException && item is IStoresResponseException { ExceptionInfo: { } info })
+                        {
+                            ResponseExceptionInfo.ParseAndThrow(info);
+                            continue;
+                        }
+
                         yield return item;
+                    }
                 }
             }
         }
@@ -427,33 +437,13 @@ public abstract class ApiClientBase
         if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             return;
 
-        string? errorContentType = response.Content.Headers.ContentType?.MediaType;
+        var contentType = response.Content.Headers.ContentType;
+        string? errorContentType = contentType?.MediaType;
+        bool hasErrorCode = contentType?.Parameters.Any(p => p.Name.Equals("format", StringComparison.OrdinalIgnoreCase) && "error-code".Equals(p.Value, StringComparison.OrdinalIgnoreCase)) ?? false;
+
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        string? errorMessage = null;
-        ApiErrorContent? errorContent = null;
-
-        if (errorContentType is "text/plain")
-            errorMessage = errorContentString;
-        else if (!string.IsNullOrWhiteSpace(errorContentString))
-            errorContent = new(errorContentString, errorContentType ?? "unknown");
-
-        if (string.IsNullOrWhiteSpace(errorMessage))
-            errorMessage = $"Unknown service error ({response.StatusCode}).";
-
-        var ex = response.StatusCode switch
-        {
-            HttpStatusCode.BadRequest => new BadRequestApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.Unauthorized => new UnauthorizedApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.Forbidden => new ForbiddenApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.NotFound => new NotFoundApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent },
-            HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent },
-            _ => new ApiException(response.StatusCode, errorMessage) { ErrorContent = errorContent },
-        };
-
-        throw ex;
+        ResponseExceptionInfo.ParseAndThrow((int)response.StatusCode, errorContentString, errorContentType, hasErrorCode);
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

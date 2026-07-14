@@ -394,7 +394,7 @@ public abstract class ApiClientBase
                     {
                         if (canBeResponseException && item is IStoresResponseException { ExceptionInfo: { } info })
                         {
-                            ResponseExceptionInfo.Parse(info).Throw(info);
+                            ResponseExceptionInfo.ParseAndThrow(info);
                             continue;
                         }
 
@@ -437,10 +437,25 @@ public abstract class ApiClientBase
         if (response.StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             return;
 
-        string? errorContentType = response.Content.Headers.ContentType?.MediaType;
+        var contentType = response.Content.Headers.ContentType;
+        string? errorContentType = null;
+
+        if (contentType != null)
+        {
+            errorContentType = contentType.MediaType;
+
+            foreach (var param in contentType.Parameters)
+            {
+                if (param.Name.Equals("format", StringComparison.OrdinalIgnoreCase))
+                {
+                    errorContentType += $";format={param.Value}";
+                }
+            }
+        }
+
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        ResponseExceptionInfo.Parse((int)response.StatusCode, errorContentString).Throw(errorContentString, errorContentType: errorContentType);
+        ResponseExceptionInfo.ParseAndThrow((int)response.StatusCode, errorContentString, errorContentType);
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

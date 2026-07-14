@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 
@@ -5,16 +6,32 @@ namespace Singulink.Net.Http.Api;
 
 internal readonly struct ResponseExceptionInfo
 {
-    private ResponseExceptionInfo(int statusCode, string errorCode, string message)
+    private ResponseExceptionInfo(int statusCode, string errorCode, string message, string? mimeType = null)
     {
         StatusCode = statusCode;
         ErrorCode = errorCode;
         Message = message;
+
+        if (mimeType != null)
+        {
+            // Ensure we see a normalized MIME type.
+
+            mimeType = mimeType.ToLowerInvariant();
+
+            if (mimeType.Contains(';'))
+                mimeType = string.Join(";", mimeType.Split(';').Select((x) => x.Trim()));
+        }
+
+        MimeType = mimeType ?? (errorCode.Length > 0 ? ResponseExceptionInfoMimeType : PlainTextMimeType);
     }
 
     public int StatusCode { get; }
     public string ErrorCode { get; }
     public string Message { get; }
+    public string MimeType { get; } // Only used for non-enumeration format.
+
+    private const string PlainTextMimeType = "text/plain";
+    private const string ResponseExceptionInfoMimeType = "text/plain;format=error-code";
 
     /// <summary>
     /// Creates a new <see cref="ResponseExceptionInfo" /> instance from an <see cref="ApiException" />.
@@ -55,81 +72,52 @@ internal readonly struct ResponseExceptionInfo
         }
     }
 
-    public static ResponseExceptionInfo Parse(ReadOnlySpan<char> enumerationContent)
+    public static void ParseAndThrow(string enumerationContent)
     {
-        if (!TryParse(enumerationContent, out var result))
-        {
-            static void Throw(ReadOnlySpan<char> content) => throw new FormatException($"Invalid enumeration ResponseExceptionInfo content format: '{content}'");
-            Throw(enumerationContent);
-        }
-
-        return result;
-    }
-
-    public static ResponseExceptionInfo Parse(int statusCode, ReadOnlySpan<char> responseContent)
-    {
-        if (!TryParse(statusCode, responseContent, out var result))
-        {
-            static void Throw(int status, ReadOnlySpan<char> content) => throw new FormatException($"Invalid response ResponseExceptionInfo content format for status code {status} ({(HttpStatusCode)status}): '{content}'");
-            Throw(statusCode, responseContent);
-        }
-
-        return result;
-    }
-
-    public static bool TryParse(ReadOnlySpan<char> enumerationContent, out ResponseExceptionInfo result)
-    {
-        result = default;
-
         // Check if we have a valid status code at the start of the string
-        if (enumerationContent is [>= '1' and <= '5', >= '0' and <= '9', >= '0' and <= '9', ' ', .. { } rest])
+        if (enumerationContent.AsSpan() is [>= '1' and <= '5', >= '0' and <= '9', >= '0' and <= '9', ' ', .. var rest])
         {
-            return TryParse(int.Parse(enumerationContent[..3], NumberStyles.None, CultureInfo.InvariantCulture), rest, out result);
+            if (TryParseImpl(int.Parse(enumerationContent[..3], NumberStyles.None, CultureInfo.InvariantCulture), rest, enumerationContent, ResponseExceptionInfoMimeType, out var info))
+            {
+                info.Throw(enumerationContent, ResponseExceptionInfoMimeType);
+            }
+            else
+            {
+                ThrowInvalid(enumerationContent);
+            }
         }
         else
         {
-            return false;
+            ThrowInvalid(enumerationContent);
         }
-    }
 
-    public static bool TryParse(int statusCode, ReadOnlySpan<char> responseContent, out ResponseExceptionInfo result)
-    {
-        result = default;
-
-        // If it is a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
-        // Note: to ensure that we can round-trip, we require that no error code gets encoded as [] <message>
-        string errorCode = string.Empty;
-        string message;
-
-        if (responseContent is ['[', .. var rest] && rest.IndexOf(']') is >= 0 and { } endBracketIndex)
+        static void ThrowInvalid(string content)
         {
-            if (endBracketIndex > 0)
-                errorCode = rest[..endBracketIndex].ToString();
-
-            message = rest[(endBracketIndex + 1)..].TrimStart().ToString();
+            throw new ApiException(HttpStatusCode.InternalServerError, $"Invalid enumeration exception content: {content}");
         }
-        else
+    }
+
+    public static void ParseAndThrow(int statusCode, string responseContent, string? mimeType)
+    {
+        if (TryParseImpl(statusCode, responseContent.AsSpan(), responseContent, mimeType ?? "unknown", out var info))
         {
-            // Invalid format, return false
-            return false;
+            info.Throw(responseContent, mimeType);
+        }
+        else if ((HttpStatusCode)statusCode is not (>= HttpStatusCode.OK and <= (HttpStatusCode)299))
+        {
+            ThrowInvalid(statusCode, responseContent, mimeType);
         }
 
-        // If we got here, then we have a valid status code and message, so we can create the result
-        result = new ResponseExceptionInfo(statusCode, errorCode, message);
-        return true;
+        static void ThrowInvalid(int statusCode, string content, string? mimeType)
+        {
+            throw new ApiException(HttpStatusCode.InternalServerError, $"Unknown service error ({statusCode})")
+            {
+                ErrorContent = new ApiErrorContent(content, mimeType ?? "unknown"),
+            };
+        }
     }
 
-    public string ToEnumerationString()
-    {
-        return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
-    }
-
-    public string ToResponseString()
-    {
-        return $"[{ErrorCode}] {Message}";
-    }
-
-    public void Throw(string rawContent, string? errorContentType = "text/singulink-response-exception-info-v1")
+    private void Throw(string rawContent, string? errorContentType)
     {
         if ((HttpStatusCode)StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
             return;
@@ -137,7 +125,7 @@ internal readonly struct ResponseExceptionInfo
         string? errorMessage = null;
         ApiErrorContent? errorContent = null;
 
-        if (errorContentType is "text/singulink-response-exception-info-v1")
+        if (errorContentType is ResponseExceptionInfoMimeType or PlainTextMimeType)
             errorMessage = Message;
         else if (!string.IsNullOrWhiteSpace(Message))
             errorContent = new(rawContent, errorContentType ?? "unknown");
@@ -159,5 +147,64 @@ internal readonly struct ResponseExceptionInfo
         };
 
         throw ex;
+    }
+
+    private static bool TryParseImpl(int statusCode, ReadOnlySpan<char> responseContent, string originalResponseContent, string mimeType, out ResponseExceptionInfo info)
+    {
+        // Check plain text mime type
+        if (mimeType == PlainTextMimeType)
+        {
+            info = new(statusCode, string.Empty, originalResponseContent, mimeType);
+            return true;
+        }
+
+        // Check custom mime type
+        if (mimeType != ResponseExceptionInfoMimeType)
+        {
+            info = default;
+            return false;
+        }
+
+        // If it is a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
+        // Note: to ensure that we can round-trip, we require that no error code gets encoded as [] <message>
+        string errorCode = string.Empty;
+        string message;
+
+        if (responseContent is ['[', .. var rest] && rest.IndexOf(']') is >= 0 and { } endBracketIndex)
+        {
+            if (endBracketIndex > 0)
+                errorCode = rest[..endBracketIndex].ToString();
+
+            message = rest[(endBracketIndex + 1)..].TrimStart().ToString();
+        }
+        else
+        {
+            // Invalid format
+            info = default;
+            return false;
+        }
+
+        // If we got here, then we have a valid status code and message, so we can create the result
+        info = new ResponseExceptionInfo(statusCode, errorCode, message, mimeType);
+        return true;
+    }
+
+    public string ToEnumerationString()
+    {
+        return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
+    }
+
+    public string ToResponseString()
+    {
+        if (MimeType == PlainTextMimeType)
+        {
+            Debug.Assert(ErrorCode.Length == 0, "Error code should be empty for plain text response.");
+            return Message;
+        }
+        else
+        {
+            Debug.Assert(MimeType == ResponseExceptionInfoMimeType, "Unexpected mime type for response exception info.");
+            return $"[{ErrorCode}] {Message}";
+        }
     }
 }

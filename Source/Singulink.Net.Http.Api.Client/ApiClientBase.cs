@@ -438,24 +438,12 @@ public abstract class ApiClientBase
             return;
 
         var contentType = response.Content.Headers.ContentType;
-        string? errorContentType = null;
-
-        if (contentType != null)
-        {
-            errorContentType = contentType.MediaType;
-
-            foreach (var param in contentType.Parameters)
-            {
-                if (param.Name.Equals("format", StringComparison.OrdinalIgnoreCase))
-                {
-                    errorContentType += $";format={param.Value}";
-                }
-            }
-        }
+        string? errorContentType = contentType?.MediaType;
+        bool hasErrorCode = contentType?.Parameters.Any(p => p.Name.Equals("format", StringComparison.OrdinalIgnoreCase) && "error-code".Equals(p.Value, StringComparison.OrdinalIgnoreCase)) ?? false;
 
         string errorContentString = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
-        ResponseExceptionInfo.ParseAndThrow((int)response.StatusCode, errorContentString, errorContentType);
+        ResponseExceptionInfo.ParseAndThrow((int)response.StatusCode, errorContentString, errorContentType, hasErrorCode);
     }
 
     private void UpdateSessionToken(HttpResponseMessage response)

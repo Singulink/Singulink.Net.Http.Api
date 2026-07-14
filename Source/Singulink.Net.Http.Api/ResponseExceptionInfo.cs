@@ -6,32 +6,19 @@ namespace Singulink.Net.Http.Api;
 
 internal readonly struct ResponseExceptionInfo
 {
-    private ResponseExceptionInfo(int statusCode, string errorCode, string message, string? mimeType = null)
+    private ResponseExceptionInfo(int statusCode, string errorCode, string message)
     {
         StatusCode = statusCode;
         ErrorCode = errorCode;
         Message = message;
-
-        if (mimeType != null)
-        {
-            // Ensure we see a normalized MIME type.
-
-            mimeType = mimeType.ToLowerInvariant();
-
-            if (mimeType.Contains(';') && mimeType.Any(char.IsWhiteSpace))
-                mimeType = string.Join(";", mimeType.Split(';').Select((x) => x.Trim()));
-        }
-
-        MimeType = mimeType ?? (errorCode.Length > 0 ? ResponseExceptionInfoMimeType : PlainTextMimeType);
     }
 
     public int StatusCode { get; }
     public string ErrorCode { get; }
     public string Message { get; }
-    public string MimeType { get; } // Only used for non-enumeration format.
+    public string MimeType => ErrorCode.Length > 0 ? (PlainTextMimeType + ";format=error-code") : PlainTextMimeType; // Only used for non-enumeration format.
 
     private const string PlainTextMimeType = "text/plain";
-    private const string ResponseExceptionInfoMimeType = "text/plain;format=error-code";
 
     /// <summary>
     /// Creates a new <see cref="ResponseExceptionInfo" /> instance from an <see cref="ApiException" />.
@@ -77,9 +64,9 @@ internal readonly struct ResponseExceptionInfo
         // Check if we have a valid status code at the start of the string
         if (enumerationContent.AsSpan() is [>= '1' and <= '5', >= '0' and <= '9', >= '0' and <= '9', ' ', .. var rest])
         {
-            if (TryParseImpl(int.Parse(enumerationContent[..3], NumberStyles.None, CultureInfo.InvariantCulture), rest, enumerationContent, ResponseExceptionInfoMimeType, out var info))
+            if (TryParseImpl(int.Parse(enumerationContent[..3], NumberStyles.None, CultureInfo.InvariantCulture), rest, enumerationContent, PlainTextMimeType, hasErrorCode: true, out var info))
             {
-                info.Throw(enumerationContent, ResponseExceptionInfoMimeType);
+                info.Throw(enumerationContent, PlainTextMimeType);
             }
             else
             {
@@ -97,9 +84,9 @@ internal readonly struct ResponseExceptionInfo
         }
     }
 
-    public static void ParseAndThrow(int statusCode, string responseContent, string? mimeType)
+    public static void ParseAndThrow(int statusCode, string responseContent, string? mimeType, bool hasErrorCode)
     {
-        if (TryParseImpl(statusCode, responseContent.AsSpan(), responseContent, mimeType ?? "unknown", out var info))
+        if (TryParseImpl(statusCode, responseContent.AsSpan(), responseContent, mimeType ?? "unknown", hasErrorCode, out var info))
         {
             info.Throw(responseContent, mimeType);
         }
@@ -125,7 +112,7 @@ internal readonly struct ResponseExceptionInfo
         string? errorMessage = null;
         ApiErrorContent? errorContent = null;
 
-        if (errorContentType is ResponseExceptionInfoMimeType or PlainTextMimeType)
+        if (errorContentType is PlainTextMimeType)
             errorMessage = Message;
         else if (!string.IsNullOrWhiteSpace(Message))
             errorContent = new(rawContent, errorContentType ?? "unknown");
@@ -149,20 +136,20 @@ internal readonly struct ResponseExceptionInfo
         throw ex;
     }
 
-    private static bool TryParseImpl(int statusCode, ReadOnlySpan<char> responseContent, string originalResponseContent, string mimeType, out ResponseExceptionInfo info)
+    private static bool TryParseImpl(int statusCode, ReadOnlySpan<char> responseContent, string originalResponseContent, string mimeType, bool hasErrorCode, out ResponseExceptionInfo info)
     {
-        // Check plain text mime type
-        if (mimeType == PlainTextMimeType)
-        {
-            info = new(statusCode, string.Empty, originalResponseContent, mimeType);
-            return true;
-        }
-
         // Check custom mime type
-        if (mimeType != ResponseExceptionInfoMimeType)
+        if (mimeType != PlainTextMimeType)
         {
             info = default;
             return false;
+        }
+
+        // Check plain text mime type
+        if (!hasErrorCode)
+        {
+            info = new(statusCode, string.Empty, originalResponseContent);
+            return true;
         }
 
         // If it is a valid message, then we should have [<error-code>] <message> format, otherwise we just have <message>
@@ -185,7 +172,7 @@ internal readonly struct ResponseExceptionInfo
         }
 
         // If we got here, then we have a valid status code and message, so we can create the result
-        info = new ResponseExceptionInfo(statusCode, errorCode, message, mimeType);
+        info = new ResponseExceptionInfo(statusCode, errorCode, message);
         return true;
     }
 
@@ -196,14 +183,12 @@ internal readonly struct ResponseExceptionInfo
 
     public string ToResponseString()
     {
-        if (MimeType == PlainTextMimeType)
+        if (string.IsNullOrEmpty(ErrorCode))
         {
-            Debug.Assert(ErrorCode.Length == 0, "Error code should be empty for plain text response.");
             return Message;
         }
         else
         {
-            Debug.Assert(MimeType == ResponseExceptionInfoMimeType, "Unexpected mime type for response exception info.");
             return $"[{ErrorCode}] {Message}";
         }
     }

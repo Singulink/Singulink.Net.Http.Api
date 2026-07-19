@@ -48,7 +48,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             IAsyncEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            TimeSpan? refreshInterval,
+            TimeSpan? pingInterval,
             [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseSideInfo?>? wrapped);
 
         public abstract bool TryWrap(
@@ -79,12 +79,12 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             IAsyncEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            TimeSpan? refreshInterval,
+            TimeSpan? pingInterval,
             [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseSideInfo?>? wrapped)
         {
             if (enumerable is IAsyncEnumerable<T?> typedEnumerable)
             {
-                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback, refreshInterval);
+                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback, pingInterval);
                 return true;
             }
 
@@ -113,21 +113,21 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             private readonly IAsyncEnumerable<T?> _enumerable;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
-            private readonly TimeSpan? _refreshInterval;
+            private readonly TimeSpan? _pingInterval;
 
-            public AsyncEnumerableWrapper(IAsyncEnumerable<T?> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval)
+            public AsyncEnumerableWrapper(IAsyncEnumerable<T?> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? pingInterval)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
-                _refreshInterval = refreshInterval;
+                _pingInterval = pingInterval;
             }
 
             public IAsyncEnumerator<T?> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             {
                 // Link the token passed to the underlying enumerator so that a pending MoveNextAsync can be cancelled promptly when the wrapper is disposed.
                 var disposeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(disposeCts.Token), _isDevelopment, _unhandledExceptionCallback, _refreshInterval, cancellationToken, disposeCts);
+                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(disposeCts.Token), _isDevelopment, _unhandledExceptionCallback, _pingInterval, cancellationToken, disposeCts);
             }
         }
 
@@ -136,18 +136,18 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             private IAsyncEnumerator<T?>? _enumerator;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
-            private readonly TimeSpan? _refreshInterval;
+            private readonly TimeSpan? _pingInterval;
             private readonly CancellationToken _cancellationToken;
             private readonly CancellationTokenSource _disposeCts;
             private Task<bool>? _pendingMoveNext;
             private T? _current;
 
-            public AsyncEnumeratorWrapper(IAsyncEnumerator<T?> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken, CancellationTokenSource disposeCts)
+            public AsyncEnumeratorWrapper(IAsyncEnumerator<T?> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? pingInterval, CancellationToken cancellationToken, CancellationTokenSource disposeCts)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
-                _refreshInterval = refreshInterval;
+                _pingInterval = pingInterval;
                 _cancellationToken = cancellationToken;
                 _disposeCts = disposeCts;
             }
@@ -201,7 +201,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                 {
                     ValueTask<bool> moveNext;
 
-                    if (_refreshInterval is not TimeSpan refreshInterval)
+                    if (_pingInterval is not TimeSpan pingInterval)
                     {
                         moveNext = _enumerator.MoveNextAsync();
                         goto AwaitMoveNext;
@@ -226,7 +226,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                     }
 
                     // Create a delay task and observe any exception from the delay task so it doesn't throw on a background thread due to not being observed.
-                    var delayTask = Task.Delay(refreshInterval, _cancellationToken);
+                    var delayTask = Task.Delay(pingInterval, _cancellationToken);
                     _ = delayTask.ContinueWith(
                         static t => _ = t.Exception,
                         CancellationToken.None,

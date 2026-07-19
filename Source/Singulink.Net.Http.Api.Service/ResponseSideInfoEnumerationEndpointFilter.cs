@@ -4,13 +4,13 @@ using System.Runtime.CompilerServices;
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Endpoint filter that handles exceptions thrown during request processing of enumerable results.
+/// Endpoint filter that communicates response side info (such as exceptions thrown during request processing and periodic pings) for enumerable results.
 /// </summary>
 public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEnumerationEndpointFilterOptions options, bool isDevelopment) : IEndpointFilter
 {
     private readonly ResponseSideInfoEnumerationEndpointFilterOptions.HelperBase[] _helpers = [.. options._enumerableTypes];
     private readonly ConditionalWeakTable<Type, ResponseSideInfoEnumerationEndpointFilterOptions.HelperBase?> _lookupCache = [];
-    private readonly ConditionalWeakTable<Endpoint, StrongBox<TimeSpan?>> _refreshIntervalCache = [];
+    private readonly ConditionalWeakTable<Endpoint, StrongBox<TimeSpan?>> _pingIntervalCache = [];
     private readonly bool _isDevelopment = isDevelopment;
     private readonly Action<Exception>? _unhandledExceptionCallback = options._unhandledExceptionCallback;
 
@@ -23,7 +23,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
         // Check if they are candidates for wrapping
         if (result is IAsyncEnumerable<ISupportsResponseSideInfo?> asyncEnumerable)
         {
-            TimeSpan? refreshInterval = GetRefreshInterval(context.HttpContext.GetEndpoint());
+            TimeSpan? pingInterval = GetPingInterval(context.HttpContext.GetEndpoint());
 
             Type t = asyncEnumerable.GetType();
 
@@ -35,7 +35,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
                 // Loop through all helpers to find one that can wrap this type
                 foreach (var helper in _helpers.AsSpan())
                 {
-                    if (helper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, refreshInterval, out var wrapped))
+                    if (helper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, pingInterval, out var wrapped))
                     {
                         cachedHelper = helper;
                         result = wrapped;
@@ -49,14 +49,14 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
             else if (cachedHelper is { })
             {
                 // Use the cached helper to wrap the enumerable
-                bool success = cachedHelper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, refreshInterval, out var wrapped);
+                bool success = cachedHelper.TryWrap(asyncEnumerable, _isDevelopment, _unhandledExceptionCallback, pingInterval, out var wrapped);
                 Debug.Assert(success, "The cached helper should always be able to wrap the type it was cached for.");
                 result = wrapped;
             }
         }
         else if (result is IEnumerable<ISupportsResponseSideInfo?> enumerable)
         {
-            if (GetRefreshInterval(context.HttpContext.GetEndpoint()) is not null)
+            if (GetPingInterval(context.HttpContext.GetEndpoint()) is not null)
             {
                 throw new InvalidOperationException(
                     $"[{nameof(AutoPingPeriodicallyAttribute)}] is only supported on endpoints that return 'IAsyncEnumerable<T>' results. " +
@@ -97,15 +97,15 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
         return result;
     }
 
-    private TimeSpan? GetRefreshInterval(Endpoint? endpoint)
+    private TimeSpan? GetPingInterval(Endpoint? endpoint)
     {
         if (endpoint is null)
             return null;
 
-        if (!_refreshIntervalCache.TryGetValue(endpoint, out var cached))
+        if (!_pingIntervalCache.TryGetValue(endpoint, out var cached))
         {
             cached = new StrongBox<TimeSpan?>(endpoint.Metadata.GetMetadata<AutoPingPeriodicallyAttribute>()?.Interval);
-            _refreshIntervalCache.AddOrUpdate(endpoint, cached);
+            _pingIntervalCache.AddOrUpdate(endpoint, cached);
         }
 
         return cached.Value;

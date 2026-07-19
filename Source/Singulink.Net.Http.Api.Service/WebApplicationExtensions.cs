@@ -42,7 +42,7 @@ public static class WebApplicationExtensions
     /// <see cref="ResponseSideInfoEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
     /// </para>
     /// <para>
-    /// Enumeration endpoints can be marked with [<see cref="AutoPingPeriodicallyAttribute" />] to automatically send periodic ping items to the client
+    /// Enumeration endpoints can be marked with [<see cref="KeepAlivePingAttribute" />] to automatically send periodic ping items to the client
     /// whenever no item has been produced for the specified interval, keeping the response connection alive.
     /// </para>
     /// </remarks>

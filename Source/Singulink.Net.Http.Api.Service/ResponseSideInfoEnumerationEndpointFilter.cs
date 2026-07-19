@@ -59,7 +59,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
             if (GetPingInterval(context.HttpContext.GetEndpoint()) is not null)
             {
                 throw new InvalidOperationException(
-                    $"[{nameof(AutoPingPeriodicallyAttribute)}] is only supported on endpoints that return 'IAsyncEnumerable<T>' results. " +
+                    $"[{nameof(KeepAlivePingAttribute)}] is only supported on endpoints that return 'IAsyncEnumerable<T>' results. " +
                     $"Synchronous 'IEnumerable<T>' results cannot send pings.");
             }
 
@@ -104,7 +104,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
 
         if (!_pingIntervalCache.TryGetValue(endpoint, out var cached))
         {
-            cached = new StrongBox<TimeSpan?>(endpoint.Metadata.GetMetadata<AutoPingPeriodicallyAttribute>()?.Interval);
+            cached = new StrongBox<TimeSpan?>(endpoint.Metadata.GetMetadata<KeepAlivePingAttribute>()?.Interval);
             _pingIntervalCache.AddOrUpdate(endpoint, cached);
         }
 

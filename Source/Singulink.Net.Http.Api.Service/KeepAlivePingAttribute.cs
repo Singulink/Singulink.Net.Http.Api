@@ -9,13 +9,13 @@ namespace Singulink.Net.Http.Api.Service;
 /// <see cref="ResponseSideInfoEnumerationEndpointFilter" />, not <see cref="IEnumerable{T}" /> ones.
 /// </remarks>
 [AttributeUsage(AttributeTargets.Method, Inherited = true, AllowMultiple = false)]
-public sealed class AutoPingPeriodicallyAttribute : Attribute
+public sealed class KeepAlivePingAttribute : Attribute
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="AutoPingPeriodicallyAttribute"/> class.
+    /// Initializes a new instance of the <see cref="KeepAlivePingAttribute"/> class.
     /// </summary>
     /// <param name="intervalSeconds">The minimum time (in seconds) to wait for the next item before a ping item is sent to the client.</param>
-    public AutoPingPeriodicallyAttribute(double intervalSeconds)
+    public KeepAlivePingAttribute(double intervalSeconds)
     {
         if (!(intervalSeconds > 0) || !double.IsFinite(intervalSeconds))
             throw new ArgumentOutOfRangeException(nameof(intervalSeconds), "Ping interval must be a positive finite number of seconds.");

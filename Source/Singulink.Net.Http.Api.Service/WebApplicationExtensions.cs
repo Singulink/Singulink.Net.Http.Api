@@ -24,30 +24,37 @@ public static class WebApplicationExtensions
     /// <summary>
     /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling API exceptions.
     /// </summary>
-    public static IApplicationBuilder UseApiExceptionHandling(this IApplicationBuilder app)
+    /// <remarks>
+    /// <para>
+    /// Enumeration endpoints can be marked with [<see cref="AutoPingPeriodicallyAttribute" />] to automatically send periodic ping items to the client
+    /// whenever no item has been produced for the specified interval, keeping the response connection alive.
+    /// </para>
+    /// </remarks>
+    public static IApplicationBuilder UseApiResponseHandling(this IApplicationBuilder app)
     {
         return app.UseMiddleware<ApiExceptionMiddleware>();
     }
 
     /// <summary>
-    /// <inheritdoc cref="UseApiExceptionHandling(IApplicationBuilder)" path="/summary" />
+    /// <inheritdoc cref="UseApiResponseHandling(IApplicationBuilder)" path="/summary" />
     /// </summary>
     /// <remarks>
     /// <para>
     /// This overload also registers a <see cref="ResponseSideInfoEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
-    /// application, so it must be called after all endpoints have been mapped.
+    /// application, so it must be called after all endpoints have been mapped. This filter allows enumeration endpoints to also communicate exceptions too.
     /// </para>
     /// <para>
     /// By default, suppressed exceptions are logged to trace; this behaviour can be customized by calling
     /// <see cref="ResponseSideInfoEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
     /// </para>
+    /// <inheritdoc cref="UseApiResponseHandling(IApplicationBuilder)" path="/remarks/para" />
     /// </remarks>
-    public static TBuilder UseApiExceptionHandling<TBuilder>(
+    public static TBuilder UseApiResponseHandling<TBuilder>(
         this TBuilder app,
         Action<ResponseSideInfoEnumerationEndpointFilterOptions> configureEnumerationOptions)
             where TBuilder : IApplicationBuilder, IEndpointRouteBuilder
     {
-        app.UseApiExceptionHandling();
+        app.UseApiResponseHandling();
 
         ResponseSideInfoEnumerationEndpointFilterOptions options = new();
         configureEnumerationOptions(options);

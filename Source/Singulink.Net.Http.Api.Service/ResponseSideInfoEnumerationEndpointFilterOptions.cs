@@ -178,14 +178,20 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                     _pendingMoveNext = null;
 
                     // If it hasn't already completed, cancel the linked token so it can complete promptly, then suppress the resulting cancellation.
-                    if (!pending.IsCompleted)
+                    bool cancel = !pending.IsCompleted;
+                    if (cancel)
                         _disposeCts.Cancel();
 
                     try
                     {
                         await pending;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // Report suppressed exceptions to the unhandled exception callback since they will not be communicated to the client.
+                        if (ex is not OperationCanceledException || !cancel)
+                            _unhandledExceptionCallback(ex);
+                    }
                 }
             }
 

@@ -82,7 +82,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             TimeSpan? refreshInterval,
             [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseSideInfo?>? wrapped)
         {
-            if (enumerable is IAsyncEnumerable<T> typedEnumerable)
+            if (enumerable is IAsyncEnumerable<T?> typedEnumerable)
             {
                 wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback, refreshInterval);
                 return true;
@@ -98,7 +98,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             Action<Exception>? unhandledExceptionCallback,
             [NotNullWhen(true)] out IEnumerable<ISupportsResponseSideInfo?>? wrapped)
         {
-            if (enumerable is IEnumerable<T> typedEnumerable)
+            if (enumerable is IEnumerable<T?> typedEnumerable)
             {
                 wrapped = new EnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback);
                 return true;
@@ -108,14 +108,14 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             return false;
         }
 
-        private sealed class AsyncEnumerableWrapper : IAsyncEnumerable<T>
+        private sealed class AsyncEnumerableWrapper : IAsyncEnumerable<T?>
         {
-            private readonly IAsyncEnumerable<T> _enumerable;
+            private readonly IAsyncEnumerable<T?> _enumerable;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
             private readonly TimeSpan? _refreshInterval;
 
-            public AsyncEnumerableWrapper(IAsyncEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval)
+            public AsyncEnumerableWrapper(IAsyncEnumerable<T?> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
@@ -123,7 +123,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                 _refreshInterval = refreshInterval;
             }
 
-            public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+            public IAsyncEnumerator<T?> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             {
                 // Link the token passed to the underlying enumerator so that a pending MoveNextAsync can be cancelled promptly when the wrapper is disposed.
                 var disposeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -131,9 +131,9 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             }
         }
 
-        private sealed class AsyncEnumeratorWrapper : IAsyncEnumerator<T>
+        private sealed class AsyncEnumeratorWrapper : IAsyncEnumerator<T?>
         {
-            private IAsyncEnumerator<T>? _enumerator;
+            private IAsyncEnumerator<T?>? _enumerator;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
             private readonly TimeSpan? _refreshInterval;
@@ -142,7 +142,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             private Task<bool>? _pendingMoveNext;
             private T? _current;
 
-            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken, CancellationTokenSource disposeCts)
+            public AsyncEnumeratorWrapper(IAsyncEnumerator<T?> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken, CancellationTokenSource disposeCts)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
@@ -152,34 +152,41 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                 _disposeCts = disposeCts;
             }
 
-            public T Current => _current!;
+            public T? Current => _current;
 
             public async ValueTask DisposeAsync()
             {
-                if (_enumerator != null)
+                if (_enumerator is { } enumerator)
                 {
-                    // Observe any pending MoveNextAsync before disposing the underlying enumerator.
-                    if (_pendingMoveNext is { } pending)
-                    {
-                        _pendingMoveNext = null;
-
-                        // If it hasn't already completed, cancel the linked token so it can complete promptly, then suppress the resulting cancellation.
-                        if (!pending.IsCompleted)
-                            _disposeCts.Cancel();
-
-                        try
-                        {
-                            await pending;
-                        }
-                        catch { }
-                    }
-
-                    await _enumerator.DisposeAsync();
                     _enumerator = null;
+                    await ObservePendingMoveNextAsync();
+                    await enumerator.DisposeAsync();
                 }
 
                 _disposeCts.Dispose();
                 _current = null;
+            }
+
+            /// <summary>
+            /// Observes any pending MoveNextAsync so it can complete before the underlying enumerator is disposed, cancelling it via the linked token if it
+            /// hasn't already completed so that disposal can occur promptly.
+            /// </summary>
+            private async ValueTask ObservePendingMoveNextAsync()
+            {
+                if (_pendingMoveNext is { } pending)
+                {
+                    _pendingMoveNext = null;
+
+                    // If it hasn't already completed, cancel the linked token so it can complete promptly, then suppress the resulting cancellation.
+                    if (!pending.IsCompleted)
+                        _disposeCts.Cancel();
+
+                    try
+                    {
+                        await pending;
+                    }
+                    catch { }
+                }
             }
 
             public async ValueTask<bool> MoveNextAsync()
@@ -218,12 +225,23 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                         moveNextTask = moveNext.AsTask();
                     }
 
-                    if (await Task.WhenAny(moveNextTask, Task.Delay(refreshInterval, _cancellationToken)) != moveNextTask)
+                    // Create a delay task and observe any exception from the delay task so it doesn't throw on a background thread due to not being observed.
+                    var delayTask = Task.Delay(refreshInterval, _cancellationToken);
+                    _ = delayTask.ContinueWith(
+                        static t => _ = t.Exception,
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+
+                    if (await Task.WhenAny(moveNextTask, delayTask) != moveNextTask)
                     {
+                        // Store the still-pending move next so it is observed if the cancellation check throws or enumeration continues.
+                        _pendingMoveNext = moveNextTask;
+
+                        // Check the user's cancellation token in case we got here from that
                         _cancellationToken.ThrowIfCancellationRequested();
 
                         // Timed out waiting for the next item: emit a ping (an item with null side info, ignored by the client) and keep waiting next time.
-                        _pendingMoveNext = moveNextTask;
                         _current = T.CreateResponseSideInfoValue(null);
                         _ = (IStoresResponseSideInfo)_current;
                         return true;
@@ -240,28 +258,40 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                 {
                     _unhandledExceptionCallback(ex);
                     _current = T.CreateResponseSideInfoValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
-                    _enumerator = null;
-                    _pendingMoveNext = null;
                     _ = (IStoresResponseSideInfo)_current;
+
+                    // Dispose the underlying enumerator since enumeration is terminated by the exception item.
+                    if (_enumerator is { } enumerator)
+                    {
+                        _enumerator = null;
+
+                        try
+                        {
+                            await ObservePendingMoveNextAsync();
+                            await enumerator.DisposeAsync();
+                        }
+                        catch { }
+                    }
+
                     return true;
                 }
             }
         }
 
-        private sealed class EnumerableWrapper : IEnumerable<T>
+        private sealed class EnumerableWrapper : IEnumerable<T?>
         {
-            private readonly IEnumerable<T> _enumerable;
+            private readonly IEnumerable<T?> _enumerable;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
 
-            public EnumerableWrapper(IEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
+            public EnumerableWrapper(IEnumerable<T?> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
-            public IEnumerator<T> GetEnumerator()
+            public IEnumerator<T?> GetEnumerator()
             {
                 return new EnumeratorWrapper(_enumerable.GetEnumerator(), _isDevelopment, _unhandledExceptionCallback);
             }
@@ -272,23 +302,23 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             }
         }
 
-        private sealed class EnumeratorWrapper : IEnumerator<T>
+        private sealed class EnumeratorWrapper : IEnumerator<T?>
         {
-            private IEnumerator<T>? _enumerator;
+            private IEnumerator<T?>? _enumerator;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
             private T? _current;
 
-            public EnumeratorWrapper(IEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
+            public EnumeratorWrapper(IEnumerator<T?> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
             }
 
-            public T Current => _current!;
+            public T? Current => _current;
 
-            object IEnumerator.Current => Current!;
+            object? IEnumerator.Current => _current;
 
             public void Dispose()
             {
@@ -319,8 +349,20 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                 {
                     _unhandledExceptionCallback(ex);
                     _current = T.CreateResponseSideInfoValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
-                    _enumerator = null;
                     _ = (IStoresResponseSideInfo)_current;
+
+                    // Dispose the underlying enumerator since enumeration is terminated by the exception item.
+                    if (_enumerator is { } enumerator)
+                    {
+                        _enumerator = null;
+
+                        try
+                        {
+                            enumerator.Dispose();
+                        }
+                        catch { }
+                    }
+
                     return true;
                 }
             }

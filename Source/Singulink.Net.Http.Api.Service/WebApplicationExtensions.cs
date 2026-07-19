@@ -24,12 +24,6 @@ public static class WebApplicationExtensions
     /// <summary>
     /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling API exceptions.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Enumeration endpoints can be marked with [<see cref="AutoPingPeriodicallyAttribute" />] to automatically send periodic ping items to the client
-    /// whenever no item has been produced for the specified interval, keeping the response connection alive.
-    /// </para>
-    /// </remarks>
     public static IApplicationBuilder UseApiResponseHandling(this IApplicationBuilder app)
     {
         return app.UseMiddleware<ApiExceptionMiddleware>();
@@ -47,7 +41,10 @@ public static class WebApplicationExtensions
     /// By default, suppressed exceptions are logged to trace; this behaviour can be customized by calling
     /// <see cref="ResponseSideInfoEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
     /// </para>
-    /// <inheritdoc cref="UseApiResponseHandling(IApplicationBuilder)" path="/remarks/para" />
+    /// <para>
+    /// Enumeration endpoints can be marked with [<see cref="AutoPingPeriodicallyAttribute" />] to automatically send periodic ping items to the client
+    /// whenever no item has been produced for the specified interval, keeping the response connection alive.
+    /// </para>
     /// </remarks>
     public static TBuilder UseApiResponseHandling<TBuilder>(
         this TBuilder app,

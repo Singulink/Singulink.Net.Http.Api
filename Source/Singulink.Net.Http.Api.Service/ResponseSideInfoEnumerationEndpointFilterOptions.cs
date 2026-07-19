@@ -5,15 +5,16 @@ using System.Diagnostics.CodeAnalysis;
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Options for configuring the <see cref="ResponseExceptionEnumerationEndpointFilter" /> to handle API exceptions for enumerable results.
+/// Options for configuring the <see cref="ResponseSideInfoEnumerationEndpointFilter" /> to handle response side info (such as API exceptions) for enumerable
+/// results.
 /// </summary>
-public sealed class ResponseExceptionEnumerationEndpointFilterOptions
+public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
 {
     /// <summary>
     /// Adds a new enumerable type to the list of types to handle for enumeration.
     /// </summary>
-    public ResponseExceptionEnumerationEndpointFilterOptions Add<T>()
-        where T : class, ISupportsResponseException<T>
+    public ResponseSideInfoEnumerationEndpointFilterOptions Add<T>()
+        where T : class, ISupportsResponseSideInfo<T>
     {
         _enumerableTypes.Add(new Helper<T>());
         return this;
@@ -31,7 +32,7 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
     /// Note: this is called before the exception is converted and reported from the endpoint.
     /// </para>
     /// </remarks>
-    public ResponseExceptionEnumerationEndpointFilterOptions AddExceptionObserver(Action<Exception> callback)
+    public ResponseSideInfoEnumerationEndpointFilterOptions AddExceptionObserver(Action<Exception> callback)
     {
         _unhandledExceptionCallback += callback;
         return this;
@@ -44,16 +45,17 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
     internal abstract class HelperBase
     {
         public abstract bool TryWrap(
-            IAsyncEnumerable<ISupportsResponseException?> enumerable,
+            IAsyncEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseException?>? wrapped);
+            TimeSpan? refreshInterval,
+            [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseSideInfo?>? wrapped);
 
         public abstract bool TryWrap(
-            IEnumerable<ISupportsResponseException?> enumerable,
+            IEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            [NotNullWhen(true)] out IEnumerable<ISupportsResponseException?>? wrapped);
+            [NotNullWhen(true)] out IEnumerable<ISupportsResponseSideInfo?>? wrapped);
     }
 
     private static void DefaultUnhandledExceptionCallback(Exception ex)
@@ -71,17 +73,18 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
     }
 
     private sealed class Helper<T> : HelperBase
-        where T : class, ISupportsResponseException<T>
+        where T : class, ISupportsResponseSideInfo<T>
     {
         public override bool TryWrap(
-            IAsyncEnumerable<ISupportsResponseException?> enumerable,
+            IAsyncEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseException?>? wrapped)
+            TimeSpan? refreshInterval,
+            [NotNullWhen(true)] out IAsyncEnumerable<ISupportsResponseSideInfo?>? wrapped)
         {
             if (enumerable is IAsyncEnumerable<T> typedEnumerable)
             {
-                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback);
+                wrapped = new AsyncEnumerableWrapper(typedEnumerable, isDevelopment, unhandledExceptionCallback ?? DefaultUnhandledExceptionCallback, refreshInterval);
                 return true;
             }
 
@@ -90,10 +93,10 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
         }
 
         public override bool TryWrap(
-            IEnumerable<ISupportsResponseException?> enumerable,
+            IEnumerable<ISupportsResponseSideInfo?> enumerable,
             bool isDevelopment,
             Action<Exception>? unhandledExceptionCallback,
-            [NotNullWhen(true)] out IEnumerable<ISupportsResponseException?>? wrapped)
+            [NotNullWhen(true)] out IEnumerable<ISupportsResponseSideInfo?>? wrapped)
         {
             if (enumerable is IEnumerable<T> typedEnumerable)
             {
@@ -110,17 +113,19 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
             private readonly IAsyncEnumerable<T> _enumerable;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
+            private readonly TimeSpan? _refreshInterval;
 
-            public AsyncEnumerableWrapper(IAsyncEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
+            public AsyncEnumerableWrapper(IAsyncEnumerable<T> enumerable, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval)
             {
                 _enumerable = enumerable;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
+                _refreshInterval = refreshInterval;
             }
 
             public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             {
-                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(cancellationToken), _isDevelopment, _unhandledExceptionCallback);
+                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(cancellationToken), _isDevelopment, _unhandledExceptionCallback, _refreshInterval, cancellationToken);
             }
         }
 
@@ -129,13 +134,18 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
             private IAsyncEnumerator<T>? _enumerator;
             private readonly bool _isDevelopment;
             private readonly Action<Exception> _unhandledExceptionCallback;
+            private readonly TimeSpan? _refreshInterval;
+            private readonly CancellationToken _cancellationToken;
+            private Task<bool>? _pendingMoveNext;
             private T? _current;
 
-            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback)
+            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
+                _refreshInterval = refreshInterval;
+                _cancellationToken = cancellationToken;
             }
 
             public T Current => _current!;
@@ -144,6 +154,18 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
             {
                 if (_enumerator != null)
                 {
+                    // Observe any pending MoveNextAsync before disposing the underlying enumerator.
+                    if (_pendingMoveNext is { } pending)
+                    {
+                        _pendingMoveNext = null;
+
+                        try
+                        {
+                            await pending;
+                        }
+                        catch { }
+                    }
+
                     await _enumerator.DisposeAsync();
                     _enumerator = null;
                 }
@@ -161,16 +183,57 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
 
                 try
                 {
-                    bool hasNext = await _enumerator.MoveNextAsync();
+                    ValueTask<bool> moveNext;
+
+                    if (_refreshInterval is not TimeSpan refreshInterval)
+                    {
+                        moveNext = _enumerator.MoveNextAsync();
+                        goto AwaitMoveNext;
+                    }
+
+                    Task<bool> moveNextTask;
+
+                    if (_pendingMoveNext is { } pending)
+                    {
+                        _pendingMoveNext = null;
+                        moveNextTask = pending;
+                    }
+                    else
+                    {
+                        moveNext = _enumerator.MoveNextAsync();
+
+                        // Optimistically check for synchronous completion to avoid task/timer overhead.
+                        if (moveNext.IsCompleted)
+                            goto AwaitMoveNext;
+
+                        moveNextTask = moveNext.AsTask();
+                    }
+
+                    if (await Task.WhenAny(moveNextTask, Task.Delay(refreshInterval, _cancellationToken)) != moveNextTask)
+                    {
+                        _cancellationToken.ThrowIfCancellationRequested();
+
+                        // Timed out waiting for the next item: emit a ping (an item with null side info, ignored by the client) and keep waiting next time.
+                        _pendingMoveNext = moveNextTask;
+                        _current = T.CreateResponseSideInfoValue(null);
+                        _ = (IStoresResponseSideInfo)_current;
+                        return true;
+                    }
+
+                    moveNext = new ValueTask<bool>(moveNextTask);
+
+                    AwaitMoveNext:
+                    bool hasNext = await moveNext;
                     _current = hasNext ? _enumerator.Current : null;
                     return hasNext;
                 }
                 catch (Exception ex)
                 {
                     _unhandledExceptionCallback(ex);
-                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
+                    _current = T.CreateResponseSideInfoValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
                     _enumerator = null;
-                    _ = (IStoresResponseException)_current;
+                    _pendingMoveNext = null;
+                    _ = (IStoresResponseSideInfo)_current;
                     return true;
                 }
             }
@@ -246,9 +309,9 @@ public sealed class ResponseExceptionEnumerationEndpointFilterOptions
                 catch (Exception ex)
                 {
                     _unhandledExceptionCallback(ex);
-                    _current = T.CreateResponseExceptionValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
+                    _current = T.CreateResponseSideInfoValue(ResponseExceptionInfo.FromException(ex, _isDevelopment).ToEnumerationString());
                     _enumerator = null;
-                    _ = (IStoresResponseException)_current;
+                    _ = (IStoresResponseSideInfo)_current;
                     return true;
                 }
             }

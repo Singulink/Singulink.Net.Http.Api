@@ -4,11 +4,11 @@ using Microsoft.Extensions.Primitives;
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Decorates an <see cref="EndpointDataSource" /> so that the <see cref="ResponseExceptionEnumerationEndpointFilter" /> is applied to every endpoint it
+/// Decorates an <see cref="EndpointDataSource" /> so that the <see cref="ResponseSideInfoEnumerationEndpointFilter" /> is applied to every endpoint it
 /// produces. This is the same mechanism a route group uses to apply conventions/filters to its children, except no route prefix is added so the endpoints
 /// are left otherwise unchanged.
 /// </summary>
-internal sealed class ResponseExceptionEnumerationEndpointDataSource : EndpointDataSource
+internal sealed class ResponseSideInfoEnumerationEndpointDataSource : EndpointDataSource
 {
     private static readonly RoutePattern EmptyPrefix = RoutePatternFactory.Parse(string.Empty);
 
@@ -16,10 +16,10 @@ internal sealed class ResponseExceptionEnumerationEndpointDataSource : EndpointD
     private readonly IServiceProvider _applicationServices;
     private readonly Action<EndpointBuilder> _convention;
 
-    public ResponseExceptionEnumerationEndpointDataSource(
+    public ResponseSideInfoEnumerationEndpointDataSource(
         EndpointDataSource source,
         IServiceProvider applicationServices,
-        ResponseExceptionEnumerationEndpointFilter filter)
+        ResponseSideInfoEnumerationEndpointFilter filter)
     {
         _source = source;
         _applicationServices = applicationServices;

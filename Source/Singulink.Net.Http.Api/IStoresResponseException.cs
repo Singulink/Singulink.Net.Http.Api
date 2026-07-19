@@ -1,12 +1,12 @@
 namespace Singulink.Net.Http.Api;
 
 /// <summary>
-/// Defines a contract for a response type that can store exception information, representing an exception to be thrown on the client side.
+/// Defines a contract for a response type that can store opaque response side info (such as a response exception or ping) to be processed on the client side.
 /// </summary>
-public interface IStoresResponseException
+public interface IStoresResponseSideInfo
 {
     /// <summary>
-    /// Gets the opaque exception information string that this instance represents.
+    /// Gets the opaque side info string that this instance represents.
     /// </summary>
-    string ExceptionInfo { get; }
+    string? SideInfo { get; }
 }

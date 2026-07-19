@@ -125,7 +125,9 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
 
             public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
             {
-                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(cancellationToken), _isDevelopment, _unhandledExceptionCallback, _refreshInterval, cancellationToken);
+                // Link the token passed to the underlying enumerator so that a pending MoveNextAsync can be cancelled promptly when the wrapper is disposed.
+                var disposeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                return new AsyncEnumeratorWrapper(_enumerable.GetAsyncEnumerator(disposeCts.Token), _isDevelopment, _unhandledExceptionCallback, _refreshInterval, cancellationToken, disposeCts);
             }
         }
 
@@ -136,16 +138,18 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
             private readonly Action<Exception> _unhandledExceptionCallback;
             private readonly TimeSpan? _refreshInterval;
             private readonly CancellationToken _cancellationToken;
+            private readonly CancellationTokenSource _disposeCts;
             private Task<bool>? _pendingMoveNext;
             private T? _current;
 
-            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken)
+            public AsyncEnumeratorWrapper(IAsyncEnumerator<T> enumerator, bool isDevelopment, Action<Exception> unhandledExceptionCallback, TimeSpan? refreshInterval, CancellationToken cancellationToken, CancellationTokenSource disposeCts)
             {
                 _enumerator = enumerator;
                 _isDevelopment = isDevelopment;
                 _unhandledExceptionCallback = unhandledExceptionCallback;
                 _refreshInterval = refreshInterval;
                 _cancellationToken = cancellationToken;
+                _disposeCts = disposeCts;
             }
 
             public T Current => _current!;
@@ -159,6 +163,10 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                     {
                         _pendingMoveNext = null;
 
+                        // If it hasn't already completed, cancel the linked token so it can complete promptly, then suppress the resulting cancellation.
+                        if (!pending.IsCompleted)
+                            _disposeCts.Cancel();
+
                         try
                         {
                             await pending;
@@ -170,6 +178,7 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                     _enumerator = null;
                 }
 
+                _disposeCts.Dispose();
                 _current = null;
             }
 

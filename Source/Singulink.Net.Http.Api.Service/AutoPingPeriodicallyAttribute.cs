@@ -24,7 +24,7 @@ public sealed class AutoPingPeriodicallyAttribute : Attribute
     }
 
     /// <summary>
-    /// Gets the minimum time to wait for the next item before a ping item is sent to the client.
+    /// Gets the minimum time (in seconds) to wait for the next item before a ping item is sent to the client.
     /// </summary>
     public TimeSpan Interval { get; }
 }

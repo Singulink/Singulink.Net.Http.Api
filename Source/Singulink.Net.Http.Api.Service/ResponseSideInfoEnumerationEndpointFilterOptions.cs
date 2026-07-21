@@ -231,34 +231,48 @@ public sealed class ResponseSideInfoEnumerationEndpointFilterOptions
                         moveNextTask = moveNext.AsTask();
                     }
 
-                    // Create a delay task and observe any exception from the delay task so it doesn't throw on a background thread due to not being observed.
-                    var delayTask = Task.Delay(pingInterval, _cancellationToken);
-                    _ = delayTask.ContinueWith(
-                        static t => _ = t.Exception,
-                        CancellationToken.None,
-                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                        TaskScheduler.Default);
-
-                    if (await Task.WhenAny(moveNextTask, delayTask) != moveNextTask)
+                    // Scope so we can goto past the using var.
                     {
-                        // Store the still-pending move next so it is observed if the cancellation check throws or enumeration continues.
-                        _pendingMoveNext = moveNextTask;
+                        // Create a delay task and observe any exception from the delay task so it doesn't throw on a background thread due to not being observed.
+                        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken);
+                        var delayTask = Task.Delay(pingInterval, linkedCts.Token);
+                        _ = delayTask.ContinueWith(
+                            static t => _ = t.Exception,
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
 
-                        // Check the user's cancellation token in case we got here from that
-                        _cancellationToken.ThrowIfCancellationRequested();
+                        if (await Task.WhenAny(moveNextTask, delayTask) != moveNextTask)
+                        {
+                            // Store the still-pending move next so it is observed if the cancellation check throws or enumeration continues.
+                            _pendingMoveNext = moveNextTask;
 
-                        // Timed out waiting for the next item: emit a ping (an item with null side info, ignored by the client) and keep waiting next time.
-                        _current = T.CreateResponseSideInfoValue(null);
-                        _ = (IStoresResponseSideInfo)_current;
-                        return true;
+                            // Check the user's cancellation token in case we got here from that
+                            _cancellationToken.ThrowIfCancellationRequested();
+
+                            // Timed out waiting for the next item: emit a ping (an item with null side info, ignored by the client) and keep waiting next time.
+                            _current = T.CreateResponseSideInfoValue(null);
+                            _ = (IStoresResponseSideInfo)_current;
+                            return true;
+                        }
+
+                        // Cancel the delay task
+                        linkedCts.Cancel();
                     }
 
+                    // Set the move next value task as appropriate.
                     moveNext = new ValueTask<bool>(moveNextTask);
 
                     AwaitMoveNext:
                     bool hasNext = await moveNext;
                     _current = hasNext ? _enumerator.Current : null;
                     return hasNext;
+                }
+                catch (OperationCanceledException) when (_cancellationToken.IsCancellationRequested)
+                {
+                    // We want to propogate this - we just rethrow on the cancellation token to ensure it's the correct one.
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    throw; // Unreachable, but required to satisfy the compiler that we always return a value.
                 }
                 catch (Exception ex)
                 {

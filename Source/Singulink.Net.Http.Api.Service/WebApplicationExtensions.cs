@@ -24,39 +24,43 @@ public static class WebApplicationExtensions
     /// <summary>
     /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling API exceptions.
     /// </summary>
-    public static IApplicationBuilder UseApiExceptionHandling(this IApplicationBuilder app)
+    public static IApplicationBuilder UseApiResponseHandling(this IApplicationBuilder app)
     {
         return app.UseMiddleware<ApiExceptionMiddleware>();
     }
 
     /// <summary>
-    /// <inheritdoc cref="UseApiExceptionHandling(IApplicationBuilder)" path="/summary" />
+    /// <inheritdoc cref="UseApiResponseHandling(IApplicationBuilder)" path="/summary" />
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This overload also registers a <see cref="ResponseExceptionEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
-    /// application, so it must be called after all endpoints have been mapped.
+    /// This overload also registers a <see cref="ResponseSideInfoEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
+    /// application, so it must be called after all endpoints have been mapped. This filter allows enumeration endpoints to also communicate exceptions too.
     /// </para>
     /// <para>
     /// By default, suppressed exceptions are logged to trace; this behaviour can be customized by calling
-    /// <see cref="ResponseExceptionEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
+    /// <see cref="ResponseSideInfoEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
+    /// </para>
+    /// <para>
+    /// Enumeration endpoints can be marked with [<see cref="KeepAlivePingAttribute" />] to automatically send periodic ping items to the client
+    /// whenever no item has been produced for the specified interval, keeping the response connection alive.
     /// </para>
     /// </remarks>
-    public static TBuilder UseApiExceptionHandling<TBuilder>(
+    public static TBuilder UseApiResponseHandling<TBuilder>(
         this TBuilder app,
-        Action<ResponseExceptionEnumerationEndpointFilterOptions> configureEnumerationOptions)
+        Action<ResponseSideInfoEnumerationEndpointFilterOptions> configureEnumerationOptions)
             where TBuilder : IApplicationBuilder, IEndpointRouteBuilder
     {
-        app.UseApiExceptionHandling();
+        app.UseApiResponseHandling();
 
-        ResponseExceptionEnumerationEndpointFilterOptions options = new();
+        ResponseSideInfoEnumerationEndpointFilterOptions options = new();
         configureEnumerationOptions(options);
 
         if (options._enumerableTypes.Count is 0)
             return app;
 
         bool isDevelopment = app.ApplicationServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
-        ResponseExceptionEnumerationEndpointFilter filter = new(options, isDevelopment);
+        ResponseSideInfoEnumerationEndpointFilter filter = new(options, isDevelopment);
 
         // The filter has to wrap the I{Async}Enumerable<T> result itself, so it must run as an endpoint filter. Endpoint filters can only be attached while
         // an endpoint is being built, so we replace every currently registered endpoint data source with a decorator that rebuilds its endpoints with the
@@ -67,7 +71,7 @@ public static class WebApplicationExtensions
 
         foreach (var source in sources)
         {
-            app.DataSources.Add(new ResponseExceptionEnumerationEndpointDataSource(source, app.ApplicationServices, filter));
+            app.DataSources.Add(new ResponseSideInfoEnumerationEndpointDataSource(source, app.ApplicationServices, filter));
         }
 
         return app;

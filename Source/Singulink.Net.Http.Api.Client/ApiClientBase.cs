@@ -384,7 +384,7 @@ public abstract class ApiClientBase
 
             var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
-            bool canBeResponseException = typeof(TItem).IsAssignableTo(typeof(ISupportsResponseException));
+            bool canBeResponseSideInfoStorage = typeof(TItem).IsAssignableTo(typeof(ISupportsResponseSideInfo));
 
             await using (stream.ConfigureAwait(false))
             {
@@ -392,9 +392,12 @@ public abstract class ApiClientBase
                 {
                     if (item is not null)
                     {
-                        if (canBeResponseException && item is IStoresResponseException { ExceptionInfo: { } info })
+                        if (canBeResponseSideInfoStorage && item is IStoresResponseSideInfo sideInfoItem)
                         {
-                            ResponseExceptionInfo.ParseAndThrow(info);
+                            // Null side info represents a ping item, which is ignored.
+                            if (sideInfoItem.SideInfo is { } info)
+                                ResponseExceptionInfo.ParseAndThrow(info);
+
                             continue;
                         }
 

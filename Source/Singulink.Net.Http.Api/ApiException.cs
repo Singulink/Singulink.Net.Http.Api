@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Net;
+using System.Runtime.CompilerServices;
 
 namespace Singulink.Net.Http.Api;
 
@@ -38,12 +39,7 @@ public class ApiException : Exception
         get;
         init
         {
-            if (value.AsSpan().ContainsAnyExcept(_validErrorCodeChars))
-            {
-                static void Throw() => throw new ArgumentException("Error code must only consist of valid ASCII letters, digits, hyphens, and underscores.", nameof(value));
-                Throw();
-            }
-
+            ThrowIfInvalidErrorCode(value);
             field = value?.Length is not > 0 ? null : value;
         }
     }
@@ -62,5 +58,19 @@ public class ApiException : Exception
     public ApiException(HttpStatusCode statusCode, string message, Exception? innerException) : base(message, innerException)
     {
         StatusCode = statusCode;
+    }
+
+    /// <summary>
+    /// Throws an <see cref="ArgumentException"/> if the specified value is not valid for use as an <see cref="ErrorCode"/>.
+    /// </summary>
+    internal static void ThrowIfInvalidErrorCode(string? errorCode, [CallerArgumentExpression(nameof(errorCode))] string? paramName = null)
+    {
+        if (errorCode.AsSpan().ContainsAnyExcept(_validErrorCodeChars))
+        {
+            static void Throw(string? paramName) =>
+                throw new ArgumentException("Error code must only consist of valid ASCII letters, digits, hyphens, and underscores.", paramName);
+
+            Throw(paramName);
+        }
     }
 }

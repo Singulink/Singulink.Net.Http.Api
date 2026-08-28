@@ -43,8 +43,10 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
                     }
                 }
 
-                // Cache the result for future lookups
-                _lookupCache.Add(t, cachedHelper);
+                // Cache the result for future lookups. Concurrent first requests for the same enumerable type
+                // race here (both miss the cache above); they resolve the same helper, so the last write wins
+                // instead of throwing.
+                _lookupCache.AddOrUpdate(t, cachedHelper);
             }
             else if (cachedHelper is { })
             {
@@ -81,8 +83,10 @@ public sealed class ResponseSideInfoEnumerationEndpointFilter(ResponseSideInfoEn
                     }
                 }
 
-                // Cache the result for future lookups
-                _lookupCache.Add(t, cachedHelper);
+                // Cache the result for future lookups. Concurrent first requests for the same enumerable type
+                // race here (both miss the cache above); they resolve the same helper, so the last write wins
+                // instead of throwing.
+                _lookupCache.AddOrUpdate(t, cachedHelper);
             }
             else if (cachedHelper is { })
             {

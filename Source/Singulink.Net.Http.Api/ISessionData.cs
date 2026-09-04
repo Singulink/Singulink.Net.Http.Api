@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace Singulink.Net.Http.Api.Service;
+namespace Singulink.Net.Http.Api;
 
 /// <summary>
 /// Represents session data in a session store.

@@ -8,12 +8,12 @@ This article describes what each package contains, how a request flows through t
 
 | Package | Referenced by | Contents |
 | --- | --- | --- |
-| `Singulink.Net.Http.Api` | Both sides, and data contract assemblies | <xref:Singulink.Net.Http.Api.ApiException> hierarchy, <xref:Singulink.Net.Http.Api.StreamingResponse>, hub contract definitions. |
-| `Singulink.Net.Http.Api.Service` | ASP.NET Core services | Session handling (including the <xref:Singulink.Net.Http.Api.Service.ISessionToken> and <xref:Singulink.Net.Http.Api.Service.ISessionData> contracts), <xref:Singulink.Net.Http.Api.Service.ApiExceptionMiddleware> and <xref:Singulink.Net.Http.Api.Service.IApiExceptionHandler>, streaming response conversion, origin validation, hub filter and hub extensions. |
+| `Singulink.Net.Http.Api` | Both sides, and data contract assemblies | <xref:Singulink.Net.Http.Api.ApiException> hierarchy, <xref:Singulink.Net.Http.Api.StreamingResponse>, hub contract definitions, and the <xref:Singulink.Net.Http.Api.ISessionData> contract implemented by data layers. |
+| `Singulink.Net.Http.Api.Service` | ASP.NET Core services | Session handling (including the <xref:Singulink.Net.Http.Api.Service.ISessionToken> contract), <xref:Singulink.Net.Http.Api.Service.ApiExceptionMiddleware> and <xref:Singulink.Net.Http.Api.Service.IApiExceptionHandler>, streaming response conversion, origin validation, hub filter and hub extensions. |
 | `Singulink.Net.Http.Api.Client` | Client apps | <xref:Singulink.Net.Http.Api.Client.ApiClientBase>. |
 | `Singulink.Net.Http.Api.Client.SignalR` | Client apps using hubs | <xref:Singulink.Net.Http.Api.Client.SignalRApiClientBase> and <xref:Singulink.Net.Http.Api.Client.ApiHubConnection>. |
 
-The shared package has no ASP.NET Core dependency, so a data contracts assembly that declares hub contracts can be referenced by mobile and browser clients as well as the service. Session token types are server-side only (clients only ever hold the encrypted cookie), which is why their contracts live in the service package.
+The shared package has no ASP.NET Core dependency, so a data contracts assembly that declares hub contracts can be referenced by mobile and browser clients as well as the service. Session token types are server-side only (clients only ever hold the encrypted cookie), which is why their contract lives in the service package. The session record contract stays in the shared package because it is implemented by data-layer projects that should not depend on ASP.NET Core.
 
 ## Request Flow
 

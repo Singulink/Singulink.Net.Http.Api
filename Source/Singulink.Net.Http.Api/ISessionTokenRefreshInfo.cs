@@ -1,4 +1,4 @@
-namespace Singulink.Net.Http.Api.Service;
+namespace Singulink.Net.Http.Api;
 
 /// <summary>
 /// Represents information that should be refreshed on a session token.

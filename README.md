@@ -37,6 +37,7 @@ Shared library referenced by both clients and services. It contains the parts of
 
 ✔️ The `ApiException` hierarchy (`BadRequestApiException`, `UnauthorizedApiException`, `NotFoundApiException`, `ValidationApiException`, `ServerErrorApiException` and more), thrown on the server and rethrown as the same type on the client  
 ✔️ The `StreamingResponse` format and reader for streamed results  
+✔️ The `ISessionData` session record contract, implemented by data-layer projects without an ASP.NET Core dependency  
 ✔️ `HubMessage`, `HubMethod` and `HubStream` definitions for strongly typed SignalR hub contracts  
 
 ### Singulink.Net.Http.Api.Service

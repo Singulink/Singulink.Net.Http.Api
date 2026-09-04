@@ -13,7 +13,7 @@ A session is represented by two things: a **session token** that lives in an enc
 Session handling is generic over three types that you implement:
 
 - A **token type** implementing <xref:Singulink.Net.Http.Api.Service.ISessionToken>. It is serialized to JSON, encrypted with ASP.NET Core data protection and stored in the cookie.
-- A **session data type** implementing <xref:Singulink.Net.Http.Api.Service.ISessionData>. This is the stored session record.
+- A **session data type** implementing <xref:Singulink.Net.Http.Api.ISessionData>. This is the stored session record.
 - A **store context** implementing <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`2>, created by an <xref:Singulink.Net.Http.Api.Service.ISessionStoreContextFactory`2>.
 
 ## The Session Token
@@ -56,7 +56,7 @@ Implementing `IBindableFromHttpContext<T>` as shown lets endpoints take the toke
 
 ## Session Data and the Store
 
-The session record implements <xref:Singulink.Net.Http.Api.Service.ISessionData>. It holds the values the service updates on refresh (device, IP address, refresh time, validity and generation) and is typically an entity class:
+The session record implements <xref:Singulink.Net.Http.Api.ISessionData>. It holds the values the service updates on refresh (device, IP address, refresh time, validity and generation) and is typically an entity class:
 
 ```csharp
 public class Session : ISessionData

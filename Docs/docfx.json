@@ -2,13 +2,14 @@
   "metadata": [
     {
       "properties": {
-        "TargetFramework": "net8.0"
+        "TargetFramework": "net10.0"
       },
       "src": [
         {
           "files": [
             "Singulink.Net.Http.Api/Singulink.Net.Http.Api.csproj",
             "Singulink.Net.Http.Api.Client/Singulink.Net.Http.Api.Client.csproj",
+            "Singulink.Net.Http.Api.Client.SignalR/Singulink.Net.Http.Api.Client.SignalR.csproj",
             "Singulink.Net.Http.Api.Service/Singulink.Net.Http.Api.Service.csproj"
           ],
           "src": "../Source"
@@ -43,6 +44,8 @@
       },
       {
         "files": [
+          "articles/**.md",
+          "articles/**/toc.yml",
           "toc.yml",
           "*.md"
         ]

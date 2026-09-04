@@ -1,4 +1,3 @@
-{{!Copyright (c) Microsoft. All rights reserved. Licensed under the MIT license. See LICENSE file in the project root for full license information.}}
 {{!include(/^styles/.*/)}}
 {{!include(/^fonts/.*/)}}
 {{!include(favicon.ico)}}
@@ -14,7 +13,7 @@
         <header id="head"></header>
         <div class="top-navbar">
             <a class="burger-icon" onclick="toggleMenu()">
-                <svg name="Hamburger" 
+                <svg name="Hamburger"
                     style="vertical-align: middle;"
                     width="34" height="34" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M20 6H4V9H20V6ZM4 10.999H20V13.999H4V10.999ZM4 15.999H20V18.999H4V15.999Z"></path></svg>
             </a>
@@ -40,8 +39,6 @@
                 {{#_enableSearch}}
                 {{>partials/searchResults}}
                 {{/_enableSearch}}
-
- 
 
                 <div role="main" class="hide-when-search" >
                     {{^_disableBreadcrumb}}

@@ -74,6 +74,13 @@ internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
         if (itemType is null)
             return;
 
+        if (itemType.IsValueType)
+        {
+            throw new InvalidOperationException(
+                $"Endpoint '{builder.DisplayName}' returns an 'IAsyncEnumerable<{itemType.Name}>' result with a value type item, which cannot be streamed. " +
+                "Wrap the item in a record or class.");
+        }
+
         var filter = new StreamingResponseEndpointFilter(itemType, isDevelopment);
         builder.FilterFactories.Add((_, next) => context => filter.InvokeAsync(context, next));
 
@@ -92,7 +99,7 @@ internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
             {
                 throw new InvalidOperationException(
                     $"[{nameof(KeepAlivePingAttribute)}] on endpoint '{builder.DisplayName}' is only supported on endpoints that return " +
-                    $"'IAsyncEnumerable<T>' results (where T is a reference type).");
+                    $"'IAsyncEnumerable<T>' results.");
             }
 
             return;
@@ -114,7 +121,7 @@ internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
 
     /// <summary>
     /// Gets the item type for endpoint return types of the form <c>IAsyncEnumerable&lt;T&gt;</c>, <c>Task&lt;IAsyncEnumerable&lt;T&gt;&gt;</c> or
-    /// <c>ValueTask&lt;IAsyncEnumerable&lt;T&gt;&gt;</c> where <c>T</c> is a reference type, otherwise <see langword="null"/>.
+    /// <c>ValueTask&lt;IAsyncEnumerable&lt;T&gt;&gt;</c>, otherwise <see langword="null"/>.
     /// </summary>
     private static Type? GetStreamingItemType(Type returnType)
     {
@@ -133,10 +140,6 @@ internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
             definition = returnType.GetGenericTypeDefinition();
         }
 
-        if (definition != typeof(IAsyncEnumerable<>))
-            return null;
-
-        var itemType = returnType.GetGenericArguments()[0];
-        return itemType.IsValueType ? null : itemType;
+        return definition == typeof(IAsyncEnumerable<>) ? returnType.GetGenericArguments()[0] : null;
     }
 }

@@ -126,25 +126,34 @@ public sealed class StreamingResponseTests
     [TestMethod]
     public async Task NonStreamingEndpoints_AreLeftUntouched()
     {
-        static async IAsyncEnumerable<int> NumbersAsync()
-        {
-            await Task.Yield();
-            yield return 1;
-            yield return 2;
-        }
-
         await using var host = await TestWebHost.StartAsync(app => {
             app.MapGet("/list", () => new List<Item> { new(1, "a") });
-            app.MapGet("/numbers", () => NumbersAsync());
+            app.MapGet("/single", () => new Item(1, "a"));
         });
 
         var list = await host.Client.GetAsync("/list");
         list.Content.Headers.ContentType!.MediaType.ShouldBe("application/json");
         (await list.Content.ReadAsStringAsync()).ShouldBe("""[{"id":1,"name":"a"}]""");
 
-        var numbers = await host.Client.GetAsync("/numbers");
-        numbers.Content.Headers.ContentType!.MediaType.ShouldBe("application/json");
-        (await numbers.Content.ReadAsStringAsync()).ShouldBe("[1,2]");
+        var single = await host.Client.GetAsync("/single");
+        single.Content.Headers.ContentType!.MediaType.ShouldBe("application/json");
+        (await single.Content.ReadAsStringAsync()).ShouldBe("""{"id":1,"name":"a"}""");
+    }
+
+    [TestMethod]
+    public async Task ValueTypeItems_ThrowWhenEndpointsAreBuilt()
+    {
+        static async IAsyncEnumerable<int> NumbersAsync()
+        {
+            await Task.Yield();
+            yield return 1;
+        }
+
+        await using var host = await TestWebHost.StartAsync(app => app.MapGet("/numbers", () => NumbersAsync()));
+
+        var ex = Should.Throw<InvalidOperationException>(() => host.Endpoints);
+        ex.Message.ShouldContain("IAsyncEnumerable<Int32>");
+        ex.Message.ShouldContain("/numbers");
     }
 
     [TestMethod]
@@ -561,13 +570,5 @@ public sealed class StreamingResponseTests
             Handled.Add(exception);
             return ValueTask.FromResult(Map(httpContext, exception));
         }
-    }
-
-    /// <summary>
-    /// Session store factory that resolves the shared in-memory store from the container (so the test can seed it).
-    /// </summary>
-    public sealed class InMemorySessionStoreFactory(InMemorySessionStore store) : ISessionStoreContextFactory<TestSessionToken, TestSessionData>
-    {
-        public ISessionStoreContext<TestSessionToken, TestSessionData> Create() => store.Create();
     }
 }

@@ -23,7 +23,8 @@ public static class WebApplicationExtensions
 
     /// <summary>
     /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling exceptions and to convert endpoint results of type
-    /// <see cref="IAsyncEnumerable{T}"/> (where <c>T</c> is a reference type) into <see cref="StreamingResponse"/> streams.
+    /// <see cref="IAsyncEnumerable{T}"/> into <see cref="StreamingResponse"/> streams. <c>T</c> must be a reference type (value type items fail when the
+    /// endpoints are built).
     /// </summary>
     /// <param name="app">The application.</param>
     /// <remarks>

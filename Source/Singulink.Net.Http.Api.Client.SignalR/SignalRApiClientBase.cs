@@ -108,26 +108,26 @@ public abstract class SignalRApiClientBase : ApiClientBase
             .WithAutomaticReconnect();
 
     /// <summary>
-    /// Creates a new <see cref="HubConnection"/> for the specified hub path with optional query string parameters. Default query
+    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path with optional query string parameters. Default query
     /// parameters from <see cref="ApiClientBase.GetDefaultQueryParams(string)"/> are automatically merged with per-call parameters (per-call parameters with the
     /// same name take precedence). Session cookies and user agent are applied automatically on non-browser platforms.
     /// </summary>
     /// <param name="path">The hub endpoint path relative to the base address.</param>
     /// <param name="queryStringParams">Optional query string parameters to include in the hub connection URL.</param>
-    protected HubConnection CreateHubConnection(string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
+    protected ApiHubConnection CreateHubConnection(string path, params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
     {
         return CreateHubConnection(path, null, queryStringParams);
     }
 
     /// <summary>
-    /// Creates a new <see cref="HubConnection"/> for the specified hub path with optional connection options and query string parameters. Default query
+    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path with optional connection options and query string parameters. Default query
     /// parameters from <see cref="ApiClientBase.GetDefaultQueryParams(string)"/> are automatically merged with per-call parameters (per-call parameters with the
     /// same name take precedence). Session cookies and user agent are applied automatically on non-browser platforms.
     /// </summary>
     /// <param name="path">The hub endpoint path relative to the base address.</param>
     /// <param name="configureOptions">Callback that configures the <see cref="HttpConnectionOptions"/> for the connection.</param>
     /// <param name="queryStringParams">Optional query string parameters to include in the hub connection URL.</param>
-    protected virtual HubConnection CreateHubConnection(
+    protected virtual ApiHubConnection CreateHubConnection(
         string path,
         Action<HttpConnectionOptions>? configureOptions,
         params ReadOnlySpan<(string Name, object? Value)> queryStringParams)
@@ -155,7 +155,7 @@ public abstract class SignalRApiClientBase : ApiClientBase
             configureOptions?.Invoke(options);
         });
 
-        return builder.Build();
+        return new ApiHubConnection(builder.Build());
     }
 
     /// <summary>

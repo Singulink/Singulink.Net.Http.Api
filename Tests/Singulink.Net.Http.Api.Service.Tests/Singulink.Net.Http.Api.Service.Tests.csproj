@@ -7,9 +7,11 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.3" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
+    <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Client.SignalR\Singulink.Net.Http.Api.Client.SignalR.csproj" />
   </ItemGroup>
 </Project>

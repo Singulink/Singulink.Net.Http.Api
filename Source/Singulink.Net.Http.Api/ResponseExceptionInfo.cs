@@ -88,10 +88,53 @@ internal readonly struct ResponseExceptionInfo
         }
     }
 
+    /// <summary>
+    /// Creates the <see cref="ApiException"/> that corresponds to a hub error message produced by the API exception hub filter, or returns
+    /// <see langword="null"/> if the message is not in that format.
+    /// </summary>
+    public static ApiException? TryCreateFromHubError(string message)
+    {
+        const string hubExceptionPrefix = "HubException: ";
+
+        // SignalR prefixes error messages with a description and the exception type name, e.g. "An unexpected error occurred invoking 'X' on the
+        // server. HubException: 403 [code] message".
+
+        var span = message.AsSpan();
+        int prefixIndex = span.IndexOf(hubExceptionPrefix, StringComparison.Ordinal);
+
+        if (prefixIndex >= 0)
+            span = span[(prefixIndex + hubExceptionPrefix.Length)..];
+
+        if (span is not [>= '1' and <= '5', >= '0' and <= '9', >= '0' and <= '9', ' ', .. var rest])
+            return null;
+
+        int statusCode = int.Parse(span[..3], NumberStyles.None, CultureInfo.InvariantCulture);
+        string content = rest.ToString();
+
+        if (!TryParseImpl(statusCode, rest, content, PlainTextMimeType, hasErrorCode: true, out var info))
+            return null;
+
+        return info.CreateException(content, PlainTextMimeType);
+    }
+
+    /// <summary>
+    /// Formats the error for transport as a hub exception message (parsed by <see cref="TryCreateFromHubError"/>).
+    /// </summary>
+    public string ToHubErrorString()
+    {
+        return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
+    }
+
     private void Throw(string rawContent, string? errorContentType)
     {
+        if (CreateException(rawContent, errorContentType) is { } exception)
+            throw exception;
+    }
+
+    private ApiException? CreateException(string rawContent, string? errorContentType)
+    {
         if ((HttpStatusCode)StatusCode is >= HttpStatusCode.OK and <= (HttpStatusCode)299)
-            return;
+            return null;
 
         string? errorMessage = null;
         ApiErrorContent? errorContent = null;
@@ -118,7 +161,7 @@ internal readonly struct ResponseExceptionInfo
             _ => new ApiException((HttpStatusCode)StatusCode, errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
         };
 
-        throw ex;
+        return ex;
     }
 
     private static bool TryParseImpl(int statusCode, ReadOnlySpan<char> responseContent, string originalResponseContent, string mimeType, bool hasErrorCode, out ResponseExceptionInfo info)

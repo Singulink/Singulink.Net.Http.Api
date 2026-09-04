@@ -99,3 +99,11 @@ public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessi
         }
     }
 }
+
+/// <summary>
+/// Session store factory that resolves the shared in-memory store from the container (so a test can seed it).
+/// </summary>
+public sealed class InMemorySessionStoreFactory(InMemorySessionStore store) : ISessionStoreContextFactory<TestSessionToken, TestSessionData>
+{
+    public ISessionStoreContext<TestSessionToken, TestSessionData> Create() => store.Create();
+}

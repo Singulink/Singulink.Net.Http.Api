@@ -107,8 +107,17 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     private readonly ISessionStoreContextFactory<TSessionToken, TSessionData> _sessionStoreContextFactory;
     private readonly SessionHandlingOptions _options;
 
-    private bool _deferredRefreshRegistered;
-    private bool _skipDeferredRefresh;
+    // Per-request token state. The token is read from the request cookie and validated against the session store at most once per request.
+
+    private TSessionToken? _token;
+    private bool _tokenRead;
+    private bool _sessionValidated;
+    private TSessionData? _validatedSessionData;
+    private bool _tokenIsStale;
+    private bool _refreshToken;
+    private bool _reissueToken;
+    private bool _deferredUpdateRegistered;
+    private bool _skipDeferredUpdate;
 
     internal HttpSessionContext(
         HttpContext httpContext,
@@ -139,50 +148,61 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         sessionOptions |= _options.ForcedAccessOptions;
         sessionOptions.ThrowIfFlagsAreNotDefined(nameof(sessionOptions));
 
-        if (!sessionOptions.HasAllFlags(SessionAccessOptions.AllowAllOrigins) && !IsRequestOriginAllowed())
-            throw new ForbiddenApiException("Cross-origin request was blocked.");
+        EnsureRequestOriginAllowed(sessionOptions);
 
-        string sessionCookie = HttpContext.Request.Cookies[_options.SessionCookieName];
+        var sessionToken = ReadToken();
 
-        if (sessionCookie is null)
+        if (sessionToken is null)
             return null;
 
-        try
-        {
-            string sessionCookieData;
+        ValidateUserIdPrecondition(sessionToken, sessionOptions.HasAllFlags(SessionAccessOptions.OptionalUserIdPrecondition));
 
-            try
-            {
-                sessionCookieData = _dataProtector.Unprotect(sessionCookie);
-            }
-            catch (CryptographicException)
-            {
-                goto InvalidSessionCookie;
-            }
+        bool forceValidate = sessionOptions.HasAllFlags(SessionAccessOptions.ForceValidate);
+        bool refreshDue = sessionToken.RefreshedUtc.Add(sessionToken.RefreshAfter) < DateTime.UtcNow;
 
-            var sessionToken = JsonSerializer.Deserialize<TSessionToken>(sessionCookieData);
-
-            if (sessionToken is null)
-                goto InvalidSessionCookie;
-
-            ValidateUserIdPrecondition(sessionToken, sessionOptions.HasAllFlags(SessionAccessOptions.OptionalUserIdPrecondition));
-
-            if (sessionOptions.HasAllFlags(SessionAccessOptions.ForceRefresh) || sessionToken.RefreshedUtc.Add(sessionToken.RefreshAfter) < DateTime.UtcNow)
-            {
-                if (!await ValidateSessionAsync(sessionToken))
-                    goto InvalidSessionCookie;
-
-                RegisterDeferredRefresh(sessionToken);
-            }
-
+        if (!forceValidate && !refreshDue)
             return sessionToken;
+
+        if (!_sessionValidated || (_tokenIsStale && forceValidate))
+        {
+            await using var storeContext = _sessionStoreContextFactory.Create();
+
+            if (!_sessionValidated)
+            {
+                var sessionData = await GetValidatedSessionDataAsync(storeContext, sessionToken);
+
+                if (sessionData is null)
+                {
+                    ClearToken();
+                    return null;
+                }
+
+                _validatedSessionData = sessionData;
+                _tokenIsStale = !await storeContext.IsTokenCurrentAsync(sessionToken);
+                _sessionValidated = true;
+            }
+
+            if (_tokenIsStale && forceValidate)
+            {
+                // Token information is out of date, so create a new token from the latest store data right away so that the current request operates on
+                // current information. The session's existing refresh info is used (same generation, no store write) so this does not count as a refresh
+                // and losing the re-issued cookie is harmless. A rotating refresh is still performed separately at response start if one is due.
+
+                sessionToken = await storeContext.CreateTokenAsync(sessionToken, _validatedSessionData!, isStale: true);
+
+                _token = sessionToken;
+                _tokenIsStale = false;
+                _reissueToken = true;
+            }
         }
-        catch (Exception ex) when (ex is JsonException or UnauthorizedApiException) { }
 
-        InvalidSessionCookie:
+        if (refreshDue)
+            _refreshToken = true;
 
-        ClearToken();
-        return null;
+        if (_refreshToken || _reissueToken)
+            RegisterDeferredTokenUpdate();
+
+        return sessionToken;
     }
 
     /// <inheritdoc/>
@@ -191,8 +211,6 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         var signInInfo = new SignInInfo(Device, IpAddress, persistent ? _options.PersistentSessionExpiry : _options.TempSessionExpiry, persistent);
         var token = await createSessionFunc(signInInfo);
 
-        // TODO: Clear token? Cache on HTTP context (here and in GetTokenAsync)?
-
         SetToken(token);
         return token;
     }
@@ -200,27 +218,42 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     /// <inheritdoc/>
     public override async Task SignOutAsync()
     {
-        var sessionToken = await GetTokenAsync();
+        // Signing out only needs the token to identify the session, so no session validation or refresh is performed.
+
+        var sessionOptions = _options.ForcedAccessOptions;
+        EnsureRequestOriginAllowed(sessionOptions);
+
+        var sessionToken = ReadToken();
 
         if (sessionToken is not null)
         {
-            await using var dataAdapterContext = _sessionStoreContextFactory.Create();
-            await dataAdapterContext.InvalidateSessionAsync(sessionToken);
-            ClearToken();
+            ValidateUserIdPrecondition(sessionToken, sessionOptions.HasAllFlags(SessionAccessOptions.OptionalUserIdPrecondition));
+
+            await using var storeContext = _sessionStoreContextFactory.Create();
+            await storeContext.InvalidateSessionAsync(sessionToken);
         }
+
+        ClearToken();
     }
 
     /// <inheritdoc/>
     public override void SetToken(TSessionToken sessionToken)
     {
-        _skipDeferredRefresh = true;
+        _token = sessionToken;
+        _tokenRead = true;
+        _sessionValidated = true;
+        _tokenIsStale = false;
+        _skipDeferredUpdate = true;
+
         SetTokenInternal(sessionToken);
     }
 
     /// <inheritdoc/>
     public override void ClearToken()
     {
-        _skipDeferredRefresh = true;
+        _token = null;
+        _tokenRead = true;
+        _skipDeferredUpdate = true;
 
         // Domain/Path must match the values used when the cookie was issued; otherwise the browser keeps the original cookie alongside the deletion attempt.
         HttpContext.Response.Cookies.Delete(_options.SessionCookieName, new CookieOptions {
@@ -229,6 +262,41 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             Secure = true,
             SameSite = SameSiteMode.None,
         });
+    }
+
+    private void EnsureRequestOriginAllowed(SessionAccessOptions sessionOptions)
+    {
+        if (!sessionOptions.HasAllFlags(SessionAccessOptions.AllowAllOrigins) && !IsRequestOriginAllowed())
+            throw new ForbiddenApiException("Cross-origin request was blocked.");
+    }
+
+    /// <summary>
+    /// Reads the session token from the request cookie the first time it is called and caches the result. If the cookie is present but cannot be read,
+    /// the cookie is cleared and <see langword="null"/> is returned.
+    /// </summary>
+    private TSessionToken? ReadToken()
+    {
+        if (_tokenRead)
+            return _token;
+
+        _tokenRead = true;
+
+        string? sessionCookie = HttpContext.Request.Cookies[_options.SessionCookieName];
+
+        if (sessionCookie is null)
+            return null;
+
+        try
+        {
+            string sessionCookieData = _dataProtector.Unprotect(sessionCookie);
+            _token = JsonSerializer.Deserialize<TSessionToken>(sessionCookieData);
+        }
+        catch (Exception ex) when (ex is CryptographicException or JsonException) { }
+
+        if (_token is null)
+            ClearToken();
+
+        return _token;
     }
 
     private void SetTokenInternal(TSessionToken sessionToken)
@@ -269,28 +337,36 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             throw new UserChangedApiException($"Request user identified in the '{_options.UserIdPreconditionQueryName}' query parameter does not match session user.");
     }
 
-    private void RegisterDeferredRefresh(TSessionToken sessionToken)
+    /// <summary>
+    /// Registers a deferred update of the session cookie at response start. The update is skipped if the application sets or clears the token itself. If a
+    /// refresh was requested, the session is refreshed (store write + new token) and the refreshed token is issued, otherwise the current token is re-issued
+    /// as-is. The token state is read when the response starts so that changes made by later token retrievals in the same request are reflected.
+    /// </summary>
+    private void RegisterDeferredTokenUpdate()
     {
-        if (_deferredRefreshRegistered || HttpContext.Response.HasStarted)
+        if (_deferredUpdateRegistered || HttpContext.Response.HasStarted)
             return;
 
-        _deferredRefreshRegistered = true;
+        _deferredUpdateRegistered = true;
 
         HttpContext.Response.OnStarting(async () =>
         {
-            if (_skipDeferredRefresh)
+            if (_skipDeferredUpdate || _token is null)
                 return;
 
-            var refreshedToken = await RefreshSessionTokenAsync(sessionToken);
+            var updatedToken = _refreshToken ? await RefreshSessionTokenAsync(_token, _tokenIsStale) : _token;
 
-            if (refreshedToken is not null)
-                SetTokenInternal(refreshedToken);
+            if (updatedToken is not null)
+                SetTokenInternal(updatedToken);
         });
     }
 
-    private async Task<bool> ValidateSessionAsync(TSessionToken sessionToken)
+    /// <summary>
+    /// Validates that the session is still alive and that the token generation is acceptable, returning the session data if so. If the session is invalid
+    /// it is removed from the store and <see langword="null"/> is returned.
+    /// </summary>
+    private async Task<TSessionData?> GetValidatedSessionDataAsync(ISessionStoreContext<TSessionToken, TSessionData> storeContext, TSessionToken sessionToken)
     {
-        await using var storeContext = _sessionStoreContextFactory.Create();
         var sessionData = await storeContext.GetSessionDataAsync(sessionToken);
         var timeSinceDataRefresh = DateTime.UtcNow - sessionData?.RefreshedUtc ?? TimeSpan.MaxValue;
 
@@ -299,33 +375,34 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             if (sessionData is not null)
                 await storeContext.InvalidateSessionAsync(sessionToken);
 
-            return false;
+            return null;
         }
 
         if (sessionData.Generation != sessionToken.Generation)
         {
-            // Allow for a small time window where multiple concurrent refreshes from the same device are allowed to prevent throwing away the session in a
-            // race condition where another request completes its refresh before the current request's deferred refresh runs.
+            // Allow a grace window where a token from the previous generation is still accepted from the same device to prevent throwing away the session
+            // in a race condition where another request completes its refresh before this request (or a connection that was established with the previous
+            // token, i.e. a reconnecting hub connection) presents the older token. The IP address is intentionally not compared since devices (mobile in
+            // particular) switch networks frequently.
 
             if (sessionData.Generation != sessionToken.Generation + 1 ||
                 timeSinceDataRefresh > _options.MultipleRefreshGracePeriod ||
-                sessionData.Device != Device ||
-                !Equals(sessionData.IpAddress, IpAddress))
+                sessionData.Device != Device)
             {
                 await storeContext.InvalidateSessionAsync(sessionToken);
-                return false;
+                return null;
             }
         }
 
-        return true;
+        return sessionData;
     }
 
     /// <summary>
     /// Performs the actual session token refresh (store write + new token). Called from the deferred OnStarting callback. This method never invalidates the
-    /// session — validation is the responsibility of <see cref="ValidateSessionAsync"/> which runs at request start. If the refresh cannot be safely
-    /// performed (e.g. session expired or generation advanced by more than 1 or from a different device/IP), it silently returns <see langword="null"/>.
+    /// session — validation is the responsibility of <see cref="GetValidatedSessionDataAsync"/> which runs at request start. If the refresh cannot be safely
+    /// performed (e.g. session expired or generation advanced by more than 1 or from a different device), it silently returns <see langword="null"/>.
     /// </summary>
-    private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken)
+    private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken, bool isStale)
     {
         await using var storeContext = _sessionStoreContextFactory.Create();
         var sessionData = await storeContext.GetSessionDataAsync(sessionToken);
@@ -336,17 +413,13 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
 
         if (sessionData.Generation != sessionToken.Generation)
         {
-            // Another concurrent request already refreshed the session. Allow it if the generation advanced by exactly 1 from the same device/IP — this
-            // just means another request's deferred refresh completed before ours. Skip the store write (already done) and produce a token with the current
-            // generation so the client gets an up-to-date cookie. Otherwise silently skip — ValidateSessionAsync already ran at request start and the next
-            // request will catch any real compromise.
+            // Another concurrent request already refreshed the session. Allow it if the generation advanced by exactly 1 from the same device — this just
+            // means another request's deferred refresh completed before ours. Skip the store write (already done) and produce a token with the current
+            // generation so the client gets an up-to-date cookie. Otherwise silently skip — GetValidatedSessionDataAsync already ran at request start and
+            // the next request will catch any real compromise.
 
-            if (sessionData.Generation != sessionToken.Generation + 1 ||
-                sessionData.Device != Device ||
-                !Equals(sessionData.IpAddress, IpAddress))
-            {
+            if (sessionData.Generation != sessionToken.Generation + 1 || sessionData.Device != Device)
                 return null;
-            }
         }
         else
         {
@@ -354,13 +427,11 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             sessionData.IpAddress = IpAddress;
             sessionData.RefreshedUtc = DateTime.UtcNow;
             sessionData.ValidFor = sessionData.IsPersistent ? _options.PersistentSessionExpiry : _options.TempSessionExpiry;
-
-            if (timeSinceDataRefresh > _options.MultipleRefreshGracePeriod)
-                sessionData.Generation++;
+            sessionData.Generation++;
 
             await storeContext.UpdateSessionAsync(sessionData);
         }
 
-        return await storeContext.RefreshTokenAsync(sessionToken, sessionData);
+        return await storeContext.CreateTokenAsync(sessionToken, sessionData, isStale);
     }
 }

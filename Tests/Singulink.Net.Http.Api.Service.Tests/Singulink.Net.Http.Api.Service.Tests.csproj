@@ -1,0 +1,14 @@
+<Project Sdk="MSTest.Sdk/4.0.2">
+  <PropertyGroup>
+    <RootNamespace>Singulink.Net.Http.Api.Service</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
+  </ItemGroup>
+</Project>

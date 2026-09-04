@@ -25,9 +25,22 @@ public interface ISessionStoreContext<TSessionToken, TSessionData> : IAsyncDispo
     Task InvalidateSessionAsync(TSessionToken sessionToken);
 
     /// <summary>
-    /// Refreshes the specified session token and produces a new token with updated information from the data store and provided refresh info.
+    /// Determines whether the information contained in the specified session token is still current, i.e. the data it was created from has not changed
+    /// since it was created. Implementations typically compare a security stamp or version captured in the token against the latest value in the data
+    /// store. This is called once per request when the token is due for a refresh or the request forces session validation.
     /// </summary>
-    Task<TSessionToken> RefreshTokenAsync(TSessionToken previousToken, ISessionTokenRefreshInfo refreshInfo);
+    Task<bool> IsTokenCurrentAsync(TSessionToken sessionToken);
+
+    /// <summary>
+    /// Creates a new session token for the session represented by the previous token with the provided refresh info applied.
+    /// </summary>
+    /// <param name="previousToken">The token the new token is based on.</param>
+    /// <param name="refreshInfo">The refresh info to apply to the new token.</param>
+    /// <param name="isStale">Indicates whether the previous token's information was found to be out of date by <see cref="IsTokenCurrentAsync"/>. If
+    /// <see langword="true"/>, the new token must be built from the latest information in the data store. If <see langword="false"/>, implementations may
+    /// reuse the previous token's information and only apply the refresh info (typically synchronously). Reloading the information regardless of this
+    /// value is always safe, just slower.</param>
+    ValueTask<TSessionToken> CreateTokenAsync(TSessionToken previousToken, ISessionTokenRefreshInfo refreshInfo, bool isStale);
 }
 
 /// <summary>

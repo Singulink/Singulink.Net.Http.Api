@@ -24,16 +24,24 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     /// Gets the session token from the current request. If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
     /// </summary>
     /// <param name="sessionOptions">Option flags for retrieving the session token.</param>
+    /// <remarks>
+    /// <inheritdoc cref="GetTokenAsync(SessionAccessOptions)" path="/remarks"/>
+    /// </remarks>
     public abstract ValueTask<TSessionToken> GetRequiredTokenAsync(SessionAccessOptions sessionOptions = default);
 
     /// <summary>
     /// Gets the session token from the current request. If the user is not signed in, returns <see langword="null"/>.
     /// </summary>
     /// <param name="sessionOptions">Option flags for retrieving the session token.</param>
+    /// <remarks>
+    /// The token is read from the request and validated against the session store at most once per request, and the result is cached for subsequent calls.
+    /// After <see cref="SetToken"/> or <see cref="ClearToken"/> is called, subsequent calls return the token that was set (or <see langword="null"/>).
+    /// </remarks>
     public abstract ValueTask<TSessionToken?> GetTokenAsync(SessionAccessOptions sessionOptions = default);
 
     /// <summary>
-    /// Sets the session cookie for the current request user to the specified session token.
+    /// Sets the session cookie for the current request user to the specified session token. Subsequent token retrievals in the current request return the
+    /// specified token, and any pending deferred token refresh is cancelled.
     /// </summary>
     public abstract void SetToken(TSessionToken sessionToken);
 
@@ -51,7 +59,8 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     public abstract Task SignOutAsync();
 
     /// <summary>
-    /// Clears the session cookie for the current request user.
+    /// Clears the session cookie for the current request user. Subsequent token retrievals in the current request return <see langword="null"/>, and any
+    /// pending deferred token refresh is cancelled.
     /// </summary>
     public abstract void ClearToken();
 

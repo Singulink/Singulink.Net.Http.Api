@@ -6,45 +6,35 @@ on:
   pull_request:
     branches: [ main ]
 
+# Auto-cancel any old in-progress runs for the same PR, but not for non-PR runs
+concurrency:
+  group: ${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
-  debug-windows:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        configuration: [Debug, Release]
 
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os == 'windows-latest' && 'windows-x64' || matrix.os == 'ubuntu-latest' && 'linux-x64' || 'macos-arm64' }}-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}
 
     steps:
-    - uses: actions/checkout@v6
+    - name: Checkout
+      uses: actions/checkout@v6
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: |
-          8.0.x
-          9.0.x
+          10.0.x
     - name: Clean
-      run: dotnet clean --configuration Debug && dotnet nuget locals all --clear
+      run: dotnet clean Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} && dotnet nuget locals all --clear
     - name: Install dependencies
-      run: dotnet restore
+      run: dotnet restore Singulink.Net.Http.Api.sln
     - name: Build
-      run: dotnet build --configuration Debug --no-restore
+      run: dotnet build Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} --no-restore
     - name: Test
-      run: dotnet test --configuration Debug --no-build --verbosity normal
-
-  release-windows:
-
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@v6
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: |
-          8.0.x
-          9.0.x
-    - name: Clean
-      run: dotnet clean --configuration Release && dotnet nuget locals all --clear
-    - name: Install dependencies
-      run: dotnet restore
-    - name: Build
-      run: dotnet build --configuration Release --no-restore
-    - name: Test
-      run: dotnet test --configuration Release --no-build --verbosity normal
+      run: dotnet test Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} --no-build --verbosity normal

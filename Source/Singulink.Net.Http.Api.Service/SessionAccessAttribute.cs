@@ -4,7 +4,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// Attribute for configuring options when binding session tokens from HTTP contexts.
 /// </summary>
 [AttributeUsage(AttributeTargets.Parameter, Inherited = false, AllowMultiple = false)]
-public class SessionAccessAttribute : Attribute
+public sealed class SessionAccessAttribute : Attribute
 {
     /// <summary>
     /// Gets options for configuring session access behavior.

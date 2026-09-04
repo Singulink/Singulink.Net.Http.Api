@@ -1,6 +1,7 @@
 # Singulink HTTP API Toolkit
 
 [![Chat on Discord](https://img.shields.io/discord/906246067773923490)](https://discord.gg/EkQhJFsBu6)
+[![Build and Test](https://github.com/Singulink/Singulink.Net.Http.Api/workflows/build%20and%20test/badge.svg)](https://github.com/Singulink/Singulink.Net.Http.Api/actions?query=workflow%3A%22build+and+test%22)
 
 **HTTP API Toolkit** provides structured HTTP client and middleware components that simplify building and consuming HTTP APIs in .NET based on a consistent set of opinionated conventions.
 

@@ -449,7 +449,7 @@ public abstract class ApiClientBase
         ResponseExceptionInfo.ParseAndThrow((int)response.StatusCode, errorContentString, errorContentType, hasErrorCode);
     }
 
-    private void UpdateSessionToken(HttpResponseMessage response)
+    internal void UpdateSessionToken(HttpResponseMessage response)
     {
         if (response.Headers.TryGetValues("Set-Cookie", out var values))
         {

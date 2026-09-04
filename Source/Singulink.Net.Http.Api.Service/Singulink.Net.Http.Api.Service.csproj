@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Library</OutputType>
 
-    <Description>ASP.NET API service library for the Singulink HTTP API Tookit.</Description>
+    <Description>ASP.NET API service library for the Singulink HTTP API Toolkit.</Description>
     <PackageTags>HTTP; API; Service; Server; Middleware;</PackageTags>
   </PropertyGroup>
   <ItemGroup>

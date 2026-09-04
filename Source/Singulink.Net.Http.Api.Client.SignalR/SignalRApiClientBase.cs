@@ -137,22 +137,52 @@ public abstract class SignalRApiClientBase : ApiClientBase
         {
             options.Transports = HttpTransportType.WebSockets;
 
-            if (HttpMessageHandler is not null)
-                options.HttpMessageHandlerFactory = _ => HttpMessageHandler;
-
             if (!OperatingSystem.IsBrowser())
             {
-                string? sessionToken = SessionToken;
+                // The session token can change at any time (i.e. it gets refreshed by API responses), so it is read live for every negotiate request and
+                // websocket handshake instead of being baked into the connection options. This is essential for automatic reconnects, which would otherwise
+                // present a stale token that fails validation on the server and invalidates the session.
 
-                if (sessionToken is not null)
-                    options.Headers["Cookie"] = $"{SessionCookieName}={sessionToken}";
+                options.HttpMessageHandlerFactory = _ => new SessionMessageHandler(this);
+                options.WebSocketConfiguration = wsOptions => {
+                    wsOptions.SetRequestHeader("User-Agent", UserAgent);
 
-                options.Headers["User-Agent"] = UserAgent;
+                    if (SessionToken is { } sessionToken)
+                        wsOptions.SetRequestHeader("Cookie", $"{SessionCookieName}={sessionToken}");
+                };
             }
 
             configureOptions?.Invoke(options);
         });
 
         return builder.Build();
+    }
+
+    /// <summary>
+    /// Applies the current session cookie and user agent to each outgoing hub HTTP request (negotiate and, on runtimes that route the websocket handshake
+    /// through the HTTP handler, the handshake) and captures session token updates from responses.
+    /// </summary>
+    private sealed class SessionMessageHandler : DelegatingHandler
+    {
+        private readonly SignalRApiClientBase _client;
+
+        public SessionMessageHandler(SignalRApiClientBase client) : base(HttpMessageHandler!)
+        {
+            _client = client;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            request.Headers.Remove("User-Agent");
+            request.Headers.TryAddWithoutValidation("User-Agent", _client.UserAgent);
+            request.Headers.Remove("Cookie");
+
+            if (_client.SessionToken is { } sessionToken)
+                request.Headers.TryAddWithoutValidation("Cookie", $"{_client.SessionCookieName}={sessionToken}");
+
+            var response = await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            _client.UpdateSessionToken(response);
+            return response;
+        }
     }
 }

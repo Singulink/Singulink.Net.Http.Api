@@ -3,7 +3,15 @@
 [![Chat on Discord](https://img.shields.io/discord/906246067773923490)](https://discord.gg/EkQhJFsBu6)
 [![Build and Test](https://github.com/Singulink/Singulink.Net.Http.Api/workflows/build%20and%20test/badge.svg)](https://github.com/Singulink/Singulink.Net.Http.Api/actions?query=workflow%3A%22build+and+test%22)
 
-**HTTP API Toolkit** is a set of client and service libraries for building and consuming HTTP APIs in .NET based on a consistent set of opinionated conventions: cookie-based sessions that need no server-side lookup on most requests, errors that travel as typed exceptions, streamed results with keep-alive and error propagation, and strongly typed SignalR hub contracts shared between server and client.
+**HTTP API Toolkit** is a set of client and service libraries for building and consuming HTTP APIs in .NET based on a consistent set of opinionated conventions. A service and a client built with the toolkit agree on how sessions, errors, streamed results and SignalR hubs work, so application code deals with typed exceptions, typed hub contracts and plain `IAsyncEnumerable<T>` results instead of HTTP plumbing.
+
+✔️ Cookie sessions validated without a store lookup  
+✔️ Session token rotation and theft detection  
+✔️ Errors travel as typed exceptions  
+✔️ Streamed results with keep-alive and error propagation  
+✔️ Strongly typed SignalR hub contracts  
+✔️ Runs on desktop, mobile and browser clients  
+✔️ Trimming and AOT friendly  
 
 Details of each component are provided below:
 
@@ -33,42 +41,39 @@ These packages are part of our **Singulink Libraries** collection. Visit https:/
 
 ### Singulink.Net.Http.Api
 
-Shared library referenced by both clients and services. It contains the parts of the conventions that both sides must agree on:
+Shared library referenced by both clients and services. It contains the parts of the conventions that both sides must agree on, and has no ASP.NET Core dependency so it can also be referenced by data contract and data layer projects:
 
-✔️ The `ApiException` hierarchy (`BadRequestApiException`, `UnauthorizedApiException`, `NotFoundApiException`, `ValidationApiException`, `ServerErrorApiException` and more), thrown on the server and rethrown as the same type on the client  
-✔️ The `StreamingResponse` format and reader for streamed results  
-✔️ The `ISessionData` session record contract, implemented by data-layer projects without an ASP.NET Core dependency  
-✔️ `HubMessage`, `HubMethod` and `HubStream` definitions for strongly typed SignalR hub contracts  
+- The `ApiException` hierarchy (`BadRequestApiException`, `UnauthorizedApiException`, `NotFoundApiException`, `ValidationApiException`, `ServerErrorApiException` and more), thrown on the server and rethrown as the same type on the client.
+- The `StreamingResponse` format and reader for streamed results.
+- `HubMessage`, `HubMethod` and `HubStream` definitions for strongly typed SignalR hub contracts.
+- The `ISessionData` session record contract implemented by data layer projects.
 
 ### Singulink.Net.Http.Api.Service
 
-ASP.NET Core library for building services:
+ASP.NET Core library for building services. Sessions are cookie-based and backed by an encrypted, self-contained session token, so most requests need no session store lookup. Sessions use a sliding expiry with periodic refresh, token rotation for theft detection and a grace window for concurrent requests, and security-sensitive operations can force validation so they always act on current data.
 
-✔️ **Cookie-based sessions** backed by an encrypted, self-contained session token, so most requests need no session store lookup  
-✔️ Sliding session expiry with periodic refresh, token rotation for theft detection, and a grace window for concurrent requests  
-✔️ Forced validation for security-sensitive operations, so they always act on current data  
-✔️ Cross-origin request blocking (CSRF protection) and a user ID precondition that catches stale clients after account switches  
-✔️ Exceptions mapped to error responses through a single `IApiExceptionHandler`, with reference IDs for unexpected failures  
-✔️ Endpoints returning `IAsyncEnumerable<T>` automatically converted to flushed, keep-alive capable streams that propagate errors  
-✔️ SignalR hub filter that reports hub exceptions to clients with the same typed errors as HTTP requests  
+- Cross-origin request blocking (CSRF protection) and a user ID precondition that catches stale clients after account switches.
+- Exceptions mapped to error responses through a single `IApiExceptionHandler`, with reference IDs logged and reported for unexpected failures.
+- Endpoints returning `IAsyncEnumerable<T>` automatically converted to flushed, keep-alive capable streams that propagate errors.
+- SignalR hub filter that reports hub exceptions to clients with the same typed errors as HTTP requests.
 
 ### Singulink.Net.Http.Api.Client
 
-Base class for API clients on any .NET platform, including browser (WebAssembly) and mobile:
+Base class for API clients on any .NET platform, including browser (WebAssembly) and mobile apps:
 
-✔️ Session cookie handling with persistence callbacks, so a signed-in session survives app restarts  
-✔️ Automatic user ID preconditions on requests  
-✔️ Error responses rethrown as typed `ApiException` instances  
-✔️ Streamed results consumed as `IAsyncEnumerable<T>`  
-✔️ Trimming and AOT friendly when used with a source-generated JSON serializer context  
+- Session cookie handling with persistence callbacks, so a signed-in session survives app restarts.
+- Automatic user ID preconditions on requests.
+- Error responses rethrown as typed `ApiException` instances.
+- Streamed results consumed as `IAsyncEnumerable<T>`.
+- Trimming and AOT friendly when used with a source-generated JSON serializer context.
 
 ### Singulink.Net.Http.Api.Client.SignalR
 
 Adds SignalR support to API clients:
 
-✔️ Hub connections that share the client's session and always present the current session token, including on reconnect  
-✔️ `ApiHubConnection` with a strongly typed message, method and stream API based on shared contract definitions  
-✔️ Hub errors surfaced as the same typed `ApiException` instances as HTTP requests  
+- Hub connections that share the client's session and always present the current session token, including on reconnect.
+- `ApiHubConnection` with a strongly typed message, method and stream API based on shared contract definitions.
+- Hub errors surfaced as the same typed `ApiException` instances as HTTP requests.
 
 ## Further Reading
 

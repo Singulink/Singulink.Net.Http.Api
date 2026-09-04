@@ -19,12 +19,12 @@ public sealed class SessionRefreshTests
         // The endpoint operates on the token as presented; the refresh happens when the response starts.
         (await request.GetTokenAsync()).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
         request.SessionCookies.ShouldBeEmpty();
 
         await request.StartResponseAsync();
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent", "GetSessionData", "UpdateSession", "CreateToken(current)"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "GetSessionData", "UpdateSession", "CreateToken(current)"]);
 
         var issued = request.IssuedToken.ShouldNotBeNull();
         issued.Generation.ShouldBe(1);
@@ -57,23 +57,27 @@ public sealed class SessionRefreshTests
     }
 
     [TestMethod]
-    public async Task Due_StaleToken_EndpointGetsPresentedToken_RebuildHappensAtResponseStart()
+    public async Task Due_StaleToken_EndpointGetsRebuiltToken_RotationAppliesRefreshInfoOnly()
     {
         var host = new SessionTestHost();
         var token = host.CreateSession(age: Due);
         host.BumpUserStamp();
         var request = host.CreateRequest(token);
 
+        // The endpoint never runs on a token the service knows is stale: it is rebuilt from current data before the endpoint sees it.
         var result = (await request.GetTokenAsync()).ShouldNotBeNull();
-        result.Stamp.ShouldBe(token.Stamp);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        result.Stamp.ShouldBe(host.Store.UserStamps[token.UserId]);
+        result.BuildCount.ShouldBe(1);
+        result.Generation.ShouldBe(0);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
 
         await request.StartResponseAsync();
 
-        host.Store.Calls.Last().ShouldBe("CreateToken(stale)");
+        // The rotating refresh only applies the new refresh info to the already-current token.
+        host.Store.Calls.Skip(3).ShouldBe(["GetSessionData", "UpdateSession", "CreateToken(current)"]);
 
         var issued = request.IssuedToken.ShouldNotBeNull();
-        issued.Stamp.ShouldBe(host.Store.UserStamps[token.UserId]);
+        issued.Stamp.ShouldBe(result.Stamp);
         issued.BuildCount.ShouldBe(1);
         issued.Generation.ShouldBe(1);
     }
@@ -138,7 +142,7 @@ public sealed class SessionRefreshTests
 
         (await request.GetTokenAsync()).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
         request.Response.OnStartingCallbackCount.ShouldBe(0);
         request.SessionCookies.ShouldBeEmpty();
     }

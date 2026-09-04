@@ -59,10 +59,10 @@ public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessi
             return Task.CompletedTask;
         }
 
-        public Task<bool> IsTokenCurrentAsync(TestSessionToken sessionToken)
+        public Task<bool> IsTokenStaleAsync(TestSessionToken sessionToken)
         {
-            Record("IsTokenCurrent");
-            return Task.FromResult(store.UserStamps[sessionToken.UserId] == sessionToken.Stamp);
+            Record("IsTokenStale");
+            return Task.FromResult(store.UserStamps[sessionToken.UserId] != sessionToken.Stamp);
         }
 
         public ValueTask<TestSessionToken> CreateTokenAsync(TestSessionToken previousToken, ISessionTokenRefreshInfo refreshInfo, bool isStale)

@@ -7,7 +7,7 @@ namespace Microsoft.AspNetCore.Components.WebAssembly.Http;
 /// The cache mode of the request. It controls how the request will interact with the browser's HTTP cache.
 /// See <see href="https://developer.mozilla.org/en-US/docs/Web/API/Request/cache"/>.
 /// </summary>
-public enum BrowserRequestCache
+internal enum BrowserRequestCache
 {
     /// <summary>
     /// The browser looks for a matching request in its HTTP cache.

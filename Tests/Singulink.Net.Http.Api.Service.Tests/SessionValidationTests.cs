@@ -69,7 +69,7 @@ public sealed class SessionValidationTests
 
         (await request.GetTokenAsync(Validate)).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
         host.Store.Sessions.ShouldContainKey(token.SessionId);
     }
 

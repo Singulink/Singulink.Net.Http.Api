@@ -112,8 +112,6 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     private TSessionToken? _token;
     private bool _tokenRead;
     private bool _sessionValidated;
-    private TSessionData? _validatedSessionData;
-    private bool _tokenIsStale;
     private bool _refreshToken;
     private bool _reissueToken;
     private bool _deferredUpdateRegistered;
@@ -163,35 +161,29 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         if (!forceValidate && !refreshDue)
             return sessionToken;
 
-        if (!_sessionValidated || (_tokenIsStale && forceValidate))
+        if (!_sessionValidated)
         {
             await using var storeContext = _sessionStoreContextFactory.Create();
+            var sessionData = await GetValidatedSessionDataAsync(storeContext, sessionToken);
 
-            if (!_sessionValidated)
+            if (sessionData is null)
             {
-                var sessionData = await GetValidatedSessionDataAsync(storeContext, sessionToken);
-
-                if (sessionData is null)
-                {
-                    ClearToken();
-                    return null;
-                }
-
-                _validatedSessionData = sessionData;
-                _tokenIsStale = !await storeContext.IsTokenCurrentAsync(sessionToken);
-                _sessionValidated = true;
+                ClearToken();
+                return null;
             }
 
-            if (_tokenIsStale && forceValidate)
+            _sessionValidated = true;
+
+            if (await storeContext.IsTokenStaleAsync(sessionToken))
             {
                 // Token information is out of date, so create a new token from the latest store data right away so that the current request operates on
-                // current information. The session's existing refresh info is used (same generation, no store write) so this does not count as a refresh
-                // and losing the re-issued cookie is harmless. A rotating refresh is still performed separately at response start if one is due.
+                // current information rather than the stale token it was sent with. The session's existing refresh info is used (same generation, no store
+                // write) so this does not count as a refresh and losing the re-issued cookie is harmless. A rotating refresh is still performed separately
+                // at response start if one is due, which then only needs to apply the new refresh info to the already-current token.
 
-                sessionToken = await storeContext.CreateTokenAsync(sessionToken, _validatedSessionData!, isStale: true);
+                sessionToken = await storeContext.CreateTokenAsync(sessionToken, sessionData, isStale: true);
 
                 _token = sessionToken;
-                _tokenIsStale = false;
                 _reissueToken = true;
             }
         }
@@ -242,7 +234,6 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         _token = sessionToken;
         _tokenRead = true;
         _sessionValidated = true;
-        _tokenIsStale = false;
         _skipDeferredUpdate = true;
 
         SetTokenInternal(sessionToken);
@@ -354,7 +345,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             if (_skipDeferredUpdate || _token is null)
                 return;
 
-            var updatedToken = _refreshToken ? await RefreshSessionTokenAsync(_token, _tokenIsStale) : _token;
+            var updatedToken = _refreshToken ? await RefreshSessionTokenAsync(_token) : _token;
 
             if (updatedToken is not null)
                 SetTokenInternal(updatedToken);
@@ -402,7 +393,7 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
     /// session — validation is the responsibility of <see cref="GetValidatedSessionDataAsync"/> which runs at request start. If the refresh cannot be safely
     /// performed (e.g. session expired or generation advanced by more than 1 or from a different device), it silently returns <see langword="null"/>.
     /// </summary>
-    private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken, bool isStale)
+    private async Task<TSessionToken?> RefreshSessionTokenAsync(TSessionToken sessionToken)
     {
         await using var storeContext = _sessionStoreContextFactory.Create();
         var sessionData = await storeContext.GetSessionDataAsync(sessionToken);
@@ -432,6 +423,8 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
             await storeContext.UpdateSessionAsync(sessionData);
         }
 
-        return await storeContext.CreateTokenAsync(sessionToken, sessionData, isStale);
+        // The token is always current at this point: a stale token is rebuilt when the session is validated at request start, so the refresh only needs
+        // to apply the new refresh info.
+        return await storeContext.CreateTokenAsync(sessionToken, sessionData, isStale: false);
     }
 }

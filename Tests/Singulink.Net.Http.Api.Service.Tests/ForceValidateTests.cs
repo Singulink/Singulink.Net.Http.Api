@@ -16,7 +16,7 @@ public sealed class ForceValidateTests
         var result = await request.GetTokenAsync(Validate);
 
         result.ShouldBe(token);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
 
         await request.StartResponseAsync();
 
@@ -40,7 +40,7 @@ public sealed class ForceValidateTests
         result.BuildCount.ShouldBe(1);
         result.Generation.ShouldBe(token.Generation);
         result.RefreshedUtc.ShouldBe(token.RefreshedUtc);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent", "CreateToken(stale)"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
 
         await request.StartResponseAsync();
 
@@ -64,7 +64,7 @@ public sealed class ForceValidateTests
 
         second.ShouldBeSameAs(first);
         third.ShouldBeSameAs(first);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent", "CreateToken(stale)"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
     }
 
     [TestMethod]
@@ -83,7 +83,7 @@ public sealed class ForceValidateTests
 
         // The rebuilt token is current, so the rotating refresh does not rebuild again.
         host.Store.Calls.ShouldBe([
-            "GetSessionData", "IsTokenCurrent", "CreateToken(stale)",
+            "GetSessionData", "IsTokenStale", "CreateToken(stale)",
             "GetSessionData", "UpdateSession", "CreateToken(current)"]);
 
         var issued = request.IssuedToken.ShouldNotBeNull();
@@ -105,7 +105,7 @@ public sealed class ForceValidateTests
 
         var forced = (await request.GetTokenAsync(Validate)).ShouldNotBeNull();
         forced.BuildCount.ShouldBe(1);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent", "CreateToken(stale)"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
 
         (await request.GetTokenAsync()).ShouldBeSameAs(forced);
 
@@ -114,19 +114,20 @@ public sealed class ForceValidateTests
     }
 
     [TestMethod]
-    public async Task LaterForcedCall_AfterDueRead_RebuildsWithoutRecheckingStore()
+    public async Task LaterForcedCall_AfterDueRead_ReturnsAlreadyRebuiltToken()
     {
         var host = new SessionTestHost();
         var token = host.CreateSession(age: Due);
         host.BumpUserStamp();
         var request = host.CreateRequest(token);
 
-        (await request.GetTokenAsync()).ShouldBe(token);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        var rebuilt = (await request.GetTokenAsync()).ShouldNotBeNull();
+        rebuilt.BuildCount.ShouldBe(1);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
 
         var forced = (await request.GetTokenAsync(Validate)).ShouldNotBeNull();
-        forced.BuildCount.ShouldBe(1);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent", "CreateToken(stale)"]);
+        forced.ShouldBeSameAs(rebuilt);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
 
         await request.StartResponseAsync();
 
@@ -146,6 +147,6 @@ public sealed class ForceValidateTests
 
         (await request.GetTokenAsync()).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
     }
 }

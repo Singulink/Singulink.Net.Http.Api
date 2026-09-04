@@ -1,4 +1,4 @@
-namespace Singulink.Net.Http.Api;
+namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
 /// Represents a session token that contains user information and the last time it was refreshed.

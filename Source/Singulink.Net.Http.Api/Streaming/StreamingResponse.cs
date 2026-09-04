@@ -92,7 +92,8 @@ public static class StreamingResponse
     /// <summary>
     /// Reads the items from a streaming response body using the specified serializer options to deserialize items.
     /// </summary>
-    /// <inheritdoc cref="ReadItemsAsync{TItem}(Stream, JsonTypeInfo{TItem}, CancellationToken)"/>
+    /// <inheritdoc cref="ReadItemsAsync{TItem}(Stream, JsonTypeInfo{TItem}, CancellationToken)" path="/exception"/>
+    /// <typeparam name="TItem">The item type.</typeparam>
     /// <param name="stream">The response body stream.</param>
     /// <param name="serializerOptions">The serializer options used to deserialize items.</param>
     /// <param name="cancellationToken">A token that cancels the read.</param>

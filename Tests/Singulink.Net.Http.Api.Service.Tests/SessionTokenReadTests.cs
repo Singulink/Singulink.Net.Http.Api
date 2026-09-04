@@ -99,7 +99,7 @@ public sealed class SessionTokenReadTests
         third.ShouldBeSameAs(first);
 
         // Due for refresh, so the session was validated - but only once.
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenCurrent"]);
+        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
         host.Store.ContextsCreated.ShouldBe(1);
         host.Store.OpenContexts.ShouldBe(0);
     }

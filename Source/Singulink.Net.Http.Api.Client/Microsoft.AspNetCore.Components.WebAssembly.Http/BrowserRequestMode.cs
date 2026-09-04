@@ -6,7 +6,7 @@ namespace Microsoft.AspNetCore.Components.WebAssembly.Http;
 /// <summary>
 /// The mode of the request. This is used to determine if cross-origin requests lead to valid responses.
 /// </summary>
-public enum BrowserRequestMode
+internal enum BrowserRequestMode
 {
     /// <summary>
     /// If a request is made to another origin with this mode set, the result is simply an error.

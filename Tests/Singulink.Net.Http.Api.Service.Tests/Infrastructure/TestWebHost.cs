@@ -33,9 +33,12 @@ public sealed class TestWebHost : IAsyncDisposable
     public IReadOnlyList<LogEntry> Logs => _logs.Entries;
 
     /// <summary>
-    /// Gets the log entries of warning level or higher written by the application so far (i.e. excluding the framework's informational request logging).
+    /// Gets the log entries of warning level or higher written by the application so far, excluding the framework's informational request logging and
+    /// environment-specific data protection notices.
     /// </summary>
-    public IReadOnlyList<LogEntry> WarningLogs => _logs.Entries.Where(l => l.Level >= LogLevel.Warning).ToList();
+    public IReadOnlyList<LogEntry> WarningLogs => _logs.Entries
+        .Where(l => l.Level >= LogLevel.Warning && !l.Category.StartsWith("Microsoft.AspNetCore.DataProtection", StringComparison.Ordinal))
+        .ToList();
 
     /// <summary>
     /// Gets the built endpoints (building them applies the endpoint conventions).
@@ -64,7 +67,10 @@ public sealed class TestWebHost : IAsyncDisposable
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(logs);
-        builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
+
+        // Register the ephemeral provider directly (rather than via AddDataProtection().UseEphemeralDataProtectionProvider()) so that no key ring is
+        // created at all: the default key manager logs environment-specific warnings (e.g. no key encryption on Linux/macOS) that would pollute the logs.
+        builder.Services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
 
         if (exceptionHandler is not null)
             builder.Services.AddSingleton(exceptionHandler);

@@ -24,7 +24,7 @@ public sealed class SessionTestHost
     public SessionTestHost(Action<SessionHandlingOptions>? configure = null)
     {
         var services = new ServiceCollection();
-        services.AddDataProtection().UseEphemeralDataProtectionProvider();
+        services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
         services.AddSingleton<IOriginValidator>(new OriginValidator("example.com", "*.example.com"));
         services.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStore>(configure);
 

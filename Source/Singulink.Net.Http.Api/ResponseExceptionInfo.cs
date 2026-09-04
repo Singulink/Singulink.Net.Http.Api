@@ -15,7 +15,7 @@ internal readonly struct ResponseExceptionInfo
     public int StatusCode { get; }
     public string ErrorCode { get; }
     public string Message { get; }
-    public string MimeType => ErrorCode.Length > 0 ? (PlainTextMimeType + ";format=error-code") : PlainTextMimeType; // Only used for non-enumeration format.
+    public string MimeType => ErrorCode.Length > 0 ? (PlainTextMimeType + ";format=error-code") : PlainTextMimeType;
 
     private const string PlainTextMimeType = "text/plain";
 
@@ -58,29 +58,14 @@ internal readonly struct ResponseExceptionInfo
         }
     }
 
-    public static void ParseAndThrow(string enumerationContent)
+    /// <summary>
+    /// Throws the <see cref="ApiException"/> that corresponds to a streaming response error record. Returns without throwing if the record does not
+    /// represent an error status.
+    /// </summary>
+    public static void ThrowStreamError(StreamErrorInfo error)
     {
-        // Check if we have a valid status code at the start of the string
-        if (enumerationContent.AsSpan() is [>= '1' and <= '5', >= '0' and <= '9', >= '0' and <= '9', ' ', .. var rest])
-        {
-            if (TryParseImpl(int.Parse(enumerationContent[..3], NumberStyles.None, CultureInfo.InvariantCulture), rest, enumerationContent, PlainTextMimeType, hasErrorCode: true, out var info))
-            {
-                info.Throw(enumerationContent, PlainTextMimeType);
-            }
-            else
-            {
-                ThrowInvalid(enumerationContent);
-            }
-        }
-        else
-        {
-            ThrowInvalid(enumerationContent);
-        }
-
-        static void ThrowInvalid(string content)
-        {
-            throw new ApiException(HttpStatusCode.InternalServerError, $"Invalid enumeration exception content: {content}");
-        }
+        string message = error.Message ?? string.Empty;
+        new ResponseExceptionInfo(error.Status, error.Code ?? string.Empty, message).Throw(message, PlainTextMimeType);
     }
 
     public static void ParseAndThrow(int statusCode, string responseContent, string? mimeType, bool hasErrorCode)
@@ -129,6 +114,7 @@ internal readonly struct ResponseExceptionInfo
             HttpStatusCode.PreconditionFailed => new UserChangedApiException(errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
             HttpStatusCode.UnprocessableEntity => new ValidationApiException(errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
             HttpStatusCode.PreconditionRequired => new UserRequiredApiException(errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
+            HttpStatusCode.InternalServerError => new ServerErrorApiException(errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
             _ => new ApiException((HttpStatusCode)StatusCode, errorMessage) { ErrorContent = errorContent, ErrorCode = ErrorCode },
         };
 
@@ -172,11 +158,6 @@ internal readonly struct ResponseExceptionInfo
         // If we got here, then we have a valid status code and message, so we can create the result
         info = new ResponseExceptionInfo(statusCode, errorCode, message);
         return true;
-    }
-
-    public string ToEnumerationString()
-    {
-        return string.Create(CultureInfo.InvariantCulture, $"{StatusCode} [{ErrorCode}] {Message}");
     }
 
     public string ToResponseString()

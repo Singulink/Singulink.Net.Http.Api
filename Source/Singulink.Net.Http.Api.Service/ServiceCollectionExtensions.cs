@@ -20,6 +20,27 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers the default <see cref="ApiExceptionHandler"/>, which reports API exceptions as-is and logs unexpected exceptions with a reference ID that is
+    /// reported to the client (or propagates them in development environments).
+    /// </summary>
+    public static IServiceCollection AddApiExceptionHandler(this IServiceCollection services)
+    {
+        return services.AddApiExceptionHandler<DefaultApiExceptionHandler>();
+    }
+
+    /// <summary>
+    /// Registers an <see cref="IApiExceptionHandler"/> that maps exceptions thrown during request processing to the errors reported to clients. Derive from
+    /// <see cref="ApiExceptionHandler"/> to customize the default behavior with application-specific exception mappings.
+    /// </summary>
+    /// <typeparam name="THandler">The handler type.</typeparam>
+    public static IServiceCollection AddApiExceptionHandler<THandler>(this IServiceCollection services)
+        where THandler : class, IApiExceptionHandler
+    {
+        services.AddSingleton<IApiExceptionHandler, THandler>();
+        return services;
+    }
+
+    /// <summary>
     /// Registers services required for enabling HTTP session handling.
     /// </summary>
     /// <typeparam name="TSessionToken">The session token type.</typeparam>

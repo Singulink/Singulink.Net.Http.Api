@@ -1,9 +1,8 @@
-using System.Diagnostics;
-
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Middleware that handles API exceptions thrown during request processing.
+/// Middleware that handles exceptions thrown during request processing by reporting them to the client as API errors. Exceptions are mapped using the
+/// registered <see cref="IApiExceptionHandler"/> (if any); otherwise <see cref="ApiException"/> instances are reported as-is and other exceptions propagate.
 /// </summary>
 public class ApiExceptionMiddleware
 {
@@ -18,7 +17,7 @@ public class ApiExceptionMiddleware
     }
 
     /// <summary>
-    /// Invokes the middleware to handle API exceptions during request processing.
+    /// Invokes the middleware to handle exceptions thrown during request processing.
     /// </summary>
     public async Task InvokeAsync(HttpContext context)
     {
@@ -26,15 +25,17 @@ public class ApiExceptionMiddleware
         {
             await _next(context);
         }
-        catch (ApiException ex)
+        catch (Exception ex) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
         {
-            var info = ResponseExceptionInfo.FromApiException(ex);
+            var apiException = await ApiExceptionHandling.ResolveAsync(context, ex);
+
+            if (apiException is null)
+                throw;
+
+            var info = ResponseExceptionInfo.FromApiException(apiException);
 
             context.Response.ContentType = info.MimeType;
             context.Response.StatusCode = info.StatusCode;
-
-            if (Trace.Listeners.Count > 0)
-                Trace.TraceWarning($"[Singulink.Net.Http.Api] Expected API exception handled ({ex.StatusCode}): {ex}");
 
             await context.Response.WriteAsync(info.ToResponseString());
         }

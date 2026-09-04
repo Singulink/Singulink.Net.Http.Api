@@ -347,18 +347,22 @@ public abstract class ApiClientBase
     }
 
     /// <summary>
-    /// Sends an API request and returns a streaming response.
+    /// Sends an API request and returns a streaming response (see <see cref="StreamingResponse"/>).
     /// </summary>
-    /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    /// <inheritdoc cref="SendStreamingAsync{TItem}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
     protected IAsyncEnumerable<TItem> SendStreamingAsync<TItem>(HttpRequestMessage request, CancellationToken cancellationToken = default)
     {
         return SendStreamingAsync<TItem>(request, null, cancellationToken);
     }
 
     /// <summary>
-    /// Sends an API request with the specified content and returns a streaming response.
+    /// Sends an API request with the specified content and returns a streaming response (see <see cref="StreamingResponse"/>). Exceptions reported in the
+    /// response stream are thrown from the enumeration as the corresponding <see cref="ApiException"/>. Null items are yielded as <see langword="null"/>, so
+    /// a nullable item type should be used if the endpoint can produce them.
     /// </summary>
     /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
+    /// <exception cref="HttpIOException">The streaming response ended before completion.</exception>
+    /// <exception cref="FormatException">The response was not a streaming response or contained an unrecognized record.</exception>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = SerializationSuppressionJustification)]
     protected virtual async IAsyncEnumerable<TItem> SendStreamingAsync<TItem>(
         HttpRequestMessage request, object? content, [EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -382,28 +386,19 @@ public abstract class ApiClientBase
         {
             await ThrowOnErrorResponse(response, cancellationToken).ConfigureAwait(false);
 
-            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            string? mediaType = response.Content.Headers.ContentType?.MediaType;
 
-            bool canBeResponseSideInfoStorage = typeof(TItem).IsAssignableTo(typeof(ISupportsResponseSideInfo));
+            if (!string.Equals(mediaType, StreamingResponse.MediaType, StringComparison.OrdinalIgnoreCase))
+                throw new FormatException($"Expected a '{StreamingResponse.MediaType}' streaming response but received '{mediaType ?? "no"}' content.");
+
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
             await using (stream.ConfigureAwait(false))
             {
-                await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<TItem>(stream, SerializerOptions, cancellationToken).ConfigureAwait(false))
-                {
-                    if (item is not null)
-                    {
-                        if (canBeResponseSideInfoStorage && item is IStoresResponseSideInfo sideInfoItem)
-                        {
-                            // Null side info represents a ping item, which is ignored.
-                            if (sideInfoItem.SideInfo is { } info)
-                                ResponseExceptionInfo.ParseAndThrow(info);
+                var itemTypeInfo = (JsonTypeInfo<TItem>)SerializerOptions.GetTypeInfo(typeof(TItem));
 
-                            continue;
-                        }
-
-                        yield return item;
-                    }
-                }
+                await foreach (var item in StreamingResponse.ReadItemsAsync(stream, itemTypeInfo, cancellationToken).ConfigureAwait(false))
+                    yield return item;
             }
         }
         finally

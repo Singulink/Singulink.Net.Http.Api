@@ -22,47 +22,31 @@ public static class WebApplicationExtensions
     }
 
     /// <summary>
-    /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling API exceptions.
+    /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling exceptions and to convert endpoint results of type
+    /// <see cref="IAsyncEnumerable{T}"/> (where <c>T</c> is a reference type) into <see cref="StreamingResponse"/> streams.
     /// </summary>
-    public static IApplicationBuilder UseApiResponseHandling(this IApplicationBuilder app)
-    {
-        return app.UseMiddleware<ApiExceptionMiddleware>();
-    }
-
-    /// <summary>
-    /// <inheritdoc cref="UseApiResponseHandling(IApplicationBuilder)" path="/summary" />
-    /// </summary>
+    /// <param name="app">The application.</param>
     /// <remarks>
     /// <para>
-    /// This overload also registers a <see cref="ResponseSideInfoEnumerationEndpointFilter" /> that applies to every endpoint already mapped on the
-    /// application, so it must be called after all endpoints have been mapped. This filter allows enumeration endpoints to also communicate exceptions too.
+    /// Streaming responses are applied to every matching endpoint already mapped on the application, so this must be called after all endpoints have been
+    /// mapped. Streamed items (including <see langword="null"/> items) are serialized with the application's JSON options using the endpoint's declared item
+    /// type, and each record is flushed as soon as it is produced. Exceptions thrown before the first record is sent produce a regular error response via
+    /// <see cref="ApiExceptionMiddleware"/>; exceptions thrown after that are converted into an error record that terminates the stream. Both are mapped
+    /// using the registered <see cref="IApiExceptionHandler"/> (see <see cref="ServiceCollectionExtensions.AddApiExceptionHandler{THandler}"/>).
     /// </para>
     /// <para>
-    /// By default, suppressed exceptions are logged to trace; this behaviour can be customized by calling
-    /// <see cref="ResponseSideInfoEnumerationEndpointFilterOptions.AddExceptionObserver(Action{Exception})" />.
-    /// </para>
-    /// <para>
-    /// Enumeration endpoints can be marked with [<see cref="KeepAlivePingAttribute" />] to automatically send periodic ping items to the client
-    /// whenever no item has been produced for the specified interval, keeping the response connection alive.
+    /// Endpoints can be marked with [<see cref="KeepAlivePingAttribute"/>] to automatically send ping records whenever no item has been produced for the
+    /// specified interval, keeping the response connection alive.
     /// </para>
     /// </remarks>
-    public static TBuilder UseApiResponseHandling<TBuilder>(
-        this TBuilder app,
-        Action<ResponseSideInfoEnumerationEndpointFilterOptions> configureEnumerationOptions)
-            where TBuilder : IApplicationBuilder, IEndpointRouteBuilder
+    public static TBuilder UseApiResponseHandling<TBuilder>(this TBuilder app)
+        where TBuilder : IApplicationBuilder, IEndpointRouteBuilder
     {
-        app.UseApiResponseHandling();
-
-        ResponseSideInfoEnumerationEndpointFilterOptions options = new();
-        configureEnumerationOptions(options);
-
-        if (options._enumerableTypes.Count is 0)
-            return app;
+        app.UseMiddleware<ApiExceptionMiddleware>();
 
         bool isDevelopment = app.ApplicationServices.GetRequiredService<IHostEnvironment>().IsDevelopment();
-        ResponseSideInfoEnumerationEndpointFilter filter = new(options, isDevelopment);
 
-        // The filter has to wrap the I{Async}Enumerable<T> result itself, so it must run as an endpoint filter. Endpoint filters can only be attached while
+        // The streaming conversion has to wrap the endpoint result itself, so it must run as an endpoint filter. Endpoint filters can only be attached while
         // an endpoint is being built, so we replace every currently registered endpoint data source with a decorator that rebuilds its endpoints with the
         // filter attached (the same mechanism a route group uses to apply a filter to its children, minus the route prefix). This requires the endpoints to
         // already be mapped, hence the "call after mapping" requirement documented above.
@@ -70,9 +54,7 @@ public static class WebApplicationExtensions
         app.DataSources.Clear();
 
         foreach (var source in sources)
-        {
-            app.DataSources.Add(new ResponseSideInfoEnumerationEndpointDataSource(source, app.ApplicationServices, filter));
-        }
+            app.DataSources.Add(new StreamingResponseEndpointDataSource(source, app.ApplicationServices, isDevelopment));
 
         return app;
     }

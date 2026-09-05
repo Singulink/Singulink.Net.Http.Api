@@ -387,6 +387,69 @@ public sealed class ApiHubConnectionTests
         (await closed.Task.WaitAsync(Timeout)).ShouldBeOfType<UnauthorizedApiException>();
     }
 
+    [TestMethod]
+    public async Task SessionToken_FromHubCallerContext_UnreadableToken_ClosesWithUnauthorized()
+    {
+        // Over WebSockets the response has already started (101 upgrade) when the hub reads the token, so clearing the unreadable token must not attempt
+        // to delete the cookie - that would fail with "response has already started" and surface as a server error instead of unauthorized.
+
+        var store = new InMemorySessionStore();
+        await using var host = await StartHubHostAsync(s => {
+            s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
+            s.AddSingleton(store);
+            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+        });
+
+        await using var connection = CreateWebSocketConnection(host, "session-hub", options => {
+            options.Headers["Cookie"] = "session-token=not-a-valid-token";
+            options.Headers["User-Agent"] = "TestClient/1.0";
+        });
+
+        var closed = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.Closed += error => {
+            closed.TrySetResult(error);
+            return Task.CompletedTask;
+        };
+
+        await connection.StartAsync();
+
+        (await closed.Task.WaitAsync(Timeout)).ShouldBeOfType<UnauthorizedApiException>();
+    }
+
+    [TestMethod]
+    public async Task SessionToken_FromHubCallerContext_InvalidSession_ClosesWithUnauthorized()
+    {
+        // A refresh-due token whose session no longer exists in the store is cleared during validation - same "response already started" concern as above.
+
+        var store = new InMemorySessionStore();
+        await using var host = await StartHubHostAsync(s => {
+            s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
+            s.AddSingleton(store);
+            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+        });
+
+        store.UserStamps[7] = 1;
+        var token = new TestSessionToken(1, 7, 1, DateTime.UtcNow.AddHours(-1), TimeSpan.FromDays(30), 0, true, 0);
+
+        var protector = host.App.Services.GetRequiredService<IDataProtectionProvider>().CreateProtector($"Singulink/Session[{typeof(TestSessionToken).FullName}]");
+        string cookie = protector.Protect(JsonSerializer.Serialize(token));
+
+        await using var connection = CreateWebSocketConnection(host, "session-hub", options => {
+            options.Headers["Cookie"] = $"session-token={cookie}";
+            options.Headers["User-Agent"] = "TestClient/1.0";
+        });
+
+        var closed = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.Closed += error => {
+            closed.TrySetResult(error);
+            return Task.CompletedTask;
+        };
+
+        await connection.StartAsync();
+
+        (await closed.Task.WaitAsync(Timeout)).ShouldBeOfType<UnauthorizedApiException>();
+    }
+
     private static Task<TestWebHost> StartHubHostAsync(Action<IServiceCollection>? configureServices = null)
     {
         return TestWebHost.StartAsync(
@@ -409,6 +472,36 @@ public sealed class ApiHubConnectionTests
             .WithUrl(new Uri(server.BaseAddress, path), options => {
                 options.HttpMessageHandlerFactory = _ => server.CreateHandler();
                 options.Transports = HttpTransportType.LongPolling;
+                configureOptions?.Invoke(options);
+            })
+            .Build();
+
+        return new ApiHubConnection(hubConnection);
+    }
+
+    /// <summary>
+    /// Creates a connection over WebSockets (via the test server's in-memory WebSocket client) for tests that depend on the response having already started
+    /// when the hub's <c>OnConnectedAsync</c> runs, which is not the case with long polling.
+    /// </summary>
+    private static ApiHubConnection CreateWebSocketConnection(TestWebHost host, string path, Action<HttpConnectionOptions>? configureOptions = null)
+    {
+        var server = host.App.GetTestServer();
+
+        var hubConnection = new HubConnectionBuilder()
+            .WithUrl(new Uri(server.BaseAddress, path), options => {
+                options.HttpMessageHandlerFactory = _ => server.CreateHandler();
+                options.Transports = HttpTransportType.WebSockets;
+                options.WebSocketFactory = async (context, cancellationToken) => {
+                    var client = server.CreateWebSocketClient();
+
+                    client.ConfigureRequest = request => {
+                        foreach (var (name, value) in context.Options.Headers)
+                            request.Headers[name] = value;
+                    };
+
+                    return await client.ConnectAsync(context.Uri, cancellationToken);
+                };
+
                 configureOptions?.Invoke(options);
             })
             .Build();

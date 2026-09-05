@@ -246,6 +246,11 @@ public sealed class HttpSessionContext<TSessionToken, TSessionData> : HttpSessio
         _tokenRead = true;
         _skipDeferredUpdate = true;
 
+        // The response may have already started (e.g. hub connections and streaming responses), in which case cookies can no longer be sent. The client is
+        // responsible for discarding its token when it receives the resulting unauthorized response.
+        if (HttpContext.Response.HasStarted)
+            return;
+
         // Domain/Path must match the values used when the cookie was issued; otherwise the browser keeps the original cookie alongside the deletion attempt.
         HttpContext.Response.Cookies.Delete(_options.SessionCookieName, new CookieOptions {
             Domain = _options.CookieDomain,

@@ -41,12 +41,11 @@ These packages are part of our **Singulink Libraries** collection. Visit https:/
 
 ### Singulink.Net.Http.Api
 
-Shared library referenced by both clients and services. It contains the parts of the conventions that both sides must agree on, and has no ASP.NET Core dependency so it can also be referenced by data contract and data layer projects:
+Shared library referenced by both clients and services. It contains the parts of the conventions that both sides must agree on, and has no ASP.NET Core dependency so it can also be referenced by data contract projects:
 
 - The `ApiException` hierarchy (`BadRequestApiException`, `UnauthorizedApiException`, `NotFoundApiException`, `ValidationApiException`, `ServerErrorApiException` and more), thrown on the server and rethrown as the same type on the client.
 - The `StreamingResponse` format and reader for streamed results.
 - `HubMessage`, `HubMethod` and `HubStream` definitions for strongly typed SignalR hub contracts.
-- The `ISessionData` session record contract implemented by data layer projects.
 
 ### Singulink.Net.Http.Api.Service
 

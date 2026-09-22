@@ -39,7 +39,7 @@ Each record is flushed to the transport as soon as it is written, so items reach
 
 ## Reading the Format
 
-<xref:Singulink.Net.Http.Api.StreamingResponse.ReadItemsAsync*> implements a reader over any <xref:System.IO.Stream> and is what <xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendStreamingAsync*> uses. Clients on other platforms can implement the same rules: read the body line by line, dispatch on the single property present, stop on `end` or `error`, and treat end-of-stream without either as a failure.
+<xref:Singulink.Net.Http.Api.StreamingResponse.ReadItemsAsync*?displayProperty=nameWithType> implements a reader over any <xref:System.IO.Stream> and is what <xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendStreamingAsync*?displayProperty=nameWithType> uses. Clients on other platforms can implement the same rules: read the body line by line, dispatch on the single property present, stop on `end` or `error`, and treat end-of-stream without either as a failure.
 
 ## Further Reading
 

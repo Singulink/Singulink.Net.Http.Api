@@ -33,34 +33,34 @@ public static class HttpContextExtensions
     /// Gets the session context from the HTTP context.
     /// </summary>
     /// <exception cref="InvalidOperationException">Session context was not found.</exception>
-    public static HttpSessionContext<TSessionToken> GetRequiredSessionContext<TSessionToken>(this HttpContext httpContext)
+    public static SessionContext<TSessionToken> GetRequiredSessionContext<TSessionToken>(this HttpContext httpContext)
         where TSessionToken : class, ISessionToken
     {
         return httpContext.GetSessionContext<TSessionToken>() ??
-            throw new InvalidOperationException($"HttpContext.Items[{typeof(HttpSessionContext<TSessionToken>)}] was not found.");
+            throw new InvalidOperationException($"HttpContext.Items[{typeof(SessionContext<TSessionToken>)}] was not found.");
     }
 
     /// <summary>
     /// Gets the session context from the HTTP context.
     /// </summary>
     /// <exception cref="InvalidOperationException">Session context was not found.</exception>
-    public static HttpSessionContext<TSessionToken>? GetSessionContext<TSessionToken>(this HttpContext httpContext)
+    public static SessionContext<TSessionToken>? GetSessionContext<TSessionToken>(this HttpContext httpContext)
         where TSessionToken : class, ISessionToken
     {
-        if (httpContext.Items.TryGetValue(typeof(HttpSessionContext<TSessionToken>), out object sessionContextObj))
+        if (httpContext.Items.TryGetValue(typeof(SessionContext<TSessionToken>), out object sessionContextObj))
         {
-            if (sessionContextObj is HttpSessionContext<TSessionToken> sessionContext)
+            if (sessionContextObj is SessionContext<TSessionToken> sessionContext)
                 return sessionContext;
 
-            throw new InvalidOperationException($"HttpContext.Items[{typeof(HttpSessionContext<TSessionToken>)}] type mismatch.");
+            throw new InvalidOperationException($"HttpContext.Items[{typeof(SessionContext<TSessionToken>)}] type mismatch.");
         }
 
-        var factory = httpContext.RequestServices.GetService<IHttpSessionContextFactory<TSessionToken>>();
+        var factory = httpContext.RequestServices.GetService<ISessionContextFactory<TSessionToken>>();
 
         if (factory is not null)
         {
             var sessionContext = factory.Create(httpContext);
-            httpContext.Items[typeof(HttpSessionContext<TSessionToken>)] = sessionContext;
+            httpContext.Items[typeof(SessionContext<TSessionToken>)] = sessionContext;
 
             return sessionContext;
         }

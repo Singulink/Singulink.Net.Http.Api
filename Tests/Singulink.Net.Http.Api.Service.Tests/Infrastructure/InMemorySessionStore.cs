@@ -1,10 +1,10 @@
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// In-memory session store that records every store call so tests can assert exactly what the session context did and when. Session data is copied on
-/// the way in and out to mimic a no-tracking database context, so changes only take effect through <see cref="ISessionStoreContext{T, D}.UpdateSessionAsync"/>.
+/// In-memory session store that records every store call so tests can assert exactly what the session context did and when. Session records are projected
+/// on the way out to mimic a no-tracking database query, so changes only take effect through <see cref="ISessionStoreContext{T}.TryRefreshSessionAsync"/>.
 /// </summary>
-public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessionToken, TestSessionData>
+public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessionToken>
 {
     public Dictionary<long, TestSessionData> Sessions { get; } = [];
 
@@ -20,36 +20,54 @@ public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessi
     public int OpenContexts { get; private set; }
 
     /// <summary>
-    /// Gets or sets a hook that runs after a session update has been requested but before it is written, allowing tests to interleave another request's
-    /// work between a refresh's read and its write.
+    /// Gets or sets a hook that runs after a session refresh has been requested but before the conditional write is evaluated, allowing tests to interleave
+    /// another request's work between a request's validation and its refresh.
     /// </summary>
-    public Func<Task>? BeforeUpdateSession { get; set; }
+    public Func<Task>? BeforeRefreshSession { get; set; }
 
-    public ISessionStoreContext<TestSessionToken, TestSessionData> Create()
+    public ISessionStoreContext<TestSessionToken> Create()
     {
         ContextsCreated++;
         OpenContexts++;
         return new Context(this);
     }
 
-    private sealed class Context(InMemorySessionStore store) : ISessionStoreContext<TestSessionToken, TestSessionData>
+    private sealed class Context(InMemorySessionStore store) : ISessionStoreContext<TestSessionToken>
     {
         private bool _disposed;
 
-        public Task<TestSessionData?> GetSessionDataAsync(TestSessionToken sessionToken)
+        public Task<SessionLookupResult?> GetSessionAsync(TestSessionToken sessionToken)
         {
-            Record("GetSessionData");
-            return Task.FromResult(store.Sessions.TryGetValue(sessionToken.SessionId, out var data) ? data.Clone() : null);
+            Record("GetSession");
+
+            if (!store.Sessions.TryGetValue(sessionToken.SessionId, out var data))
+                return Task.FromResult<SessionLookupResult?>(null);
+
+            var session = new SessionRecord(data.Device, data.IpAddress, data.RefreshedUtc, data.ValidFor, data.Generation, data.IsPersistent);
+            bool isTokenStale = store.UserStamps[sessionToken.UserId] != sessionToken.Stamp;
+
+            return Task.FromResult<SessionLookupResult?>(new SessionLookupResult(session, isTokenStale));
         }
 
-        public async Task UpdateSessionAsync(TestSessionData sessionData)
+        public async Task<bool> TryRefreshSessionAsync(TestSessionToken sessionToken, SessionRecord refreshedSession, int expectedGeneration)
         {
-            Record("UpdateSession");
+            Record("RefreshSession");
 
-            if (store.BeforeUpdateSession is { } hook)
+            if (store.BeforeRefreshSession is { } hook)
                 await hook();
 
-            store.Sessions[sessionData.Id] = sessionData.Clone();
+            // Evaluate the condition at write time (like a conditional UPDATE would) rather than when the refresh was requested.
+
+            if (!store.Sessions.TryGetValue(sessionToken.SessionId, out var data) || data.Generation != expectedGeneration)
+                return false;
+
+            data.Device = refreshedSession.Device;
+            data.IpAddress = refreshedSession.IpAddress;
+            data.RefreshedUtc = refreshedSession.RefreshedUtc;
+            data.ValidFor = refreshedSession.ValidFor;
+            data.Generation = refreshedSession.Generation;
+
+            return true;
         }
 
         public Task InvalidateSessionAsync(TestSessionToken sessionToken)
@@ -59,20 +77,14 @@ public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessi
             return Task.CompletedTask;
         }
 
-        public Task<bool> IsTokenStaleAsync(TestSessionToken sessionToken)
-        {
-            Record("IsTokenStale");
-            return Task.FromResult(store.UserStamps[sessionToken.UserId] != sessionToken.Stamp);
-        }
-
-        public ValueTask<TestSessionToken> CreateTokenAsync(TestSessionToken previousToken, ISessionTokenRefreshInfo refreshInfo, bool isStale)
+        public ValueTask<TestSessionToken> CreateTokenAsync(TestSessionToken previousToken, SessionRecord session, bool isStale)
         {
             Record(isStale ? "CreateToken(stale)" : "CreateToken(current)");
 
             var token = previousToken with {
-                RefreshedUtc = refreshInfo.RefreshedUtc,
-                ValidFor = refreshInfo.ValidFor,
-                Generation = refreshInfo.Generation,
+                RefreshedUtc = session.RefreshedUtc,
+                ValidFor = session.ValidFor,
+                Generation = session.Generation,
             };
 
             if (isStale)
@@ -103,7 +115,7 @@ public sealed class InMemorySessionStore : ISessionStoreContextFactory<TestSessi
 /// <summary>
 /// Session store factory that resolves the shared in-memory store from the container (so a test can seed it).
 /// </summary>
-public sealed class InMemorySessionStoreFactory(InMemorySessionStore store) : ISessionStoreContextFactory<TestSessionToken, TestSessionData>
+public sealed class InMemorySessionStoreFactory(InMemorySessionStore store) : ISessionStoreContextFactory<TestSessionToken>
 {
-    public ISessionStoreContext<TestSessionToken, TestSessionData> Create() => store.Create();
+    public ISessionStoreContext<TestSessionToken> Create() => store.Create();
 }

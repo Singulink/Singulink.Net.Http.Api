@@ -2,7 +2,7 @@
 
 # Session Handling
 
-This guide covers implementing sessions on the service: the token and session data types, the session store, signing in and out, retrieving the session in endpoints, and the options that control validation and expiry.
+This guide covers implementing sessions on the service: the token type, the session store, signing in and out, retrieving the session in endpoints, and the options that control validation and expiry.
 
 ### How sessions work
 
@@ -10,11 +10,10 @@ A session is represented by two things: a **session token** that lives in an enc
 
 ### Types you provide
 
-Session handling is generic over three types that you implement:
+Session handling is generic over the token type and is backed by a store that you implement:
 
 - A **token type** implementing <xref:Singulink.Net.Http.Api.Service.ISessionToken>. It is serialized to JSON, encrypted with ASP.NET Core data protection and stored in the cookie.
-- A **session data type** implementing <xref:Singulink.Net.Http.Api.ISessionData>. This is the stored session record.
-- A **store context** implementing <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`2>, created by an <xref:Singulink.Net.Http.Api.Service.ISessionStoreContextFactory`2>.
+- A **store context** implementing <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`1>, created by an <xref:Singulink.Net.Http.Api.Service.ISessionStoreContextFactory`1>. The store exchanges session values with the library through <xref:Singulink.Net.Http.Api.Service.SessionRecord> and <xref:Singulink.Net.Http.Api.Service.SessionLookupResult>, so your session entity does not need to implement anything.
 
 ## The Session Token
 
@@ -45,7 +44,7 @@ public record SessionToken(
 
 The interface members have specific roles:
 
-- <xref:Singulink.Net.Http.Api.Service.ISessionToken.RefreshedUtc>, <xref:Singulink.Net.Http.Api.Service.ISessionToken.ValidFor> and <xref:Singulink.Net.Http.Api.Service.ISessionToken.Generation> are refresh info copied from the session record when the token is created. Your code never sets them; the store's token creation method applies the values it is given.
+- <xref:Singulink.Net.Http.Api.Service.ISessionToken.RefreshedUtc>, <xref:Singulink.Net.Http.Api.Service.ISessionToken.ValidFor> and <xref:Singulink.Net.Http.Api.Service.ISessionToken.Generation> are refresh info copied from the session record when the token is created. Your code never sets them; the store's token creation method applies the values from the <xref:Singulink.Net.Http.Api.Service.SessionRecord> it is given.
 - <xref:Singulink.Net.Http.Api.Service.ISessionToken.RefreshAfter> is how long a token is used before the service validates it against the store and issues a fresh one. It is a property so that it can vary by user type. Ten minutes is a reasonable default; longer values reduce store traffic at the cost of slower reaction to changes in the user's data.
 - <xref:Singulink.Net.Http.Api.Service.ISessionToken.UserId> is a string so that the library can compare it with the user ID precondition query parameter without knowing your ID type.
 - <xref:Singulink.Net.Http.Api.Service.ISessionToken.IsPersistent> controls whether the cookie survives browser and app restarts.
@@ -54,15 +53,16 @@ The `SecurityStamp` above is not part of the interface, but it is the recommende
 
 Implementing `IBindableFromHttpContext<T>` as shown lets endpoints take the token as a parameter. <xref:Singulink.Net.Http.Api.Service.HttpContextExtensions.BindSessionTokenAsync*> reads the parameter's nullability and its <xref:Singulink.Net.Http.Api.Service.SessionAccessAttribute> to decide how to retrieve it.
 
-## Session Data and the Store
+## The Session Store
 
-The session record implements <xref:Singulink.Net.Http.Api.ISessionData>. It holds the values the service updates on refresh (device, IP address, refresh time, validity and generation) and is typically an entity class:
+The session record is whatever entity your data layer uses; the library never sees it directly. It must hold the values the service updates on refresh (device, IP address, refresh time, validity and generation), and usually a link to the user so that the staleness check can be folded into the lookup:
 
 ```csharp
-public class Session : ISessionData
+public class Session
 {
     public long Id { get; set; }
     public int UserId { get; set; }
+    public User User { get; set; } = null!;
     public string Device { get; set; } = "";
     public IPAddress? IpAddress { get; set; }
     public DateTime CreatedUtc { get; set; }
@@ -76,42 +76,52 @@ public class Session : ISessionData
 The store context is the library's window onto your database. It is created per operation through the factory and disposed afterwards, so a context that owns a database connection is the natural shape:
 
 ```csharp
-public sealed class SessionStoreContextFactory(IDbContextFactory<AppDbContext> dbFactory)
-    : ISessionStoreContextFactory<SessionToken, Session>
+public sealed class SessionStoreContextFactory(IDbContextFactory<AppDbContext> dbFactory) : ISessionStoreContextFactory<SessionToken>
 {
-    public ISessionStoreContext<SessionToken, Session> Create() => new SessionStoreContext(dbFactory.CreateDbContext());
+    public ISessionStoreContext<SessionToken> Create() => new SessionStoreContext(dbFactory.CreateDbContext());
 }
 
-public sealed class SessionStoreContext(AppDbContext db) : ISessionStoreContext<SessionToken, Session>
+public sealed class SessionStoreContext(AppDbContext db) : ISessionStoreContext<SessionToken>
 {
     public ValueTask DisposeAsync() => db.DisposeAsync();
 
-    public Task<Session?> GetSessionDataAsync(SessionToken token) =>
-        db.Sessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == token.SessionId);
-
-    public async Task UpdateSessionAsync(Session session)
+    public Task<SessionLookupResult?> GetSessionAsync(SessionToken token)
     {
-        db.Sessions.Update(session);
-        await db.SaveChangesAsync();
+        // One query loads the record and compares the user's current security stamp to the one captured in the token.
+        return db.Sessions
+            .Where(s => s.Id == token.SessionId)
+            .Select(s => new SessionLookupResult(
+                new SessionRecord(s.Device, s.IpAddress, s.RefreshedUtc, s.ValidFor, s.Generation, s.IsPersistent),
+                s.User.SecurityStamp != token.SecurityStamp))
+            .FirstOrDefaultAsync();
+    }
+
+    public async Task<bool> TryRefreshSessionAsync(SessionToken token, SessionRecord refreshed, int expectedGeneration)
+    {
+        // A single conditional update: the generation check and the write happen atomically.
+        int rows = await db.Sessions
+            .Where(s => s.Id == token.SessionId && s.Generation == expectedGeneration)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Device, refreshed.Device)
+                .SetProperty(x => x.IpAddress, refreshed.IpAddress)
+                .SetProperty(x => x.RefreshedUtc, refreshed.RefreshedUtc)
+                .SetProperty(x => x.ValidFor, refreshed.ValidFor)
+                .SetProperty(x => x.Generation, refreshed.Generation));
+
+        return rows == 1;
     }
 
     public Task InvalidateSessionAsync(SessionToken token) =>
         db.Sessions.Where(s => s.Id == token.SessionId).ExecuteDeleteAsync();
 
-    public async Task<bool> IsTokenStaleAsync(SessionToken token)
-    {
-        int stamp = await db.Users.Where(u => u.Id == token.UserId).Select(u => u.SecurityStamp).SingleAsync();
-        return stamp != token.SecurityStamp;
-    }
-
-    public async ValueTask<SessionToken> CreateTokenAsync(SessionToken previous, ISessionTokenRefreshInfo refreshInfo, bool isStale)
+    public async ValueTask<SessionToken> CreateTokenAsync(SessionToken previous, SessionRecord session, bool isStale)
     {
         if (!isStale)
         {
             return previous with {
-                RefreshedUtc = refreshInfo.RefreshedUtc,
-                ValidFor = refreshInfo.ValidFor,
-                Generation = refreshInfo.Generation,
+                RefreshedUtc = session.RefreshedUtc,
+                ValidFor = session.ValidFor,
+                Generation = session.Generation,
             };
         }
 
@@ -120,30 +130,32 @@ public sealed class SessionStoreContext(AppDbContext db) : ISessionStoreContext<
 
         return new SessionToken(
             previous.SessionId, user.Id, user.SecurityStamp, roles,
-            refreshInfo.RefreshedUtc, refreshInfo.ValidFor, refreshInfo.Generation, previous.IsPersistent);
+            session.RefreshedUtc, session.ValidFor, session.Generation, previous.IsPersistent);
     }
 }
 ```
 
-The two token methods split "detect changes" from "build a token":
+Each method has a specific job:
 
-- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`2.IsTokenStaleAsync*> answers whether the data captured in the token has changed since it was created. It should be cheap, typically a single scalar query comparing a security stamp.
-- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`2.CreateTokenAsync*> produces a new token with the given refresh info applied. When the previous token is current the implementation can copy it and apply the refresh info synchronously, which is why the method returns a <xref:System.Threading.Tasks.ValueTask`1>. When it is stale the token must be rebuilt from the latest data. Rebuilding regardless of the flag is always correct, just slower.
+- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`1.GetSessionAsync*?displayProperty=nameWithType> loads the record and reports whether the token is stale in one call. Return `null` when the session does not exist. The staleness check should be cheap; comparing a security stamp inside the same query, as above, costs nothing extra.
+- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`1.TryRefreshSessionAsync*?displayProperty=nameWithType> writes the refreshed values, but only if the stored generation still matches the one the service validated at request start. The check and the write must be atomic, which a filtered `UPDATE` gives you for free. Return `false` when no row was updated: the service then skips issuing a cookie because a concurrent request already refreshed (or ended) the session.
+- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`1.InvalidateSessionAsync*?displayProperty=nameWithType> removes the record. It is called on sign-out and when validation rejects a token.
+- <xref:Singulink.Net.Http.Api.Service.ISessionStoreContext`1.CreateTokenAsync*?displayProperty=nameWithType> produces a new token with the refresh info from the given <xref:Singulink.Net.Http.Api.Service.SessionRecord> applied. When the previous token is current the implementation can copy it and apply the refresh info synchronously, which is why the method returns a <xref:System.Threading.Tasks.ValueTask`1>. When it is stale the token must be rebuilt from the latest data. Rebuilding regardless of the flag is always correct, just slower.
 
 Register everything with <xref:Singulink.Net.Http.Api.Service.ServiceCollectionExtensions.AddHttpSessionHandling*>, optionally configuring <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions>:
 
 ```csharp
-services.AddHttpSessionHandling<SessionToken, Session, SessionStoreContextFactory>(options => {
+services.AddHttpSessionHandling<SessionToken, SessionStoreContextFactory>(options => {
     options.PersistentSessionExpiry = TimeSpan.FromDays(90);
 });
 ```
 
 > [!NOTE]
-> The cookie is encrypted with ASP.NET Core data protection. Configure the data protection key ring to persist across restarts and deployments (for example with `PersistKeysToFileSystem`), otherwise every restart signs all users out. Services sharing a session cookie across subdomains must also share the key ring and set <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.CookieDomain>.
+> The cookie is encrypted with ASP.NET Core data protection. Configure the data protection key ring to persist across restarts and deployments (for example with `PersistKeysToFileSystem`), otherwise every restart signs all users out. Services sharing a session cookie across subdomains must also share the key ring and set <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.CookieDomain?displayProperty=nameWithType>.
 
 ## Signing In and Out
 
-Endpoints receive the session context as a <xref:Singulink.Net.Http.Api.Service.SessionContext`1> parameter. Sign in with <xref:Singulink.Net.Http.Api.Service.SessionContext`1.SignInAsync*>, which calls your function to verify credentials and create the session record, then issues the cookie:
+Endpoints receive the session context as a <xref:Singulink.Net.Http.Api.Service.SessionContext`1> parameter. Sign in with <xref:Singulink.Net.Http.Api.Service.SessionContext`1.SignInAsync*?displayProperty=nameWithType>, which calls your function to verify credentials and create the session record, then issues the cookie:
 
 ```csharp
 static async Task<CurrentSessionInfo> SignInAsync(SignInCommand command, SessionContext<SessionToken> sessionContext, AppDbContext db)
@@ -175,7 +187,7 @@ static Task SignOutAsync(SessionContext<SessionToken> sessionContext) => session
 
 The <xref:Singulink.Net.Http.Api.Service.SignInInfo> passed to your function carries the device (parsed from the User-Agent header), the IP address, the expiry duration selected by the persistent flag, and the flag itself. Copy them onto the session record as shown.
 
-<xref:Singulink.Net.Http.Api.Service.SessionContext`1.SignOutAsync*> invalidates the session in the store and clears the cookie. It does not validate or refresh the session first, so it works even when the token is expired or the store record is already gone.
+<xref:Singulink.Net.Http.Api.Service.SessionContext`1.SignOutAsync*?displayProperty=nameWithType> invalidates the session in the store and clears the cookie. It does not validate or refresh the session first, so it works even when the token is expired or the store record is already gone.
 
 ## Retrieving the Session in Endpoints
 
@@ -186,11 +198,11 @@ app.MapGet("/me", (SessionToken token) => new UserInfo(token.UserId));
 app.MapGet("/public", (SessionToken? token) => token is null ? "Hello, guest" : $"Hello, user {token.UserId}");
 ```
 
-Retrieval options are set with <xref:Singulink.Net.Http.Api.Service.SessionAccessAttribute> on the parameter, or passed to <xref:Singulink.Net.Http.Api.Service.SessionContext`1.GetTokenAsync*> and <xref:Singulink.Net.Http.Api.Service.SessionContext`1.GetRequiredTokenAsync*> when using the context directly. The <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions> flags are:
+Retrieval options are set with <xref:Singulink.Net.Http.Api.Service.SessionAccessAttribute> on the parameter, or passed to <xref:Singulink.Net.Http.Api.Service.SessionContext`1.GetTokenAsync*?displayProperty=nameWithType> and <xref:Singulink.Net.Http.Api.Service.SessionContext`1.GetRequiredTokenAsync*?displayProperty=nameWithType> when using the context directly. The <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions> flags are:
 
 #### Forced validation
 
-<xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.ForceValidate> validates the session against the store even if the token is not due for a refresh. As with a periodic refresh, a token whose contents are out of date is rebuilt before the endpoint runs. Use it for security-sensitive operations such as permanent deletions, so that a user whose access was revoked moments ago cannot act on a token that still lists it:
+<xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.ForceValidate?displayProperty=nameWithType> validates the session against the store even if the token is not due for a refresh. As with a periodic refresh, a token whose contents are out of date is rebuilt before the endpoint runs. Use it for security-sensitive operations such as permanent deletions, so that a user whose access was revoked moments ago cannot act on a token that still lists it:
 
 ```csharp
 static async Task DeletePermanentlyAsync(long id, [SessionAccess(SessionAccessOptions.ForceValidate)] SessionToken token, AppDbContext db)
@@ -203,17 +215,17 @@ Forced validation never rotates the token's generation, so it is safe to use lib
 
 #### Optional user ID precondition
 
-Every request is expected to identify the user the client believes it is acting for, in the `if-userId` query parameter (name configurable via <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.UserIdPreconditionQueryName>). If the parameter is missing the request fails with <xref:Singulink.Net.Http.Api.UserRequiredApiException> (HTTP 428), and if it does not match the session user it fails with <xref:Singulink.Net.Http.Api.UserChangedApiException> (HTTP 412). This catches clients that are still acting for a user who has since signed out or been replaced on the same device. <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.OptionalUserIdPrecondition> skips the check when the parameter is absent, for endpoints that are called before the client knows who is signed in, such as "get current session".
+Every request is expected to identify the user the client believes it is acting for, in the `if-userId` query parameter (name configurable via <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.UserIdPreconditionQueryName?displayProperty=nameWithType>). If the parameter is missing the request fails with <xref:Singulink.Net.Http.Api.UserRequiredApiException> (HTTP 428), and if it does not match the session user it fails with <xref:Singulink.Net.Http.Api.UserChangedApiException> (HTTP 412). This catches clients that are still acting for a user who has since signed out or been replaced on the same device. <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.OptionalUserIdPrecondition?displayProperty=nameWithType> skips the check when the parameter is absent, for endpoints that are called before the client knows who is signed in, such as "get current session".
 
 #### Allowing all origins
 
-Requests are rejected with <xref:Singulink.Net.Http.Api.ForbiddenApiException> when they carry an `Origin` header that is not in the allowed origins, which blocks cross-site request forgery. <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.AllowAllOrigins> disables the check for an endpoint that is safe to call from anywhere.
+Requests are rejected with <xref:Singulink.Net.Http.Api.ForbiddenApiException> when they carry an `Origin` header that is not in the allowed origins, which blocks cross-site request forgery. <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.AllowAllOrigins?displayProperty=nameWithType> disables the check for an endpoint that is safe to call from anywhere.
 
-Flags that should apply to every retrieval can be set once through <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.ForcedAccessOptions>.
+Flags that should apply to every retrieval can be set once through <xref:Singulink.Net.Http.Api.Service.SessionHandlingOptions.ForcedAccessOptions?displayProperty=nameWithType>.
 
 ### Using the session context directly
 
-Endpoints can also take an <xref:Singulink.Net.Http.Api.Service.HttpSessionContext`1> parameter to call <xref:Singulink.Net.Http.Api.Service.SessionContext`1.SetToken*> after changing something the token captures (so the user gets an updated token immediately), <xref:Singulink.Net.Http.Api.Service.SessionContext`1.ClearToken*>, or to read the request's <xref:Singulink.Net.Http.Api.Service.SessionContext`1.Device> and <xref:Singulink.Net.Http.Api.Service.SessionContext`1.IpAddress>. Outside of endpoint parameters, <xref:Singulink.Net.Http.Api.Service.HttpContextExtensions.GetRequiredSessionTokenAsync*> and related methods on `HttpContext` provide the same access, and <xref:Singulink.Net.Http.Api.Service.HubCallerContextExtensions.GetRequiredSessionTokenAsync*> does the same for SignalR hubs.
+Endpoints can also take a <xref:Singulink.Net.Http.Api.Service.SessionContext`1> parameter to call <xref:Singulink.Net.Http.Api.Service.SessionContext`1.SetToken*?displayProperty=nameWithType> after changing something the token captures (so the user gets an updated token immediately), <xref:Singulink.Net.Http.Api.Service.SessionContext`1.ClearToken*?displayProperty=nameWithType>, or to read the request's <xref:Singulink.Net.Http.Api.Service.SessionContext`1.Device?displayProperty=nameWithType> and <xref:Singulink.Net.Http.Api.Service.SessionContext`1.IpAddress?displayProperty=nameWithType>. Outside of endpoint parameters, <xref:Singulink.Net.Http.Api.Service.HttpContextExtensions.GetRequiredSessionTokenAsync*> and related methods on `HttpContext` provide the same access, and <xref:Singulink.Net.Http.Api.Service.HubCallerContextExtensions.GetRequiredSessionTokenAsync*> does the same for SignalR hubs.
 
 The token is read and validated at most once per request and cached, so retrieving it from several places in the same request costs nothing extra.
 

@@ -438,7 +438,7 @@ public sealed class StreamingResponseTests
             configureServices: services => {
                 services.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
                 services.AddSingleton(store);
-                services.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+                services.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
             });
 
         var utcNow = DateTime.UtcNow;

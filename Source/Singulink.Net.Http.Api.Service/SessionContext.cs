@@ -68,7 +68,7 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     /// Validates the current request origin against allowed origins. If the request contains an origin identifier, it must match one of the allowed origins.
     /// </summary>
     /// <exception cref="BadRequestApiException">The request contains multiple origin headers.</exception>
-    public abstract bool IsRequestOriginAllowed();
+    protected abstract bool IsRequestOriginAllowed();
 
     /// <summary>
     /// Binds the <see cref="SessionContext{TSessionToken}"/> parameter value.
@@ -76,7 +76,7 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     static ValueTask<SessionContext<TSessionToken>?> IBindableFromHttpContext<SessionContext<TSessionToken>>.BindAsync(
         HttpContext context, ParameterInfo parameter)
     {
-        var sessionContext = (SessionContext<TSessionToken>?)context.GetSessionContext<TSessionToken>();
-        return ValueTask.FromResult(sessionContext);
+        var sessionContext = context.GetSessionContext<TSessionToken>();
+        return ValueTask.FromResult<SessionContext<TSessionToken>?>(sessionContext);
     }
 }

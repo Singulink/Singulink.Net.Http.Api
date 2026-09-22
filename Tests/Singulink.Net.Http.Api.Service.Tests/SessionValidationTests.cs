@@ -20,7 +20,7 @@ public sealed class SessionValidationTests
         (await request.GetTokenAsync(Validate)).ShouldBeNull();
 
         request.CookieCleared.ShouldBeTrue();
-        host.Store.Calls.ShouldBe(["GetSessionData"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
     }
 
     [TestMethod]
@@ -33,7 +33,7 @@ public sealed class SessionValidationTests
         (await request.GetTokenAsync(Validate)).ShouldBeNull();
 
         request.CookieCleared.ShouldBeTrue();
-        host.Store.Calls.ShouldBe(["GetSessionData", "InvalidateSession"]);
+        host.Store.Calls.ShouldBe(["GetSession", "InvalidateSession"]);
         host.Store.Sessions.ShouldBeEmpty();
     }
 
@@ -67,10 +67,19 @@ public sealed class SessionValidationTests
         host.SetSessionState(generation: 1, age: TimeSpan.FromSeconds(30));
         var request = host.CreateRequest(token);
 
-        (await request.GetTokenAsync(Validate)).ShouldBe(token);
+        // The token is accepted and brought in line with the record's generation and refresh info without a store write.
+        var result = (await request.GetTokenAsync(Validate)).ShouldNotBeNull();
+        result.Generation.ShouldBe(1);
+        result.RefreshedUtc.ShouldBe(host.Store.Sessions[token.SessionId].RefreshedUtc);
+        result.BuildCount.ShouldBe(0);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession", "CreateToken(current)"]);
         host.Store.Sessions.ShouldContainKey(token.SessionId);
+
+        // The re-issued cookie carries the current generation so the client catches up.
+        await request.StartResponseAsync();
+        request.IssuedToken.ShouldBe(result);
+        host.Store.Calls.Count.ShouldBe(2);
     }
 
     [TestMethod]
@@ -81,7 +90,7 @@ public sealed class SessionValidationTests
         host.SetSessionState(generation: 1, age: TimeSpan.FromSeconds(30));
         var request = host.CreateRequest(token, ipAddress: SessionTestHost.OtherIp);
 
-        (await request.GetTokenAsync(Validate)).ShouldBe(token);
+        (await request.GetTokenAsync(Validate)).ShouldNotBeNull().Generation.ShouldBe(1);
     }
 
     [TestMethod]
@@ -95,7 +104,7 @@ public sealed class SessionValidationTests
         (await request.GetTokenAsync(Validate)).ShouldBeNull();
 
         request.CookieCleared.ShouldBeTrue();
-        host.Store.Calls.ShouldBe(["GetSessionData", "InvalidateSession"]);
+        host.Store.Calls.ShouldBe(["GetSession", "InvalidateSession"]);
         host.Store.Sessions.ShouldBeEmpty();
     }
 
@@ -120,7 +129,7 @@ public sealed class SessionValidationTests
         host.SetSessionState(generation: 1, age: TimeSpan.FromMinutes(5));
         var request = host.CreateRequest(token);
 
-        (await request.GetTokenAsync(Validate)).ShouldBe(token);
+        (await request.GetTokenAsync(Validate)).ShouldNotBeNull().Generation.ShouldBe(1);
     }
 
     [TestMethod]

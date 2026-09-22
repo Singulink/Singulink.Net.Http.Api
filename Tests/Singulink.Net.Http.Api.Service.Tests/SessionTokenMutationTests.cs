@@ -27,7 +27,7 @@ public sealed class SessionTokenMutationTests
 
         // Still just the one cookie and no refresh was performed.
         request.IssuedToken.ShouldBe(newToken);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
     }
 
     [TestMethod]
@@ -61,7 +61,7 @@ public sealed class SessionTokenMutationTests
         await request.StartResponseAsync();
 
         request.CookieCleared.ShouldBeTrue();
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
     }
 
     [TestMethod]
@@ -143,7 +143,7 @@ public sealed class SessionTokenMutationTests
         (await request.GetTokenAsync()).ShouldBe(token);
         await request.Session.SignOutAsync();
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "InvalidateSession"]);
+        host.Store.Calls.ShouldBe(["GetSession", "InvalidateSession"]);
         host.Store.Sessions.ShouldBeEmpty();
 
         await request.StartResponseAsync();

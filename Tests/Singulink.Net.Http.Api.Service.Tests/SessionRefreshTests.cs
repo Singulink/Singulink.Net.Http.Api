@@ -19,12 +19,12 @@ public sealed class SessionRefreshTests
         // The endpoint operates on the token as presented; the refresh happens when the response starts.
         (await request.GetTokenAsync()).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
         request.SessionCookies.ShouldBeEmpty();
 
         await request.StartResponseAsync();
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "GetSessionData", "UpdateSession", "CreateToken(current)"]);
+        host.Store.Calls.ShouldBe(["GetSession", "RefreshSession", "CreateToken(current)"]);
 
         var issued = request.IssuedToken.ShouldNotBeNull();
         issued.Generation.ShouldBe(1);
@@ -69,12 +69,12 @@ public sealed class SessionRefreshTests
         result.Stamp.ShouldBe(host.Store.UserStamps[token.UserId]);
         result.BuildCount.ShouldBe(1);
         result.Generation.ShouldBe(0);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale", "CreateToken(stale)"]);
+        host.Store.Calls.ShouldBe(["GetSession", "CreateToken(stale)"]);
 
         await request.StartResponseAsync();
 
         // The rotating refresh only applies the new refresh info to the already-current token.
-        host.Store.Calls.Skip(3).ShouldBe(["GetSessionData", "UpdateSession", "CreateToken(current)"]);
+        host.Store.Calls.Skip(2).ShouldBe(["RefreshSession", "CreateToken(current)"]);
 
         var issued = request.IssuedToken.ShouldNotBeNull();
         issued.Stamp.ShouldBe(result.Stamp);
@@ -142,13 +142,13 @@ public sealed class SessionRefreshTests
 
         (await request.GetTokenAsync()).ShouldBe(token);
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
         request.Response.OnStartingCallbackCount.ShouldBe(0);
         request.SessionCookies.ShouldBeEmpty();
     }
 
     [TestMethod]
-    public async Task Due_ConcurrentRefreshCompletedFirst_IssuesCurrentGenerationWithoutStoreWrite()
+    public async Task Due_ConcurrentRefreshCompletedBeforeResponse_ConditionalWriteFails_IssuesNothing()
     {
         var host = new SessionTestHost();
         var token = host.CreateSession(age: Due);
@@ -157,22 +157,51 @@ public sealed class SessionRefreshTests
         (await request.GetTokenAsync()).ShouldBe(token);
         host.Store.Calls.Clear();
 
-        // Another request from the same device refreshed the session before this response started.
+        // Another request from the same device refreshed the session after this request validated it but before this response started.
         host.SetSessionState(generation: 1, age: TimeSpan.Zero);
         var concurrentRefreshUtc = host.Store.Sessions[token.SessionId].RefreshedUtc;
 
         await request.StartResponseAsync();
 
-        host.Store.Calls.ShouldBe(["GetSessionData", "CreateToken(current)"]);
+        // The refresh is gated on the validated generation, so it does not overwrite the concurrent refresh, and no token is issued. The concurrent
+        // request's response delivered the current token to the client.
+        host.Store.Calls.ShouldBe(["RefreshSession"]);
+        request.SessionCookies.ShouldBeEmpty();
 
-        var issued = request.IssuedToken.ShouldNotBeNull();
-        issued.Generation.ShouldBe(1);
-        issued.RefreshedUtc.ShouldBe(concurrentRefreshUtc);
+        var data = host.Store.Sessions[token.SessionId];
+        data.Generation.ShouldBe(1);
+        data.RefreshedUtc.ShouldBe(concurrentRefreshUtc);
+    }
+
+    [TestMethod]
+    public async Task Due_ConcurrentRefreshCompletedBeforeValidation_ReissuesCurrentGenerationWithoutStoreWrite()
+    {
+        var host = new SessionTestHost();
+        var token = host.CreateSession(age: Due);
+
+        // Another request from the same device refreshed the session before this request (still holding the previous token) was validated.
+        host.SetSessionState(generation: 1, age: TimeSpan.Zero);
+        var concurrentRefreshUtc = host.Store.Sessions[token.SessionId].RefreshedUtc;
+
+        var request = host.CreateRequest(token);
+        var result = (await request.GetTokenAsync()).ShouldNotBeNull();
+
+        // The token is brought in line with the record right away (no store write, no rebuild since it is not stale).
+        result.Generation.ShouldBe(1);
+        result.RefreshedUtc.ShouldBe(concurrentRefreshUtc);
+        result.BuildCount.ShouldBe(0);
+        host.Store.Calls.ShouldBe(["GetSession", "CreateToken(current)"]);
+
+        await request.StartResponseAsync();
+
+        // The record was just refreshed, so no rotation is due: the current-generation token is simply re-issued.
+        host.Store.Calls.Count.ShouldBe(2);
+        request.IssuedToken.ShouldBe(result);
         host.Store.Sessions[token.SessionId].Generation.ShouldBe(1);
     }
 
     [TestMethod]
-    public async Task Due_TwoRequestsRefreshSimultaneously_BothIssueSameGenerationWithoutDoubleRotation()
+    public async Task Due_TwoRequestsRefreshSimultaneously_OnlyOneWriteSucceeds_NoDoubleRotation()
     {
         var host = new SessionTestHost();
         var token = host.CreateSession(age: Due);
@@ -182,10 +211,10 @@ public sealed class SessionRefreshTests
         (await requestA.GetTokenAsync()).ShouldBe(token);
         (await requestB.GetTokenAsync()).ShouldBe(token);
 
-        // Interleave the refreshes: A reads the session (generation 0) and, before it writes, B performs its entire refresh against the same read state.
+        // Interleave the refreshes: both validated generation 0, and before A's conditional write is evaluated, B performs its entire refresh.
         bool interleaved = false;
 
-        host.Store.BeforeUpdateSession = async () => {
+        host.Store.BeforeRefreshSession = async () => {
             if (!interleaved)
             {
                 interleaved = true;
@@ -196,16 +225,17 @@ public sealed class SessionRefreshTests
         await requestA.StartResponseAsync();
 
         interleaved.ShouldBeTrue();
-        host.Store.Calls.Count(c => c == "UpdateSession").ShouldBe(2);
+        host.Store.Calls.Count(c => c == "RefreshSession").ShouldBe(2);
 
-        // Both computed "read generation + 1", so the store ends one generation ahead and both clients receive that generation.
+        // B's write succeeded and rotated the session to generation 1. A's write was gated on generation 0 and failed, so A issues nothing and the store
+        // is not rotated twice.
         host.Store.Sessions[token.SessionId].Generation.ShouldBe(1);
-        requestA.IssuedToken!.Generation.ShouldBe(1);
         requestB.IssuedToken!.Generation.ShouldBe(1);
+        requestA.SessionCookies.ShouldBeEmpty();
 
-        // A request that still holds the original token (e.g. a lost response) is accepted within the grace period.
+        // A request that still holds the original token (e.g. a lost response) is accepted within the grace period and brought up to date.
         var requestC = host.CreateRequest(token);
-        (await requestC.GetTokenAsync(SessionAccessOptions.ForceValidate)).ShouldBe(token);
+        (await requestC.GetTokenAsync(SessionAccessOptions.ForceValidate)).ShouldNotBeNull().Generation.ShouldBe(1);
     }
 
     [TestMethod]
@@ -221,7 +251,7 @@ public sealed class SessionRefreshTests
         await request.StartResponseAsync();
 
         request.SessionCookies.ShouldBeEmpty();
-        host.Store.Calls.Last().ShouldBe("GetSessionData");
+        host.Store.Calls.Last().ShouldBe("RefreshSession");
     }
 
     [TestMethod]

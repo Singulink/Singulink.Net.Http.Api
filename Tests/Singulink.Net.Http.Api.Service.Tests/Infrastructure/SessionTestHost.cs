@@ -26,10 +26,10 @@ public sealed class SessionTestHost
         var services = new ServiceCollection();
         services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
         services.AddSingleton<IOriginValidator>(new OriginValidator("example.com", "*.example.com"));
-        services.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStore>(configure);
+        services.AddHttpSessionHandling<TestSessionToken, InMemorySessionStore>(configure);
 
         Services = services.BuildServiceProvider();
-        Store = (InMemorySessionStore)Services.GetRequiredService<ISessionStoreContextFactory<TestSessionToken, TestSessionData>>();
+        Store = (InMemorySessionStore)Services.GetRequiredService<ISessionStoreContextFactory<TestSessionToken>>();
         Options = Services.GetRequiredService<IOptions<SessionHandlingOptions>>().Value;
 
         // Must match the purpose string used by HttpSessionContextFactory.

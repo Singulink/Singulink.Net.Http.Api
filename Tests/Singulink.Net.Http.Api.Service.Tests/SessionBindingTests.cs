@@ -46,7 +46,7 @@ public sealed class SessionBindingTests
         var request = host.CreateRequest(token);
 
         (await request.Context.BindSessionTokenAsync<TestSessionToken>(Param("forced"))).ShouldBe(token);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
     }
 
     [TestMethod]
@@ -72,7 +72,6 @@ public sealed class SessionBindingTests
         first.ShouldNotBeNull();
         second.ShouldBeSameAs(first);
         request.Session.ShouldBeSameAs(first);
-        first.HttpContext.ShouldBeSameAs(request.Context);
     }
 
     [TestMethod]
@@ -106,7 +105,7 @@ public sealed class SessionBindingTests
         viaContext.ShouldBe(token);
         viaRequired.ShouldBeSameAs(viaContext);
         viaSession.ShouldBeSameAs(viaContext);
-        host.Store.Calls.ShouldBe(["GetSessionData", "IsTokenStale"]);
+        host.Store.Calls.ShouldBe(["GetSession"]);
     }
 
     [TestMethod]

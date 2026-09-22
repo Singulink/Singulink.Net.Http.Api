@@ -344,7 +344,7 @@ public sealed class ApiHubConnectionTests
         await using var host = await StartHubHostAsync(s => {
             s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
             s.AddSingleton(store);
-            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+            s.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
         });
 
         var utcNow = DateTime.UtcNow;
@@ -371,7 +371,7 @@ public sealed class ApiHubConnectionTests
         await using var host = await StartHubHostAsync(s => {
             s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
             s.AddSingleton(store);
-            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+            s.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
         });
 
         await using var connection = CreateConnection(host, "session-hub", options => options.Headers["User-Agent"] = "TestClient/1.0");
@@ -397,7 +397,7 @@ public sealed class ApiHubConnectionTests
         await using var host = await StartHubHostAsync(s => {
             s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
             s.AddSingleton(store);
-            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+            s.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
         });
 
         await using var connection = CreateWebSocketConnection(host, "session-hub", options => {
@@ -425,7 +425,7 @@ public sealed class ApiHubConnectionTests
         await using var host = await StartHubHostAsync(s => {
             s.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
             s.AddSingleton(store);
-            s.AddHttpSessionHandling<TestSessionToken, TestSessionData, InMemorySessionStoreFactory>();
+            s.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
         });
 
         store.UserStamps[7] = 1;

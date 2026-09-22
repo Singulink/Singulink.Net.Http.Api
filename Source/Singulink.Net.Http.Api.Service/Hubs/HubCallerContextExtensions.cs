@@ -11,7 +11,7 @@ public static class HubCallerContextExtensions
     /// Gets the session context for the hub connection.
     /// </summary>
     /// <exception cref="InvalidOperationException">The hub connection does not have an HTTP context or session handling is not registered.</exception>
-    public static HttpSessionContext<TSessionToken> GetRequiredSessionContext<TSessionToken>(this HubCallerContext context)
+    public static SessionContext<TSessionToken> GetRequiredSessionContext<TSessionToken>(this HubCallerContext context)
         where TSessionToken : class, ISessionToken
     {
         return context.GetRequiredHttpContext().GetRequiredSessionContext<TSessionToken>();

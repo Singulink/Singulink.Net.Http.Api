@@ -120,11 +120,11 @@ await foreach (var change in connection.StreamAsync(DocumentHub.Changes, documen
     ApplyChange(change);
 ```
 
-Errors reported by the hub filter are thrown as the matching <xref:Singulink.Net.Http.Api.ApiException> from invocations and stream enumeration, and delivered through <xref:Singulink.Net.Http.Api.Client.ApiHubConnection.Closed> when a connection is rejected. Other hub errors remain `HubException` instances.
+Errors reported by the hub filter are thrown as the matching <xref:Singulink.Net.Http.Api.ApiException> from invocations and stream enumeration, and delivered through <xref:Singulink.Net.Http.Api.Client.ApiHubConnection.Closed?displayProperty=nameWithType> when a connection is rejected. Other hub errors remain `HubException` instances.
 
-The connection automatically reconnects by default (override <xref:Singulink.Net.Http.Api.Client.SignalRApiClientBase.CreateHubConnectionBuilder*> to change the policy) and always presents the client's current session token when connecting or reconnecting, so a session refreshed by an HTTP request between reconnects does not invalidate the session.
+The connection automatically reconnects by default (override <xref:Singulink.Net.Http.Api.Client.SignalRApiClientBase.CreateHubConnectionBuilder*?displayProperty=nameWithType> to change the policy) and always presents the client's current session token when connecting or reconnecting, so a session refreshed by an HTTP request between reconnects does not invalidate the session.
 
-<xref:Singulink.Net.Http.Api.Client.ApiHubConnection.UnderlyingConnection> exposes the SignalR `HubConnection` for anything the typed API does not cover. Errors from direct use of it are not translated.
+<xref:Singulink.Net.Http.Api.Client.ApiHubConnection.UnderlyingConnection?displayProperty=nameWithType> exposes the SignalR `HubConnection` for anything the typed API does not cover. Errors from direct use of it are not translated.
 
 ## Next Steps
 

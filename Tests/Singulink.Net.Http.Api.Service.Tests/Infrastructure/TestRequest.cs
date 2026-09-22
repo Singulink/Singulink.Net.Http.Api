@@ -19,7 +19,7 @@ public sealed class TestRequest
 
     public TestResponseFeature Response { get; }
 
-    public HttpSessionContext<TestSessionToken> Session { get; }
+    public SessionContext<TestSessionToken> Session { get; }
 
     public ValueTask<TestSessionToken?> GetTokenAsync(SessionAccessOptions options = default) => Session.GetTokenAsync(options);
 

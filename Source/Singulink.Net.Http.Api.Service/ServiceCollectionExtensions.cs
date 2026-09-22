@@ -44,20 +44,18 @@ public static class ServiceCollectionExtensions
     /// Registers services required for enabling HTTP session handling.
     /// </summary>
     /// <typeparam name="TSessionToken">The session token type.</typeparam>
-    /// <typeparam name="TSessionData">The session storage entry type.</typeparam>
     /// <typeparam name="TSessionStoreContextFactory">The factory type for creating session store contexts.</typeparam>
     /// <param name="services">The service collection to add session handling services to.</param>
     /// <param name="configure">An optional action to configure options.</param>
-    public static IServiceCollection AddHttpSessionHandling<TSessionToken, TSessionData, TSessionStoreContextFactory>(
+    public static IServiceCollection AddHttpSessionHandling<TSessionToken, TSessionStoreContextFactory>(
         this IServiceCollection services,
         Action<SessionHandlingOptions>? configure = null)
         where TSessionToken : class, ISessionToken
-        where TSessionData : class, ISessionData
-        where TSessionStoreContextFactory : class, ISessionStoreContextFactory<TSessionToken, TSessionData>
+        where TSessionStoreContextFactory : class, ISessionStoreContextFactory<TSessionToken>
     {
         services.Configure<SessionHandlingOptions>(options => configure?.Invoke(options));
-        services.AddSingleton<ISessionStoreContextFactory<TSessionToken, TSessionData>, TSessionStoreContextFactory>();
-        services.AddSingleton<IHttpSessionContextFactory<TSessionToken>, HttpSessionContextFactory<TSessionToken, TSessionData>>();
+        services.AddSingleton<ISessionStoreContextFactory<TSessionToken>, TSessionStoreContextFactory>();
+        services.AddSingleton<ISessionContextFactory<TSessionToken>, HttpSessionContextFactory<TSessionToken>>();
 
         return services;
     }

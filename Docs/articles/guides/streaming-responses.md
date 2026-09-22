@@ -68,7 +68,7 @@ If the endpoint can produce null items, use a nullable item type argument; nulls
 
 ### Reading a stream without the client base class
 
-<xref:Singulink.Net.Http.Api.StreamingResponse.ReadItemsAsync*> reads the format from any <xref:System.IO.Stream>, for code that uses a raw <xref:System.Net.Http.HttpClient>:
+<xref:Singulink.Net.Http.Api.StreamingResponse.ReadItemsAsync*?displayProperty=nameWithType> reads the format from any <xref:System.IO.Stream>, for code that uses a raw <xref:System.Net.Http.HttpClient>:
 
 ```csharp
 using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);

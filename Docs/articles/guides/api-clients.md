@@ -110,7 +110,7 @@ public sealed class UserApiClient : ApiClientBase
 }
 ```
 
-Endpoints called before the user is known, such as sign-in or "get current session", live on the root client and are declared with <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.OptionalUserIdPrecondition> on the service.
+Endpoints called before the user is known, such as sign-in or "get current session", live on the root client and are declared with <xref:Singulink.Net.Http.Api.Service.SessionAccessOptions.OptionalUserIdPrecondition?displayProperty=nameWithType> on the service.
 
 ## Platform Behavior
 

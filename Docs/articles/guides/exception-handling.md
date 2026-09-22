@@ -80,7 +80,7 @@ services.AddApiExceptionHandler<AppExceptionHandler>();
 
 ## Catching Errors on the Client
 
-<xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendAsync*> throws the exception type that matches the response status, with the message and error code from the response. Catch the types the calling code can act on and let the rest propagate to a general handler:
+<xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendAsync*?displayProperty=nameWithType> throws the exception type that matches the response status, with the message and error code from the response. Catch the types the calling code can act on and let the rest propagate to a general handler:
 
 ```csharp
 try

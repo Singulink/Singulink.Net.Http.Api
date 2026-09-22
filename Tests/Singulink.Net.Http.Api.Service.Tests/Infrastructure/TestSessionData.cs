@@ -1,6 +1,9 @@
 namespace Singulink.Net.Http.Api.Service;
 
-public sealed class TestSessionData : ISessionData
+/// <summary>
+/// Session entity stored by <see cref="InMemorySessionStore"/>, standing in for a database row.
+/// </summary>
+public sealed class TestSessionData
 {
     public long Id { get; set; }
 
@@ -17,6 +20,4 @@ public sealed class TestSessionData : ISessionData
     public int Generation { get; set; }
 
     public bool IsPersistent { get; set; }
-
-    public TestSessionData Clone() => (TestSessionData)MemberwiseClone();
 }

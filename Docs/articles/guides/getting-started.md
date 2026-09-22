@@ -91,7 +91,7 @@ public sealed class MyApiClient : ApiClientBase
 }
 ```
 
-<xref:Singulink.Net.Http.Api.Client.ApiClientBase.CreateRequest*> builds a request against the base address, and <xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendAsync*> sends it, applies the session cookie, captures a refreshed cookie from the response, and throws the appropriate <xref:Singulink.Net.Http.Api.ApiException> for error responses:
+<xref:Singulink.Net.Http.Api.Client.ApiClientBase.CreateRequest*?displayProperty=nameWithType> builds a request against the base address, and <xref:Singulink.Net.Http.Api.Client.ApiClientBase.SendAsync*?displayProperty=nameWithType> sends it, applies the session cookie, captures a refreshed cookie from the response, and throws the appropriate <xref:Singulink.Net.Http.Api.ApiException> for error responses:
 
 ```csharp
 try

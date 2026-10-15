@@ -1,4 +1,4 @@
-<Project Sdk="MSTest.Sdk/4.0.2">
+<Project Sdk="MSTest.Sdk/4.5.1">
   <PropertyGroup>
     <RootNamespace>Singulink.Net.Http.Api.Service</RootNamespace>
     <TargetFramework>net10.0</TargetFramework>
@@ -6,8 +6,8 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.3" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
   </ItemGroup>
 
   <ItemGroup>

@@ -15,9 +15,16 @@ public sealed class TestSessionData
 
     public DateTime RefreshedUtc { get; set; }
 
-    public TimeSpan ValidFor { get; set; }
+    public DateTime ExpiresUtc { get; set; }
+
+    /// <summary>
+    /// Gets how long after the last refresh the session expires.
+    /// </summary>
+    public TimeSpan ValidFor => ExpiresUtc - RefreshedUtc;
 
     public int Generation { get; set; }
 
     public bool IsPersistent { get; set; }
+
+    public required DateTime CreatedUtc { get; set; }
 }

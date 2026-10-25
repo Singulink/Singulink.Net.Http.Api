@@ -2,7 +2,9 @@ namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
 /// Middleware that handles exceptions thrown during request processing by reporting them to the client as API errors. Exceptions are mapped using the
-/// registered <see cref="IApiExceptionHandler"/> (if any); otherwise <see cref="ApiException"/> instances are reported as-is and other exceptions propagate.
+/// registered <see cref="IApiExceptionHandler"/> (if any); otherwise <see cref="ApiException"/> instances are reported as-is, requests that ASP.NET Core
+/// could not read (<see cref="BadHttpRequestException"/>) are reported with their status code, and other exceptions propagate. Requests that ASP.NET Core
+/// answers with an empty error response, a request body that is too large or a content type the endpoint does not accept, are reported in the same format.
 /// </summary>
 public class ApiExceptionMiddleware
 {
@@ -32,12 +34,13 @@ public class ApiExceptionMiddleware
             if (apiException is null)
                 throw;
 
-            var info = ResponseExceptionInfo.FromApiException(apiException);
-
-            context.Response.ContentType = info.MimeType;
-            context.Response.StatusCode = info.StatusCode;
-
-            await context.Response.WriteAsync(info.ToResponseString());
+            await context.Response.WriteApiErrorAsync(apiException);
+            return;
         }
+
+        // A request body that is too large (in minimal APIs) and a content type the endpoint does not accept (in routing) get an empty error response
+        // rather than an exception, so the error is filled in here.
+        if (!context.RequestAborted.IsCancellationRequested && BadRequestMapping.FromEmptyResponse(context) is { } emptyResponseException)
+            await context.Response.WriteApiErrorAsync(emptyResponseException);
     }
 }

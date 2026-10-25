@@ -11,8 +11,8 @@ namespace Singulink.Net.Http.Api;
 /// <typeparam name="TItem">The type of the streamed items.</typeparam>
 /// <remarks>
 /// <para>
-/// The stream name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), so definitions are
-/// typically declared as static properties in a shared contract class, e.g. <c>public static HubStream&lt;int, Update&gt; Updates { get; } = new();</c>.
+/// The stream name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), such as
+/// <c>Updates</c> for <c>public static HubStream&lt;int, Update&gt; Updates { get; } = new();</c>.
 /// </para>
 /// <para>
 /// Streaming from a client to the server does not require a separate definition: an <see cref="IAsyncEnumerable{T}"/> (or channel reader) argument of a
@@ -94,6 +94,31 @@ public sealed class HubStream<T1, T2, TItem>
 /// <typeparam name="TItem">The type of the streamed items.</typeparam>
 /// <inheritdoc cref="HubStream{TItem}" path="/remarks"/>
 public sealed class HubStream<T1, T2, T3, TItem>
+{
+    /// <inheritdoc cref="HubStream{TItem}(string)"/>
+    public HubStream([CallerMemberName] string name = "")
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        Name = name;
+    }
+
+    /// <inheritdoc cref="HubStream{TItem}.Name"/>
+    public string Name { get; }
+
+    /// <inheritdoc/>
+    public override string ToString() => Name;
+}
+
+/// <summary>
+/// Defines a hub method with four arguments that streams items from the server to the client.
+/// </summary>
+/// <typeparam name="T1">The type of the first method argument.</typeparam>
+/// <typeparam name="T2">The type of the second method argument.</typeparam>
+/// <typeparam name="T3">The type of the third method argument.</typeparam>
+/// <typeparam name="T4">The type of the fourth method argument.</typeparam>
+/// <typeparam name="TItem">The type of the streamed items.</typeparam>
+/// <inheritdoc cref="HubStream{TItem}" path="/remarks"/>
+public sealed class HubStream<T1, T2, T3, T4, TItem>
 {
     /// <inheritdoc cref="HubStream{TItem}(string)"/>
     public HubStream([CallerMemberName] string name = "")

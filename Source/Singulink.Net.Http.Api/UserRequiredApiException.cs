@@ -19,7 +19,7 @@ public class UserRequiredApiException : ApiException
     /// <summary>
     /// Initializes a new instance of the <see cref="UserRequiredApiException"/> class with a specified error message and an inner exception.
     /// </summary>
-    public UserRequiredApiException(string message, Exception? innerException) : base(HttpStatusCode.PreconditionRequired, message, innerException)
+    public UserRequiredApiException(string message, Exception? innerException) : base((HttpStatusCode)428, message, innerException)
     {
     }
 }

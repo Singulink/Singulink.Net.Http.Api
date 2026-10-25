@@ -40,30 +40,42 @@ public static class StreamingResponse
 
     /// <summary>
     /// Reads the items from a streaming response body. Ping records are skipped, error records are thrown as the corresponding <see cref="ApiException"/>, and
-    /// the enumeration completes when the end record is received. Null items are yielded as <see langword="null"/>, so a nullable item type should be used if
-    /// the endpoint can produce them.
+    /// the enumeration completes when the end record is received. Null items are yielded as <see langword="null"/>, whether or not the item type is
+    /// nullable.
     /// </summary>
     /// <typeparam name="TItem">The item type.</typeparam>
     /// <param name="stream">The response body stream.</param>
     /// <param name="itemTypeInfo">The JSON type info used to deserialize items.</param>
     /// <param name="cancellationToken">A token that cancels the read.</param>
     /// <exception cref="ApiException">The stream contained an error record.</exception>
-    /// <exception cref="HttpIOException">The stream ended before an end or error record was received.</exception>
+    /// <exception cref="IOException">The stream ended before an end or error record was received. On .NET 10 and later, this is an <see
+    /// cref="T:System.Net.Http.HttpIOException"/>.</exception>
     /// <exception cref="FormatException">The stream contained an unrecognized record.</exception>
-    public static async IAsyncEnumerable<TItem> ReadItemsAsync<TItem>(
-        Stream stream, JsonTypeInfo<TItem> itemTypeInfo, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public static IAsyncEnumerable<TItem> ReadItemsAsync<TItem>(Stream stream, JsonTypeInfo<TItem> itemTypeInfo, CancellationToken cancellationToken = default)
+    {
+        return ReadItemsAsync(stream, itemTypeInfo, null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads the items from a streaming response body (see <see cref="ReadItemsAsync{TItem}(Stream, JsonTypeInfo{TItem}, CancellationToken)"/>). The
+    /// exception for an error record with a <c>412</c> carries the specified user ID precondition of the request, if any (see
+    /// <see cref="UserChangedApiException.ExpectedUserId"/>).
+    /// </summary>
+    internal static async IAsyncEnumerable<TItem> ReadItemsAsync<TItem>(
+        Stream stream, JsonTypeInfo<TItem> itemTypeInfo, string? expectedUserId, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         bool ended = false;
 
-        await foreach (var record in JsonSerializer.DeserializeAsyncEnumerable(stream, StreamJsonContext.Default.StreamRecord, topLevelValues: true, cancellationToken)
-            .ConfigureAwait(false))
+        var records = JsonSerializer.DeserializeAsyncEnumerable(stream, StreamJsonContext.Default.StreamRecord, topLevelValues: true, cancellationToken);
+
+        await foreach (var record in records.ConfigureAwait(false))
         {
             if (record is null)
                 throw new FormatException("Streaming response contained a null record.");
 
             if (record.Error is { } error)
             {
-                ResponseExceptionInfo.ThrowStreamError(error);
+                ResponseExceptionInfo.ThrowStreamError(error, expectedUserId);
                 throw new FormatException("Streaming response contained an error record with a non-error status.");
             }
 
@@ -86,7 +98,14 @@ public static class StreamingResponse
         }
 
         if (!ended)
-            throw new HttpIOException(HttpRequestError.ResponseEnded, "The streaming response ended before the end-of-stream record was received.");
+        {
+            const string message = "The streaming response ended before the end-of-stream record was received.";
+#if NET
+            throw new HttpIOException(HttpRequestError.ResponseEnded, message);
+#else
+            throw new StreamingResponseEndedException(message);
+#endif
+        }
     }
 
     /// <summary>
@@ -99,6 +118,6 @@ public static class StreamingResponse
     /// <param name="cancellationToken">A token that cancels the read.</param>
     public static IAsyncEnumerable<TItem> ReadItemsAsync<TItem>(Stream stream, JsonSerializerOptions serializerOptions, CancellationToken cancellationToken = default)
     {
-        return ReadItemsAsync(stream, (JsonTypeInfo<TItem>)serializerOptions.GetTypeInfo(typeof(TItem)), cancellationToken);
+        return ReadItemsAsync(stream, serializerOptions.GetTypeInfo<TItem>(), cancellationToken);
     }
 }

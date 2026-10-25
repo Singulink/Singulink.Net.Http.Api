@@ -1,6 +1,6 @@
 namespace Singulink.Net.Http.Api.Client;
 
 /// <summary>
-/// Represents a void response type for API requests that do not return any content.
+/// The response type of the requests whose response is not read.
 /// </summary>
-public readonly struct VoidApiResponse;
+internal readonly struct VoidApiResponse;

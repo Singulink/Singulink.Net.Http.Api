@@ -1,3 +1,6 @@
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Singulink.Net.Http.Api.Service;
 
 [PrefixTestClass]
@@ -21,7 +24,8 @@ public sealed class SessionTokenReadTests
         var host = new SessionTestHost();
         var request = host.CreateRequest();
 
-        await Should.ThrowAsync<UnauthorizedApiException>(() => request.Session.GetRequiredTokenAsync().AsTask());
+        var ex = await Should.ThrowAsync<UnauthorizedApiException>(() => request.Session.GetRequiredTokenAsync().AsTask());
+        ex.ErrorCode.ShouldBe(ApiErrorCodes.SignInRequired);
     }
 
     [TestMethod]
@@ -40,10 +44,10 @@ public sealed class SessionTokenReadTests
     public async Task CookieFromDifferentKeyRing_ReturnsNullAndClearsCookie()
     {
         var otherHost = new SessionTestHost();
-        var otherToken = otherHost.CreateSession();
+        var otherSession = otherHost.CreateSession();
 
         var host = new SessionTestHost();
-        var request = host.CreateRequest(rawCookie: otherHost.Protect(otherToken));
+        var request = host.CreateRequest(rawCookie: otherHost.Protect(otherSession));
 
         (await request.GetTokenAsync()).ShouldBeNull();
 
@@ -52,9 +56,48 @@ public sealed class SessionTokenReadTests
     }
 
     [TestMethod]
+    public async Task DefaultPurpose_IncludesTokenTypeFullName()
+    {
+        var host = new SessionTestHost();
+        var session = host.CreateSession();
+        var protector = host.Services.GetRequiredService<IDataProtectionProvider>()
+            .CreateProtector("Singulink/Session[Singulink.Net.Http.Api.Service.TestSessionToken]");
+
+        var request = host.CreateRequest(rawCookie: protector.Protect(TestSessionCookies.ToJson(session)));
+
+        (await request.GetTokenAsync()).ShouldBe(session.Token);
+    }
+
+    [TestMethod]
+    public async Task CustomPurpose_ReadsOnlyCookiesProtectedWithIt()
+    {
+        var host = new SessionTestHost(o => o.DataProtectionPurpose = "Singulink/Session[Old.Namespace.SessionToken]");
+        var session = host.CreateSession();
+        var provider = host.Services.GetRequiredService<IDataProtectionProvider>();
+        string json = TestSessionCookies.ToJson(session);
+
+        var oldPurposeRequest = host.CreateRequest(rawCookie: provider.CreateProtector("Singulink/Session[Old.Namespace.SessionToken]").Protect(json));
+        (await oldPurposeRequest.GetTokenAsync()).ShouldBe(session.Token);
+
+        var defaultPurposeRequest = host.CreateRequest(rawCookie: provider.CreateProtector(TestSessionCookies.Purpose).Protect(json));
+        (await defaultPurposeRequest.GetTokenAsync()).ShouldBeNull();
+        defaultPurposeRequest.CookieCleared.ShouldBeTrue();
+
+        // Issued cookies are protected with the custom purpose.
+        var signInRequest = host.CreateRequest();
+        await signInRequest.Session.SignInAsync(persistent: true, _ => Task.FromResult(session.Token));
+        provider.CreateProtector("Singulink/Session[Old.Namespace.SessionToken]").Unprotect(signInRequest.IssuedCookie.Value).ShouldContain("\"t\":");
+    }
+
+    [TestMethod]
     [DataRow("[1, 2, 3]")]
     [DataRow("null")]
     [DataRow("{ \"SessionId\": \"not-a-number\" }")]
+    [DataRow("""{"r":"2026-01-01T00:00:00Z","v":"1.00:00:00","g":0,"p":true}""")]
+    [DataRow("""{"r":"2026-01-01T00:00:00Z","v":"1.00:00:00","g":0,"p":true,"t":null}""")]
+    [DataRow("""{"r":"2026-01-01T00:00:00Z","v":"1.00:00:00","g":0,"p":true,"t":{"SessionId":"x"}}""")]
+    [DataRow("""{"v":"1.00:00:00","g":0,"p":true,"t":{"SessionId":1,"UserId":1,"Stamp":1}}""")]
+    [DataRow("""{"r":"yesterday","v":"1.00:00:00","g":0,"p":true,"t":{"SessionId":1,"UserId":1,"Stamp":1}}""")]
     public async Task MalformedTokenPayload_ReturnsNullAndClearsCookie(string payload)
     {
         var host = new SessionTestHost();
@@ -67,13 +110,36 @@ public sealed class SessionTokenReadTests
     }
 
     [TestMethod]
+    public async Task VersionThreeCookie_IsNotReadAndIsCleared()
+    {
+        // Version 3 kept the refresh info in the token itself. Those cookies are not read: users sign in again after the upgrade.
+
+        var host = new SessionTestHost();
+        host.CreateSession();
+
+        string payload = FormattableString.Invariant($$"""
+            {
+                "SessionId": 1, "UserId": 1, "Stamp": 1, "RefreshedUtc": "{{host.UtcNow:O}}", "ValidFor": "30.00:00:00", "Generation": 0,
+                "IsPersistent": true
+            }
+            """);
+
+        var request = host.CreateRequest(rawCookie: host.ProtectRaw(payload));
+
+        (await request.GetTokenAsync()).ShouldBeNull();
+
+        request.CookieCleared.ShouldBeTrue();
+        host.Store.Calls.ShouldBeEmpty();
+    }
+
+    [TestMethod]
     public async Task ValidToken_NotDueForRefresh_ReturnsTokenWithoutStoreAccessOrCookie()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session);
 
-        (await request.GetTokenAsync()).ShouldBe(token);
+        (await request.GetTokenAsync()).ShouldBe(session.Token);
 
         host.Store.Calls.ShouldBeEmpty();
 
@@ -87,8 +153,8 @@ public sealed class SessionTokenReadTests
     public async Task RepeatedCalls_ReadCookieOnceAndReturnSameInstance()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession(age: TimeSpan.FromMinutes(11));
-        var request = host.CreateRequest(token);
+        var session = host.CreateSession(age: TimeSpan.FromMinutes(11));
+        var request = host.CreateRequest(session);
 
         var first = await request.GetTokenAsync();
         var second = await request.GetTokenAsync();
@@ -100,8 +166,8 @@ public sealed class SessionTokenReadTests
 
         // Due for refresh, so the session was validated - but only once.
         host.Store.Calls.ShouldBe(["GetSession"]);
-        host.Store.ContextsCreated.ShouldBe(1);
-        host.Store.OpenContexts.ShouldBe(0);
+        host.Store.StoresCreated.ShouldBe(1);
+        host.Store.OpenStores.ShouldBe(0);
     }
 
     [TestMethod]
@@ -126,12 +192,51 @@ public sealed class SessionTokenReadTests
     }
 
     [TestMethod]
+    public void Device_LongUserAgent_IsShortenedToMaxDeviceLength()
+    {
+        var host = new SessionTestHost();
+        string userAgent = "LongClient/1.0 " + new string('x', 600);
+        var request = host.CreateRequest(device: userAgent);
+
+        request.Session.Device.ShouldBe(userAgent[..512]);
+    }
+
+    [TestMethod]
+    public void Device_MaxDeviceLength_IsConfigurable()
+    {
+        var host = new SessionTestHost(o => o.MaxDeviceLength = 10);
+
+        host.CreateRequest(device: "LongClient/1.0").Session.Device.ShouldBe("LongClient");
+        host.CreateRequest(device: "Short/1.0").Session.Device.ShouldBe("Short/1.0");
+    }
+
+    [TestMethod]
+    public void Device_Shortening_DoesNotSplitSurrogatePairs()
+    {
+        var host = new SessionTestHost(o => o.MaxDeviceLength = 5);
+
+        host.CreateRequest(device: "Abcd😀xyz").Session.Device.ShouldBe("Abcd");
+        host.CreateRequest(device: "Abc😀xyz").Session.Device.ShouldBe("Abc😀");
+    }
+
+    [TestMethod]
     public void Device_MissingUserAgent_ThrowsBadRequest()
     {
         var host = new SessionTestHost();
         var request = host.CreateRequest();
         request.Context.Request.Headers.Remove("User-Agent");
 
-        Should.Throw<BadRequestApiException>(() => request.Session.Device);
+        Should.Throw<BadRequestApiException>(() => request.Session.Device).ErrorCode.ShouldBe(ApiErrorCodes.UserAgentRequired);
+    }
+
+    [TestMethod]
+    [DataRow("")]
+    [DataRow("   ")]
+    public void Device_EmptyUserAgent_ThrowsBadRequest(string userAgent)
+    {
+        var host = new SessionTestHost();
+        var request = host.CreateRequest(device: userAgent);
+
+        Should.Throw<BadRequestApiException>(() => request.Session.Device).ErrorCode.ShouldBe(ApiErrorCodes.UserAgentRequired);
     }
 }

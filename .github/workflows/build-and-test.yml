@@ -2,9 +2,9 @@ name: build and test
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, '4.0' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, '4.0' ]
 
 # Auto-cancel any old in-progress runs for the same PR, but not for non-PR runs
 concurrency:
@@ -12,24 +12,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  # Windows builds the whole solution, including the WinUI client package, whose mobile and browser targets need workloads and whose Windows App SDK
+  # target needs Windows.
+  windows:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
         configuration: [Debug, Release]
 
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os == 'windows-latest' && 'windows-x64' || matrix.os == 'ubuntu-latest' && 'linux-x64' || 'macos-arm64' }}-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}
+    runs-on: windows-latest
+    name: windows-x64-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
     - name: Setup .NET
-      uses: actions/setup-dotnet@v5
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: |
           10.0.x
+    - name: Install workloads
+      run: dotnet workload install ios android wasm-tools
     - name: Clean
       run: dotnet clean Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} && dotnet nuget locals all --clear
     - name: Install dependencies
@@ -38,3 +41,58 @@ jobs:
       run: dotnet build Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} --no-restore
     - name: Test
       run: dotnet test Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} --no-build --verbosity normal
+
+  # Linux and macOS build and test everything that does not need workloads or Windows (the test projects and the packages they test, without the
+  # WinUI client package), and run the tests on .NET 11 too.
+  linux-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        configuration: [Debug, Release]
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os == 'ubuntu-latest' && 'linux-x64' || 'macos-arm64' }}-${{ matrix.configuration == 'Debug' && 'debug' || 'release' }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: |
+          10.0.x
+          11.0.x
+    - name: Clean
+      run: dotnet clean Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} && dotnet nuget locals all --clear
+    - name: Install dependencies
+      run: dotnet restore Singulink.Net.Http.Api.Tests.slnf
+    - name: Build
+      run: dotnet build Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-restore
+    - name: Test
+      run: dotnet test Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-build --verbosity normal
+    # The same tests on the .NET 11 runtime: the .NET 10 builds roll forward to the latest major runtime, including a prerelease one.
+    - name: Test on .NET 11
+      run: dotnet test Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-build --verbosity normal
+      env:
+        DOTNET_ROLL_FORWARD: LatestMajor
+        DOTNET_ROLL_FORWARD_TO_PRERELEASE: 1
+
+  # Publishes a web app that uses the server packages with Native AOT (Release builds fail on trim and AOT warnings), then runs the published executable's
+  # self-check, which makes requests to it.
+  native-aot:
+    runs-on: ubuntu-latest
+    name: linux-x64-native-aot
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: |
+          10.0.x
+    - name: Publish
+      run: dotnet publish Tests/Singulink.Net.Http.Api.Service.AotTestApp/Singulink.Net.Http.Api.Service.AotTestApp.csproj --configuration Release --output aot-test-app
+    - name: Self-check
+      run: ./aot-test-app/Singulink.Net.Http.Api.Service.AotTestApp --self-check

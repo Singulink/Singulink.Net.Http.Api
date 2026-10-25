@@ -1,17 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    
-    <Description>API client library for the Singulink HTTP API Tookit.</Description>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+
+    <Description>API client library for the Singulink HTTP API Toolkit.</Description>
     <PackageTags>HTTP; API; Client;</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Singulink.Net.Http.Api.Client.SignalR" PublicKey="002400000480000094000000060200000024000052534131000400000100010071EA14A9C9F75F6259D4D6A2AAE17FE8A2D742FCF413DC872447728B1E936187F6626D35EC9E7F7CA4CB47C507045AEA377637E8ADDD35912810EB26BD1D4C7EDB6C3C9A5685783A101233E7DCEAEAC81F6E4CC095C17B65EEDE1A885FF47E5479E46CAC2AC0A52B88806CF38A77BA8533D4B0026A63CDB7BCA9ED23AB5580C0" />
+    <InternalsVisibleTo Include="Singulink.Net.Http.Api.Client.Tests" PublicKey="002400000480000094000000060200000024000052534131000400000100010071EA14A9C9F75F6259D4D6A2AAE17FE8A2D742FCF413DC872447728B1E936187F6626D35EC9E7F7CA4CB47C507045AEA377637E8ADDD35912810EB26BD1D4C7EDB6C3C9A5685783A101233E7DCEAEAC81F6E4CC095C17B65EEDE1A885FF47E5479E46CAC2AC0A52B88806CF38A77BA8533D4B0026A63CDB7BCA9ED23AB5580C0" />
+    <InternalsVisibleTo Include="Singulink.Net.Http.Api.Client.WinUI" PublicKey="002400000480000094000000060200000024000052534131000400000100010071EA14A9C9F75F6259D4D6A2AAE17FE8A2D742FCF413DC872447728B1E936187F6626D35EC9E7F7CA4CB47C507045AEA377637E8ADDD35912810EB26BD1D4C7EDB6C3C9A5685783A101233E7DCEAEAC81F6E4CC095C17B65EEDE1A885FF47E5479E46CAC2AC0A52B88806CF38A77BA8533D4B0026A63CDB7BCA9ED23AB5580C0" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Http" />
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
+    <PackageReference Include="Microsoft.Bcl.TimeProvider" />
+    <PackageReference Include="System.Net.Http.Json" />
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="PolySharp" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <!-- Browser fetch options are only used on browser platforms, which always use the .NET build. -->
+    <Compile Remove="Microsoft.AspNetCore.Components.WebAssembly.Http/**" />
   </ItemGroup>
 
   <ItemGroup>

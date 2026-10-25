@@ -16,7 +16,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// therefore split: the regular convention attaches the filter based on the handler's declared return type, and the finally convention completes the
 /// filter's configuration from the attributes and fixes up the response metadata.
 /// </remarks>
-internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
+internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource, IDisposable
 {
     private static readonly RoutePattern EmptyPrefix = RoutePatternFactory.Parse(string.Empty);
 
@@ -65,6 +65,11 @@ internal sealed class StreamingResponseEndpointDataSource : EndpointDataSource
 
     /// <inheritdoc/>
     public override IChangeToken GetChangeToken() => _source.GetChangeToken();
+
+    /// <summary>
+    /// Disposes the decorated data source if it is disposable.
+    /// </summary>
+    public void Dispose() => (_source as IDisposable)?.Dispose();
 
     private static void AttachFilter(EndpointBuilder builder, bool isDevelopment)
     {

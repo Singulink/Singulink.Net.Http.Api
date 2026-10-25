@@ -10,8 +10,8 @@ namespace Singulink.Net.Http.Api;
 /// </summary>
 /// <typeparam name="TResult">The type of the result.</typeparam>
 /// <remarks>
-/// The method name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), so definitions are
-/// typically declared as static properties in a shared contract class, e.g. <c>public static HubMethod&lt;int, int&gt; Double { get; } = new();</c>.
+/// The method name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), such as
+/// <c>Double</c> for <c>public static HubMethod&lt;int, int&gt; Double { get; } = new();</c>.
 /// </remarks>
 public sealed class HubMethod<TResult>
 {
@@ -88,6 +88,31 @@ public sealed class HubMethod<T1, T2, TResult>
 /// <typeparam name="TResult">The type of the result.</typeparam>
 /// <inheritdoc cref="HubMethod{TResult}" path="/remarks"/>
 public sealed class HubMethod<T1, T2, T3, TResult>
+{
+    /// <inheritdoc cref="HubMethod{TResult}(string)"/>
+    public HubMethod([CallerMemberName] string name = "")
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        Name = name;
+    }
+
+    /// <inheritdoc cref="HubMethod{TResult}.Name"/>
+    public string Name { get; }
+
+    /// <inheritdoc/>
+    public override string ToString() => Name;
+}
+
+/// <summary>
+/// Defines a hub method with four arguments that returns a result.
+/// </summary>
+/// <typeparam name="T1">The type of the first method argument.</typeparam>
+/// <typeparam name="T2">The type of the second method argument.</typeparam>
+/// <typeparam name="T3">The type of the third method argument.</typeparam>
+/// <typeparam name="T4">The type of the fourth method argument.</typeparam>
+/// <typeparam name="TResult">The type of the result.</typeparam>
+/// <inheritdoc cref="HubMethod{TResult}" path="/remarks"/>
+public sealed class HubMethod<T1, T2, T3, T4, TResult>
 {
     /// <inheritdoc cref="HubMethod{TResult}(string)"/>
     public HubMethod([CallerMemberName] string name = "")

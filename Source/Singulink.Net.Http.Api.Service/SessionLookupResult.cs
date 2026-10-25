@@ -1,21 +1,22 @@
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Represents the result of looking up a session in the session store: the session record and whether the token used to look it up is stale.
+/// Represents a session found in the session store: its record, and optionally a token that replaces the one it was found with.
 /// </summary>
-public class SessionLookupResult
+/// <typeparam name="TSessionToken">The session token type.</typeparam>
+public sealed class SessionLookupResult<TSessionToken>
+    where TSessionToken : class, ISessionToken
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="SessionLookupResult"/> class.
+    /// Initializes a new instance of the <see cref="SessionLookupResult{TSessionToken}"/> class.
     /// </summary>
     /// <param name="session">The session record that was found.</param>
-    /// <param name="isTokenStale">A value indicating whether the information in the token used to look up the session is out of date.</param>
-    public SessionLookupResult(SessionRecord session, bool isTokenStale)
+    /// <param name="replacementToken">The token that the session continues with instead of the one it was found with, or <see langword="null"/> to keep
+    /// that token.</param>
+    public SessionLookupResult(SessionRecord session, TSessionToken? replacementToken = null)
     {
-        ArgumentNullException.ThrowIfNull(session);
-
         Session = session;
-        IsTokenStale = isTokenStale;
+        ReplacementToken = replacementToken;
     }
 
     /// <summary>
@@ -24,9 +25,8 @@ public class SessionLookupResult
     public SessionRecord Session { get; }
 
     /// <summary>
-    /// Gets a value indicating whether the information contained in the token used to look up the session is stale, i.e. the data it was created from has
-    /// changed since it was created. Implementations typically determine this by comparing a security stamp or version captured in the token against the
-    /// latest value in the data store.
+    /// Gets the token that the session continues with instead of the one it was found with, or <see langword="null"/> to keep that token. The request that
+    /// found the session gets the replacement token, and the session cookie is reissued with it.
     /// </summary>
-    public bool IsTokenStale { get; }
+    public TSessionToken? ReplacementToken { get; }
 }

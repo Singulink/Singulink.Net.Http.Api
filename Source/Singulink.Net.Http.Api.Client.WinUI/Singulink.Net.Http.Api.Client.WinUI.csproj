@@ -1,0 +1,69 @@
+<Project Sdk="Uno.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net10.0-ios;net10.0-android;net10.0-windows10.0.26100;net10.0-browserwasm;net10.0-desktop</TargetFrameworks>
+    <UnoSingleProject>true</UnoSingleProject>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Singulink.Net.Http.Api.Client</RootNamespace>
+
+    <!-- Packs content files (passkeys.js) in Uno's library layout, so apps deploy them with their other library assets. -->
+    <GenerateLibraryLayout>true</GenerateLibraryLayout>
+
+    <Description>Passkey (WebAuthn) support and session token storage for WinUI 3 and Uno Platform apps built with the Singulink HTTP API Toolkit.</Description>
+    <PackageTags>HTTP; API; Client; Passkeys; WebAuthn; Session; Uno Platform; WinUI;</PackageTags>
+
+    <!-- Without a renderer feature, the WebAssembly target would depend on Uno's DOM renderer runtime. -->
+    <UnoFeatures>
+      SkiaRenderer;
+    </UnoFeatures>
+
+    <!-- Keeps Uno from adding a module initializer that sets the app's default font. -->
+    <UnoDefaultFont>None</UnoDefaultFont>
+
+    <!-- CS8002: Uno Platform's assemblies aren't strong-named. That's harmless, since .NET doesn't validate strong names or use them for binding. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-browserwasm'">
+    <!-- Required by the JSImport source generator. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-browserwasm'">
+    <!-- Deployed to the app's package folder under the assembly name and imported from there (see PasskeyInterop). Pack="false" keeps it out of the
+         package's contentFiles: the library layout already carries it. -->
+    <Content Include="..\Shared\passkeys.js" Link="passkeys.js" Pack="false" />
+  </ItemGroup>
+
+  <!-- Encrypts the session tokens that SessionTokenStore keeps on desktop and in Windows App SDK apps, on Windows. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' or '$(TargetFramework)' == 'net10.0-desktop' or
+                        $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Client\Singulink.Net.Http.Api.Client.csproj" />
+  </ItemGroup>
+
+  <!-- Uno adds package references for the features of its renderers, for app images (Uno.Resizetizer, whose source generator would add a public
+       WindowExtensions class) and, on Windows, for the Windows App SDK. The library uses none of them, so only Uno.WinUI is kept on Uno Platform
+       targets, and the Windows App SDK target, which only uses Windows APIs, has none. They are removed right after Uno adds them, before restore
+       collects them. -->
+  <Target Name="RemoveUnusedUnoPackageReferences" AfterTargets="UnoImplicitPackages">
+    <ItemGroup>
+      <PackageReference Remove="SkiaSharp.Views.Uno.WinUI;SkiaSharp.Views.WinUI;Uno.Resizetizer;Uno.WinUI.Graphics2DSK;Uno.WinUI.Lottie" />
+      <PackageReference Remove="Microsoft.Windows.SDK.BuildTools;Microsoft.WindowsAppSDK;Uno.WinUI"
+                        Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The code doesn't rely on Uno's implicit namespaces, and the Windows App SDK target, which has no WinUI reference, can't import them. -->
+  <Target Name="RemoveUnoImplicitUsings" BeforeTargets="GenerateGlobalUsings">
+    <ItemGroup>
+      <Using Remove="@(Using)" Condition="'%(Using.Sdk)' == 'Uno'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Singulink.Net.Http.Api.Client.WinUI.Tests" PublicKey="002400000480000094000000060200000024000052534131000400000100010071EA14A9C9F75F6259D4D6A2AAE17FE8A2D742FCF413DC872447728B1E936187F6626D35EC9E7F7CA4CB47C507045AEA377637E8ADDD35912810EB26BD1D4C7EDB6C3C9A5685783A101233E7DCEAEAC81F6E4CC095C17B65EEDE1A885FF47E5479E46CAC2AC0A52B88806CF38A77BA8533D4B0026A63CDB7BCA9ED23AB5580C0" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <OutputType>Library</OutputType>
+
+    <Description>Passkey (WebAuthn) ceremonies and a passkey hand-off page for services built with the Singulink HTTP API Toolkit.</Description>
+    <PackageTags>HTTP; API; Service; Server; Passkeys; WebAuthn; FIDO2;</PackageTags>
+
+    <!-- The page is served from embedded resources, so the library has no static web assets. Debug builds with the .NET 11 SDK otherwise fail on the
+         hot reload assets of the referenced Service project. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fido2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
+  </ItemGroup>
+
+  <!-- The hand-off page is served from embedded resources. passkeys.js is shared with client packages, so it is linked rather than copied. -->
+  <ItemGroup>
+    <None Remove="Page\**" />
+    <Content Remove="Page\**" />
+    <EmbeddedResource Include="Page\passkey.html" LogicalName="Passkeys.Page.passkey.html" />
+    <EmbeddedResource Include="Page\passkey.css" LogicalName="Passkeys.Page.passkey.css" />
+    <EmbeddedResource Include="Page\passkey-page.js" LogicalName="Passkeys.Page.passkey-page.js" />
+    <EmbeddedResource Include="..\Shared\passkeys.js" Link="Page\passkeys.js" LogicalName="Passkeys.Page.passkeys.js" />
+  </ItemGroup>
+</Project>

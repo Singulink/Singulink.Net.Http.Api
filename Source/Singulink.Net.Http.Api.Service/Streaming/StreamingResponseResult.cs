@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.Options;
 
@@ -11,7 +10,8 @@ namespace Singulink.Net.Http.Api.Service;
 /// </summary>
 internal sealed class StreamingResponseResult : IResult
 {
-    private static readonly ReadOnlyMemory<byte> NewLine = "\n"u8.ToArray();
+    // Used when the app has no options service, as ASP.NET Core does for minimal API results.
+    private static readonly JsonOptions DefaultJsonOptions = new();
 
     private readonly IAsyncEnumerable<object?> _source;
     private readonly Type _itemType;
@@ -31,15 +31,18 @@ internal sealed class StreamingResponseResult : IResult
         var response = httpContext.Response;
         var requestAborted = httpContext.RequestAborted;
 
-        var serializerOptions = httpContext.RequestServices.GetService<IOptions<JsonOptions>>()?.Value.SerializerOptions ?? JsonSerializerOptions.Web;
+        var serializerOptions = (httpContext.RequestServices.GetService<IOptions<JsonOptions>>()?.Value ?? DefaultJsonOptions).SerializerOptions;
         var itemTypeInfo = serializerOptions.GetTypeInfo(_itemType);
 
-        response.StatusCode = StatusCodes.Status200OK;
-        response.ContentType = StreamingResponse.ContentType;
-        httpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+        using var recordWriter = new StreamRecordWriter(httpContext, serializerOptions.Encoder, requestAborted);
+        recordWriter.Start();
 
-        var bodyWriter = response.BodyWriter;
-        using var jsonWriter = new Utf8JsonWriter(bodyWriter, new JsonWriterOptions { Encoder = serializerOptions.Encoder });
+        var writerOptions = new JsonWriterOptions { Encoder = serializerOptions.Encoder };
+
+        // Each item is serialized into a buffer first, so that an item that cannot be serialized leaves nothing of it in the response and is reported like
+        // an exception of the endpoint.
+        var itemBuffer = new ArrayBufferWriter<byte>();
+        using var itemWriter = new Utf8JsonWriter(itemBuffer, writerOptions);
 
         // The enumeration token is linked to the request so that a pending MoveNextAsync can be cancelled promptly when the client disconnects.
         using var enumerationCts = CancellationTokenSource.CreateLinkedTokenSource(requestAborted);
@@ -55,6 +58,9 @@ internal sealed class StreamingResponseResult : IResult
                 try
                 {
                     hasNext = await MoveNextAsync();
+
+                    if (hasNext)
+                        SerializeItem(enumerator.Current);
                 }
                 catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
                 {
@@ -66,17 +72,17 @@ internal sealed class StreamingResponseResult : IResult
                     if (!response.HasStarted)
                         throw;
 
-                    await WriteErrorAsync(await ResolveErrorAsync(ex));
+                    await recordWriter.WriteErrorAsync(await ResolveErrorAsync(ex));
                     return;
                 }
 
                 if (!hasNext)
                 {
-                    await WriteEndAsync();
+                    await recordWriter.WriteEndAsync();
                     return;
                 }
 
-                await WriteItemAsync(enumerator.Current);
+                await recordWriter.WriteItemAsync(itemBuffer.WrittenMemory);
             }
         }
         finally
@@ -107,34 +113,17 @@ internal sealed class StreamingResponseResult : IResult
                 }
                 catch (TimeoutException)
                 {
-                    await WritePingAsync();
+                    await recordWriter.WritePingAsync();
                 }
             }
         }
 
-        async ValueTask WriteItemAsync(object? item)
+        void SerializeItem(object? item)
         {
-            jsonWriter.WriteStartObject();
-            jsonWriter.WritePropertyName("item"u8);
-            JsonSerializer.Serialize(jsonWriter, item, itemTypeInfo);
-            jsonWriter.WriteEndObject();
-            await FlushRecordAsync();
-        }
-
-        async ValueTask WritePingAsync()
-        {
-            jsonWriter.WriteStartObject();
-            jsonWriter.WriteBoolean("ping"u8, true);
-            jsonWriter.WriteEndObject();
-            await FlushRecordAsync();
-        }
-
-        async ValueTask WriteEndAsync()
-        {
-            jsonWriter.WriteStartObject();
-            jsonWriter.WriteBoolean("end"u8, true);
-            jsonWriter.WriteEndObject();
-            await FlushRecordAsync();
+            itemBuffer.ResetWrittenCount();
+            itemWriter.Reset();
+            JsonSerializer.Serialize(itemWriter, item, itemTypeInfo);
+            itemWriter.Flush();
         }
 
         async ValueTask<ResponseExceptionInfo> ResolveErrorAsync(Exception ex)
@@ -145,29 +134,6 @@ internal sealed class StreamingResponseResult : IResult
             // Unexpected exception with no handler to map it: report a generic server error (with details only in development).
             ApiExceptionHandling.TraceSuppressed(ex, "converted to stream error");
             return ResponseExceptionInfo.FromException(ex, _isDevelopment);
-        }
-
-        async ValueTask WriteErrorAsync(ResponseExceptionInfo info)
-        {
-            jsonWriter.WriteStartObject();
-            jsonWriter.WriteStartObject("error"u8);
-            jsonWriter.WriteNumber("status"u8, info.StatusCode);
-
-            if (info.ErrorCode.Length > 0)
-                jsonWriter.WriteString("code"u8, info.ErrorCode);
-
-            jsonWriter.WriteString("message"u8, info.Message);
-            jsonWriter.WriteEndObject();
-            jsonWriter.WriteEndObject();
-            await FlushRecordAsync();
-        }
-
-        async ValueTask FlushRecordAsync()
-        {
-            jsonWriter.Flush();
-            jsonWriter.Reset();
-            bodyWriter.Write(NewLine.Span);
-            await bodyWriter.FlushAsync(requestAborted);
         }
 
         async ValueTask DisposeEnumeratorAsync()

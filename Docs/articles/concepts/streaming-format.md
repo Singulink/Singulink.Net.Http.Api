@@ -16,7 +16,7 @@ The body is a sequence of JSON objects, one per line, each with exactly one of t
 | --- | --- |
 | `{"item": ...}` | An item produced by the endpoint, serialized with the service's JSON options for the endpoint's declared item type. May be `null` if the endpoint yields a null item. |
 | `{"ping": true}` | A keep-alive record sent while the endpoint is waiting for its next item. Readers ignore it. |
-| `{"error": {"status": 403, "code": "denied", "message": "..."}}` | An error that terminates the stream. `code` is omitted when there is no error code. |
+| `{"error": {"status": 403, "code": "denied", "message": "...", "referenceId": "...", "retryAfter": 30}}` | An error that terminates the stream. `code` is omitted when there is no error code, `referenceId` when there is no reference ID, and `retryAfter` (whole seconds) when there is no retry time (see [Error Response Format](error-format.md#streaming-responses)). |
 | `{"end": true}` | Successful completion of the stream. |
 
 A complete successful stream:
@@ -32,7 +32,7 @@ Each record is flushed to the transport as soon as it is written, so items reach
 
 ## Guarantees
 
-- **Every successful stream ends with an end record**, and every failed stream ends with an error record. A stream that ends without either was truncated, and the toolkit's reader throws <xref:System.Net.Http.HttpIOException> rather than treating the items received so far as the complete result. This makes truncation detectable independent of the transport, which matters behind proxies that re-chunk responses.
+- **Every successful stream ends with an end record**, and every failed stream ends with an error record. A stream that ends without either was truncated, and the toolkit's reader throws <xref:System.Net.Http.HttpIOException> on .NET 10 and later (<xref:System.IO.IOException> on other runtimes) rather than treating the items received so far as the complete result. This makes truncation detectable independent of the transport, which matters behind proxies that re-chunk responses.
 - **Errors before the first record do not use the stream.** The response has not started, so the exception produces a regular error response with the appropriate status code. Clients check the status before reading the body.
 - **Errors after the first record preserve the items before them.** The reader yields every item that preceded the error record, then throws.
 - **Pings only appear while waiting.** They are sent when the endpoint has produced nothing for the interval configured with <xref:Singulink.Net.Http.Api.Service.KeepAlivePingAttribute>, and never between records that are available immediately.

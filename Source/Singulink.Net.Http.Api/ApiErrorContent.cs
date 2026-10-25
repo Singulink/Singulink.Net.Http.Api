@@ -1,8 +1,8 @@
 namespace Singulink.Net.Http.Api;
 
 /// <summary>
-/// Represents the content of an API error response, including the content as a string and its content type. Used to store error details when the error response
-/// is not in <c>text/plain</c> or a known/expected format.
+/// Represents the content of an API error response, as a string, and its content type, for an error response that is not in the toolkit's error format
+/// (<c>text/plain</c> content), and for a <c>3xx</c> response (see <see cref="ApiException.ErrorContent"/>).
 /// </summary>
 public class ApiErrorContent
 {

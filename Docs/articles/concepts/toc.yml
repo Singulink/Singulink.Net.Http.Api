@@ -9,3 +9,6 @@
 
 - name: Streaming Response Format
   href: streaming-format.md
+
+- name: Upload Format
+  href: upload-format.md

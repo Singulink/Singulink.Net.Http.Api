@@ -2,7 +2,7 @@
   <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
 
   <PropertyGroup>
-    <Version>3.0.1</Version>
+    <Version>4.0.0</Version>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>..\key.snk</AssemblyOriginatorKeyFile>
 
@@ -21,6 +21,15 @@
     <None Include="..\..\README.md" Link="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <PropertyGroup Label="Polyfills" Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <!-- Trimming attributes such as RequiresUnreferencedCode are needed to compile the same source as the .NET build. -->
+    <PolySharpIncludeRuntimeSupportedAttributes>true</PolySharpIncludeRuntimeSupportedAttributes>
+    <!-- Each assembly uses its own polyfills: keeps them from being visible to friend assemblies through InternalsVisibleTo. -->
+    <PolySharpUseEmbeddedAttributeForGeneratedTypes>true</PolySharpUseEmbeddedAttributeForGeneratedTypes>
+  </PropertyGroup>
+
+  <!-- The target framework is only known here when it is a global property, as in each inner build of a project with <TargetFrameworks>. Projects must
+       use <TargetFrameworks> even for a single framework; Directory.Build.targets fails the build otherwise. -->
   <PropertyGroup Label="AOT Compatibility" Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0'))">
     <IsAotCompatible>true</IsAotCompatible>
     <CsWinRTAotWarningLevel>2</CsWinRTAotWarningLevel>

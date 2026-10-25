@@ -15,10 +15,10 @@ public sealed class SessionAccessGuardTests
     public async Task Origin_Allowed_ReturnsToken(string origin)
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, origin: origin);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, origin: origin);
 
-        (await request.GetTokenAsync()).ShouldBe(token);
+        (await request.GetTokenAsync()).ShouldBe(session.Token);
     }
 
     [TestMethod]
@@ -28,28 +28,29 @@ public sealed class SessionAccessGuardTests
     public async Task Origin_Disallowed_ThrowsForbidden(string origin)
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, origin: origin);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, origin: origin);
 
-        await Should.ThrowAsync<ForbiddenApiException>(() => request.GetTokenAsync().AsTask());
+        var ex = await Should.ThrowAsync<ForbiddenApiException>(() => request.GetTokenAsync().AsTask());
+        ex.ErrorCode.ShouldBe(ApiErrorCodes.OriginBlocked);
     }
 
     [TestMethod]
     public async Task Origin_Disallowed_AllowAllOriginsOption_ReturnsToken()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, origin: "https://evil.test");
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, origin: "https://evil.test");
 
-        (await request.GetTokenAsync(SessionAccessOptions.AllowAllOrigins)).ShouldBe(token);
+        (await request.GetTokenAsync(SessionAccessOptions.AllowAllOrigins)).ShouldBe(session.Token);
     }
 
     [TestMethod]
     public async Task Origin_MultipleHeaders_ThrowsBadRequest()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session);
         request.Context.Request.Headers.Origin = new StringValues(["https://example.com", "https://app.example.com"]);
 
         await Should.ThrowAsync<BadRequestApiException>(() => request.GetTokenAsync().AsTask());
@@ -68,8 +69,8 @@ public sealed class SessionAccessGuardTests
     public async Task UserIdPrecondition_Missing_ThrowsUserRequired()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, includeUserIdPrecondition: false);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, includeUserIdPrecondition: false);
 
         await Should.ThrowAsync<UserRequiredApiException>(() => request.GetTokenAsync().AsTask());
     }
@@ -84,13 +85,16 @@ public sealed class SessionAccessGuardTests
     }
 
     [TestMethod]
-    public async Task UserIdPrecondition_Mismatch_ThrowsUserChanged()
+    public async Task UserIdPrecondition_Mismatch_ThrowsUserChangedWithThePrecondition()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession(userId: 1);
-        var request = host.CreateRequest(token, userIdPreconditionValue: "2");
+        var session = host.CreateSession(userId: 4321);
+        var request = host.CreateRequest(session, userIdPreconditionValue: "2");
 
-        await Should.ThrowAsync<UserChangedApiException>(() => request.GetTokenAsync().AsTask());
+        var ex = await Should.ThrowAsync<UserChangedApiException>(() => request.GetTokenAsync().AsTask());
+
+        ex.ExpectedUserId.ShouldBe("2");
+        ex.Message.ShouldNotContain("4321");
         request.SessionCookies.ShouldBeEmpty();
     }
 
@@ -98,18 +102,18 @@ public sealed class SessionAccessGuardTests
     public async Task UserIdPrecondition_Optional_MissingIsAllowed()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, includeUserIdPrecondition: false);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, includeUserIdPrecondition: false);
 
-        (await request.GetTokenAsync(SessionAccessOptions.OptionalUserIdPrecondition)).ShouldBe(token);
+        (await request.GetTokenAsync(SessionAccessOptions.OptionalUserIdPrecondition)).ShouldBe(session.Token);
     }
 
     [TestMethod]
     public async Task UserIdPrecondition_Optional_MismatchStillThrows()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession(userId: 1);
-        var request = host.CreateRequest(token, userIdPreconditionValue: "2");
+        var session = host.CreateSession(userId: 1);
+        var request = host.CreateRequest(session, userIdPreconditionValue: "2");
 
         await Should.ThrowAsync<UserChangedApiException>(() => request.GetTokenAsync(SessionAccessOptions.OptionalUserIdPrecondition).AsTask());
     }
@@ -118,8 +122,8 @@ public sealed class SessionAccessGuardTests
     public async Task UserIdPrecondition_Empty_ThrowsBadRequest()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, userIdPreconditionValue: string.Empty);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, userIdPreconditionValue: string.Empty);
 
         await Should.ThrowAsync<BadRequestApiException>(() => request.GetTokenAsync().AsTask());
     }
@@ -128,8 +132,8 @@ public sealed class SessionAccessGuardTests
     public async Task UserIdPrecondition_MultipleValues_ThrowsBadRequest()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, includeUserIdPrecondition: false);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, includeUserIdPrecondition: false);
         request.Context.Request.QueryString = new QueryString("?if-userId=1&if-userId=1");
 
         await Should.ThrowAsync<BadRequestApiException>(() => request.GetTokenAsync().AsTask());
@@ -139,11 +143,11 @@ public sealed class SessionAccessGuardTests
     public async Task UserIdPrecondition_CustomQueryName_IsUsed()
     {
         var host = new SessionTestHost(o => o.UserIdPreconditionQueryName = "uid");
-        var token = host.CreateSession();
+        var session = host.CreateSession();
 
-        (await host.CreateRequest(token).GetTokenAsync()).ShouldBe(token);
+        (await host.CreateRequest(session).GetTokenAsync()).ShouldBe(session.Token);
 
-        var defaultNameRequest = host.CreateRequest(token, includeUserIdPrecondition: false);
+        var defaultNameRequest = host.CreateRequest(session, includeUserIdPrecondition: false);
         defaultNameRequest.Context.Request.QueryString = new QueryString("?if-userId=1");
 
         await Should.ThrowAsync<UserRequiredApiException>(() => defaultNameRequest.GetTokenAsync().AsTask());
@@ -153,18 +157,18 @@ public sealed class SessionAccessGuardTests
     public async Task ForcedAccessOptions_OptionalUserIdPrecondition_AppliesToEveryRetrieval()
     {
         var host = new SessionTestHost(o => o.ForcedAccessOptions = SessionAccessOptions.OptionalUserIdPrecondition);
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token, includeUserIdPrecondition: false);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session, includeUserIdPrecondition: false);
 
-        (await request.GetTokenAsync()).ShouldBe(token);
+        (await request.GetTokenAsync()).ShouldBe(session.Token);
     }
 
     [TestMethod]
     public async Task UndefinedOptionFlags_ThrowArgumentException()
     {
         var host = new SessionTestHost();
-        var token = host.CreateSession();
-        var request = host.CreateRequest(token);
+        var session = host.CreateSession();
+        var request = host.CreateRequest(session);
 
         await Should.ThrowAsync<ArgumentException>(() => request.GetTokenAsync((SessionAccessOptions)64).AsTask());
     }
@@ -173,12 +177,12 @@ public sealed class SessionAccessGuardTests
     public async Task CustomCookieName_IsUsed()
     {
         var host = new SessionTestHost(o => o.SessionCookieName = "sid");
-        var token = host.CreateSession();
+        var session = host.CreateSession();
 
-        (await host.CreateRequest(token).GetTokenAsync()).ShouldBe(token);
+        (await host.CreateRequest(session).GetTokenAsync()).ShouldBe(session.Token);
 
         var defaultNameRequest = host.CreateRequest();
-        defaultNameRequest.Context.Request.Headers.Cookie = $"session-token={host.Protect(token)}";
+        defaultNameRequest.Context.Request.Headers.Cookie = $"{TestSessionCookies.CookieName}={host.Protect(session)}";
 
         (await defaultNameRequest.GetTokenAsync()).ShouldBeNull();
     }

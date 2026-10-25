@@ -1,0 +1,4 @@
+# Loopback stands in for Cloudflare, so that requests from the self-check are treated as forwarded by Cloudflare.
+127.0.0.0/8
+::1/128
+# end

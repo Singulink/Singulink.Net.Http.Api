@@ -43,9 +43,9 @@ public sealed class TestRequest
     public SetCookieHeader IssuedCookie => SessionCookies.ShouldHaveSingleItem();
 
     /// <summary>
-    /// Gets the token from the single session cookie that was set, or <see langword="null"/> if no session cookie was set.
+    /// Gets the contents of the single session cookie that was set, or <see langword="null"/> if no session cookie was set.
     /// </summary>
-    public TestSessionToken? IssuedToken
+    public TestSessionCookie? IssuedSession
     {
         get {
             var cookies = SessionCookies;

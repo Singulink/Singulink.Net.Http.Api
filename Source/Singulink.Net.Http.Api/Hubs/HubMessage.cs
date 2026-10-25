@@ -9,8 +9,8 @@ namespace Singulink.Net.Http.Api;
 /// handler) or from a client to the server (handled by a hub method with the same name).
 /// </summary>
 /// <remarks>
-/// The message name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), so definitions are
-/// typically declared as static properties in a shared contract class, e.g. <c>public static HubMessage&lt;string&gt; Echo { get; } = new();</c>.
+/// The message name defaults to the name of the member that the definition is assigned to (via <see cref="CallerMemberNameAttribute"/>), such as
+/// <c>Echo</c> for <c>public static HubMessage&lt;string&gt; Echo { get; } = new();</c>.
 /// </remarks>
 public sealed class HubMessage
 {

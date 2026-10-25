@@ -83,4 +83,19 @@ public static class HubClientProxyExtensions
     {
         return client.InvokeCoreAsync<TResult>(method.Name, [arg1, arg2, arg3], cancellationToken);
     }
+
+    /// <summary>
+    /// Invokes a method with the specified arguments on the client and returns its result.
+    /// </summary>
+    public static Task<TResult> InvokeAsync<T1, T2, T3, T4, TResult>(
+        this ISingleClientProxy client,
+        HubMethod<T1, T2, T3, T4, TResult> method,
+        T1 arg1,
+        T2 arg2,
+        T3 arg3,
+        T4 arg4,
+        CancellationToken cancellationToken = default)
+    {
+        return client.InvokeCoreAsync<TResult>(method.Name, [arg1, arg2, arg3, arg4], cancellationToken);
+    }
 }

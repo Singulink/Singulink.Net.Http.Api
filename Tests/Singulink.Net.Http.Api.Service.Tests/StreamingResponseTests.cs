@@ -2,7 +2,6 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,6 +12,14 @@ namespace Singulink.Net.Http.Api.Service;
 public sealed class StreamingResponseTests
 {
     public sealed record Item(int Id, string Name);
+
+    /// <summary>
+    /// An item whose serialization throws when its ID is not positive.
+    /// </summary>
+    public sealed record FaultyItem(int Id)
+    {
+        public string Name => Id > 0 ? $"item{Id}" : throw new InvalidOperationException("Not serializable.");
+    }
 
     [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
     [JsonDerivedType(typeof(Circle), "circle")]
@@ -218,6 +225,48 @@ public sealed class StreamingResponseTests
     }
 
     [TestMethod]
+    public async Task ApiExceptionWithRetryAfter_ProducesErrorRecordWithItAndThrowsWithIt()
+    {
+        static async IAsyncEnumerable<Item> FailLaterAsync()
+        {
+            yield return new Item(1, "a");
+            await Task.Yield();
+            throw new ServiceUnavailableApiException("busy") { ErrorCode = "busy", RetryAfter = TimeSpan.FromSeconds(1.2) };
+        }
+
+        await using var host = await TestWebHost.StartAsync(app => app.MapGet("/fail", () => FailLaterAsync()));
+
+        var lines = await ReadLinesAsync(await host.Client.GetAsync("/fail"));
+        lines[^1].ShouldBe("""{"error":{"status":503,"code":"busy","message":"busy","retryAfter":2}}""");
+
+        var ex = await Should.ThrowAsync<ServiceUnavailableApiException>(async () => {
+            await foreach (var item in ReadStreamAsync<Item>(host, "/fail"))
+            {
+            }
+        });
+
+        ex.Message.ShouldBe("busy");
+        ex.ErrorCode.ShouldBe("busy");
+        ex.RetryAfter.ShouldBe(TimeSpan.FromSeconds(2));
+    }
+
+    [TestMethod]
+    [DataRow("0", 0L)]
+    [DataRow("120", 120L)]
+    [DataRow("-1", null)]
+    [DataRow("922337203686", null)]
+    public async Task ErrorRecord_RetryAfter_IsReadAsSeconds(string json, long? expectedSeconds)
+    {
+        var ex = await Should.ThrowAsync<TooManyRequestsApiException>(async () => {
+            await foreach (var item in ReadRawAsync<Item>($$$"""{"error":{"status":429,"message":"Slow down.","retryAfter":{{{json}}}}}""" + "\n"))
+            {
+            }
+        });
+
+        ex.RetryAfter.ShouldBe(expectedSeconds is { } seconds ? TimeSpan.FromSeconds(seconds) : null);
+    }
+
+    [TestMethod]
     public async Task UnexpectedExceptionAfterRecords_IsMaskedOutsideDevelopment()
     {
         static async IAsyncEnumerable<Item> FailLaterAsync()
@@ -280,7 +329,9 @@ public sealed class StreamingResponseTests
             throw new InvalidOperationException("boom");
         }
 
-        var handler = new RecordingExceptionHandler { Map = (context, ex) => new ServerErrorApiException($"Logged as {ex.Message} for {context.Request.Path}") };
+        var handler = new RecordingExceptionHandler {
+            Map = (context, ex) => new ServerErrorApiException($"Logged as {ex.Message} for {context.Request.Path}"),
+        };
 
         await using var host = await TestWebHost.StartAsync(app => {
             app.MapGet("/before", () => FailBeforeAsync());
@@ -335,6 +386,39 @@ public sealed class StreamingResponseTests
         // Unexpected exceptions in streams are masked, and in regular responses they propagate through the pipeline.
         (await ReadLinesAsync(await host.Client.GetAsync("/after")))[1].ShouldBe("""{"error":{"status":500,"message":""}}""");
         await Should.ThrowAsync<InvalidOperationException>(() => host.Client.GetAsync("/plain"));
+    }
+
+    [TestMethod]
+    public async Task ItemThatCannotBeSerialized_IsReportedLikeAnExceptionOfTheEndpoint()
+    {
+        static async IAsyncEnumerable<FaultyItem> FailFirstAsync()
+        {
+            await Task.Yield();
+            yield return new FaultyItem(0);
+        }
+
+        static async IAsyncEnumerable<FaultyItem> FailAfterAsync()
+        {
+            yield return new FaultyItem(1);
+            await Task.Yield();
+            yield return new FaultyItem(0);
+        }
+
+        var handler = new RecordingExceptionHandler { Map = (_, ex) => new ServerErrorApiException($"Logged as {ex.Message}") };
+
+        await using var host = await TestWebHost.StartAsync(app => {
+            app.MapGet("/first", () => FailFirstAsync());
+            app.MapGet("/after", () => FailAfterAsync());
+        }, handler);
+
+        var first = await host.Client.GetAsync("/first");
+        first.StatusCode.ShouldBe(HttpStatusCode.InternalServerError);
+        (await first.Content.ReadAsStringAsync()).ShouldBe("Logged as Not serializable.");
+
+        (await ReadLinesAsync(await host.Client.GetAsync("/after"))).ShouldBe([
+            """{"item":{"id":1,"name":"item1"}}""",
+            """{"error":{"status":500,"message":"Logged as Not serializable."}}""",
+        ]);
     }
 
     [TestMethod]
@@ -438,19 +522,19 @@ public sealed class StreamingResponseTests
             configureServices: services => {
                 services.AddSingleton<IOriginValidator>(new OriginValidator("localhost"));
                 services.AddSingleton(store);
-                services.AddHttpSessionHandling<TestSessionToken, InMemorySessionStoreFactory>();
+                services.AddHttpSessionHandling<TestSessionToken, ScopedInMemorySessionStore>();
             });
 
         var utcNow = DateTime.UtcNow;
         store.UserStamps[1] = 1;
-        store.Sessions[1] = new TestSessionData { Id = 1, UserId = 1, Device = "TestClient/1.0", RefreshedUtc = utcNow.AddMinutes(-11), ValidFor = TimeSpan.FromDays(30), IsPersistent = true };
-        var token = new TestSessionToken(1, 1, 1, utcNow.AddMinutes(-11), TimeSpan.FromDays(30), 0, true, 0);
-
-        var protector = host.App.Services.GetRequiredService<IDataProtectionProvider>()
-            .CreateProtector($"Singulink/Session[{typeof(TestSessionToken).FullName}]");
+        store.Sessions[1] = new TestSessionData {
+            Id = 1, UserId = 1, Device = "TestClient/1.0", RefreshedUtc = utcNow.AddMinutes(-11), ExpiresUtc = utcNow.AddDays(30), IsPersistent = true,
+            CreatedUtc = utcNow.AddMinutes(-11),
+        };
+        var cookie = new TestSessionCookie(new TestSessionToken(1, 1, 1), utcNow.AddMinutes(-11), TimeSpan.FromDays(30), 0, true);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, "/items");
-        request.Headers.Add("Cookie", $"session-token={protector.Protect(JsonSerializer.Serialize(token))}");
+        request.Headers.Add("Cookie", $"{TestSessionCookies.CookieName}={TestSessionCookies.Protect(host.App.Services, cookie)}");
         request.Headers.Add("User-Agent", "TestClient/1.0");
 
         var response = await host.Client.SendAsync(request);
@@ -458,7 +542,7 @@ public sealed class StreamingResponseTests
         response.EnsureSuccessStatusCode();
         (await ReadLinesAsync(response)).Count.ShouldBe(3);
         response.Headers.TryGetValues("Set-Cookie", out var cookies).ShouldBeTrue();
-        cookies!.ShouldHaveSingleItem().ShouldStartWith("session-token=");
+        cookies!.ShouldHaveSingleItem().ShouldStartWith(TestSessionCookies.CookieName + "=");
         store.Sessions[1].Generation.ShouldBe(1);
     }
 
@@ -492,12 +576,17 @@ public sealed class StreamingResponseTests
     [DataRow(401, typeof(UnauthorizedApiException))]
     [DataRow(403, typeof(ForbiddenApiException))]
     [DataRow(404, typeof(NotFoundApiException))]
+    [DataRow(409, typeof(ConflictApiException))]
     [DataRow(412, typeof(UserChangedApiException))]
+    [DataRow(413, typeof(ContentTooLargeApiException))]
+    [DataRow(415, typeof(UnsupportedMediaTypeApiException))]
     [DataRow(422, typeof(ValidationApiException))]
     [DataRow(428, typeof(UserRequiredApiException))]
+    [DataRow(429, typeof(TooManyRequestsApiException))]
     [DataRow(500, typeof(ServerErrorApiException))]
+    [DataRow(503, typeof(ServiceUnavailableApiException))]
     [DataRow(418, typeof(ApiException))]
-    [DataRow(503, typeof(ApiException))]
+    [DataRow(502, typeof(ApiException))]
     public async Task Reader_ErrorRecord_ThrowsMatchingApiException(int status, Type exceptionType)
     {
         var ex = await Should.ThrowAsync<ApiException>(async () => {
@@ -515,10 +604,35 @@ public sealed class StreamingResponseTests
     {
         var items = new List<Item>();
 
-        await foreach (var item in ReadRawAsync<Item>("""{"ping":true}""" + "\n" + """{"item":{"id":1,"name":"a"}}""" + "\n" + """{"ping":true}""" + "\n" + """{"end":true}""" + "\n"))
+        string body = """{"ping":true}""" + "\n" + """{"item":{"id":1,"name":"a"}}""" + "\n" + """{"ping":true}""" + "\n" + """{"end":true}""" + "\n";
+
+        await foreach (var item in ReadRawAsync<Item>(body))
             items.Add(item);
 
         items.ShouldBe([new Item(1, "a")]);
+    }
+
+    [TestMethod]
+    public async Task ErrorRecord_WithReferenceId_IsThrownWithIt()
+    {
+        var referenceId = Guid.CreateVersion7();
+
+        var ex = await Should.ThrowAsync<ServerErrorApiException>(async () => {
+            await foreach (var item in ReadRawAsync<Item>($$$"""{"error":{"status":500,"message":"Failed.","referenceId":"{{{referenceId}}}"}}""" + "\n"))
+            {
+            }
+        });
+
+        ex.ReferenceId.ShouldBe(referenceId);
+        ex.Message.ShouldBe("Failed.");
+
+        var withoutGuid = await Should.ThrowAsync<ServerErrorApiException>(async () => {
+            await foreach (var item in ReadRawAsync<Item>("""{"error":{"status":500,"message":"Failed.","referenceId":"abc"}}""" + "\n"))
+            {
+            }
+        });
+
+        withoutGuid.ReferenceId.ShouldBeNull();
     }
 
     private static IAsyncEnumerable<T> ReadRawAsync<T>(string body)

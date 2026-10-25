@@ -7,6 +7,9 @@
 - name: Exception Handling
   href: exception-handling.md
 
+- name: JSON Serialization
+  href: json-serialization.md
+
 - name: Streaming Responses
   href: streaming-responses.md
 
@@ -15,3 +18,33 @@
 
 - name: SignalR Hubs
   href: signalr-hubs.md
+
+- name: Sign-In Codes and Device Linking
+  href: sign-in-codes.md
+
+- name: Passkeys
+  href: passkeys.md
+
+- name: Passkeys in Client Apps
+  href: passkeys-client.md
+
+- name: Chunked Uploads
+  href: uploads.md
+
+- name: Chunked Uploads in Client Apps
+  href: uploads-client.md
+
+- name: Rate Limiting
+  href: rate-limiting.md
+
+- name: Cloudflare
+  href: cloudflare.md
+
+- name: Running Multiple Servers
+  href: multiple-servers.md
+
+- name: Trimming and Native AOT
+  href: trimming-and-aot.md
+
+- name: Upgrading from 3.x
+  href: upgrading.md

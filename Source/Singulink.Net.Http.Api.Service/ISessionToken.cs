@@ -1,38 +1,33 @@
+using System.Reflection;
+
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Represents a session token that contains user information and the last time it was refreshed.
+/// Represents an application's session token, which session handling keeps in the session cookie.
 /// </summary>
 public interface ISessionToken
 {
     /// <summary>
-    /// Gets the user ID associated with the session (as a string).
+    /// Gets the ID of the user the session belongs to, as a string. The user ID precondition of requests is compared with it.
     /// </summary>
-    public string UserId { get; }
+    string UserId { get; }
+}
 
+/// <summary>
+/// Represents an application's session token that endpoints take as a parameter. Minimal API endpoints bind a parameter of the token type with
+/// <see cref="HttpContextExtensions.BindSessionTokenAsync{TSessionToken}(HttpContext, ParameterInfo)"/>, which reads the parameter's nullability and its
+/// <see cref="SessionAccessAttribute"/>.
+/// </summary>
+/// <typeparam name="TSelf">The session token type.</typeparam>
+public interface ISessionToken<TSelf> : ISessionToken, IBindableFromHttpContext<TSelf>
+    where TSelf : class, ISessionToken<TSelf>
+{
     /// <summary>
-    /// Gets the date and time when the session token was refreshed (in UTC).
+    /// Binds the session token parameter of an endpoint with <see cref="HttpContextExtensions.BindSessionTokenAsync{TSessionToken}(HttpContext,
+    /// ParameterInfo)"/>.
     /// </summary>
-    DateTime RefreshedUtc { get; }
-
-    /// <summary>
-    /// Gets amount of time after which the session token must be refreshed.
-    /// </summary>
-    TimeSpan RefreshAfter { get; }
-
-    /// <summary>
-    /// Gets the amount of time after which the session token expires and can no longer be refreshed.
-    /// </summary>
-    TimeSpan ValidFor { get; }
-
-    /// <summary>
-    /// Gets the generation of the session token. This value is incremented each time the token is refreshed, and the previous generation is allowed a refresh
-    /// for a short grace period to allow for concurrent refresh requests.
-    /// </summary>
-    public int Generation { get; }
-
-    /// <summary>
-    /// Gets a value indicating whether the session token should be persistent (i.e., it should survive browser or application restarts).
-    /// </summary>
-    bool IsPersistent { get; }
+    static ValueTask<TSelf?> IBindableFromHttpContext<TSelf>.BindAsync(HttpContext context, ParameterInfo parameter)
+    {
+        return context.BindSessionTokenAsync<TSelf>(parameter);
+    }
 }

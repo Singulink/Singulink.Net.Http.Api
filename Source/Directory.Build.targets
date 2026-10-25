@@ -1,0 +1,59 @@
+<Project>
+  <PropertyGroup Condition="'$(UsingUnoSdk)' == 'true'">
+    <!-- HACK: Works around an Uno.Sdk bug (fixed in Uno.Sdk 6.7.22 - remove this once the repo updates to 6.7.22+): the Hot Design stories
+         configuration clobbers DefaultItemExcludes in optimized (Release) builds, dropping the standard bin/obj excludes. Uno's default Content globs
+         then sweep obj build artifacts (e.g. extracted Android library resources) into @(Content), and from there into the package. Re-append the
+         excludes here (this file is evaluated after the clobber but before Uno's Content globs) so packages stay clean. -->
+    <DefaultItemExcludes Condition="!$(DefaultItemExcludes.Contains('bin/**'))">$(DefaultItemExcludes);bin/**</DefaultItemExcludes>
+    <DefaultItemExcludes Condition="!$(DefaultItemExcludes.Contains('obj/**'))">$(DefaultItemExcludes);obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <!-- The WebAssembly SDK generates a runtimeconfig.json for libraries too, which would end up in their packages. Set here because the SDK sets it after
+       the project file. -->
+  <PropertyGroup Condition="'$(UsingMicrosoftNETSdkWebAssembly)' == 'true' and '$(OutputType)' == 'Library'">
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+
+  <!-- Packages with a .NET Standard 2.0 build are only supported on .NET 10+ and .NET Framework 4.6.2+. Projects on other runtimes that can use the
+       .NET Standard build (such as .NET 8 and 9) get a build warning, which they can turn off with SuppressTfmSupportBuildWarnings. -->
+  <PropertyGroup Condition="$(TargetFrameworks.Contains('netstandard2.0'))">
+    <BeforePack>$(BeforePack);AddCompatWarningsToPackage</BeforePack>
+  </PropertyGroup>
+
+  <Target Name="AddCompatWarningsToPackage">
+    <PropertyGroup>
+      <_CompatWarningFilePath>$(BaseIntermediateOutputPath)CompatWarning.targets</_CompatWarningFilePath>
+      <_CompatWarningTarget>SLCompatWarning_$(PackageId.Replace('.', '_'))</_CompatWarningTarget>
+      <_CompatWarningFileContent>
+        <![CDATA[<Project InitialTargets="$(_CompatWarningTarget)">
+  <Target Name="$(_CompatWarningTarget)"
+          Condition="'%24(SuppressTfmSupportBuildWarnings)' == ''">
+    <Warning Text="$(PackageId) $(PackageVersion) doesn't support %24(TargetFramework) and has not been tested with it. Consider upgrading your project to a version of .NET or .NET Framework that is still under support. You may also set &lt%3BSuppressTfmSupportBuildWarnings&gt%3Btrue&lt%3B/SuppressTfmSupportBuildWarnings&gt%3B in the project file to ignore this warning and attempt to run in this unsupported configuration at your own risk." />
+  </Target>
+</Project>]]>
+      </_CompatWarningFileContent>
+    </PropertyGroup>
+
+    <WriteLinesToFile File="$(_CompatWarningFilePath)"
+                      Lines="$(_CompatWarningFileContent)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true" />
+
+    <ItemGroup>
+      <None Include="$(_CompatWarningFilePath)" Pack="true"
+            PackagePath="buildTransitive\netcoreapp2.0\$(PackageId).targets;buildTransitive\net461\$(PackageId).targets"/>
+
+      <!-- Lowest supported .NET and .NET Framework TFMs go into PackagePath here: -->
+      <None Include="..\buildTransitive\_._" Pack="true"
+            PackagePath="buildTransitive\net10.0\;buildTransitive\net462\"/>
+    </ItemGroup>
+  </Target>
+
+  <!-- Directory.Build.props only sees the target framework of projects with <TargetFrameworks>, so a library with a singular <TargetFramework> would
+       silently build without IsAotCompatible and its trim and AOT analyzers. -->
+  <Target Name="EnsureAotCompatible" BeforeTargets="CoreCompile"
+          Condition="'$(IsPackable)' == 'true' and '$(OutputType)' == 'Library' and '$(TargetFramework)' != '' and '$(IsAotCompatible)' != 'true' and
+                     $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0'))">
+    <Error Text="$(MSBuildProjectName) targets $(TargetFramework) but IsAotCompatible is not set, so its trim and AOT analyzers would not run. Use &lt;TargetFrameworks&gt; (plural, even for a single framework) in the project file: Directory.Build.props only sees the target framework of projects that use it." />
+  </Target>
+</Project>

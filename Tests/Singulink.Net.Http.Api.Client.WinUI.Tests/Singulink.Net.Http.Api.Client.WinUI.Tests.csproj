@@ -1,0 +1,25 @@
+<Project Sdk="MSTest.Sdk/4.5.1">
+  <PropertyGroup>
+    <RootNamespace>Singulink.Net.Http.Api.Client</RootNamespace>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Signed with the library key so it can see the library's internals: a strong-named assembly can only name strong-named friends. -->
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>..\..\Source\key.snk</AssemblyOriginatorKeyFile>
+
+    <!-- CS8002: Uno Platform's assemblies aren't strong-named. That's harmless, since .NET doesn't validate strong names or use them for binding. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
+
+  <!-- Uno's XAML source generators come with the library's Uno.WinUI dependency. There's no XAML here, and the classes they generate would collide
+       with the library's own, which InternalsVisibleTo exposes. Uno sets ShouldRunGenerator after the project body, so the analyzer is removed here. -->
+  <Target Name="RemoveUnoSourceGenerators" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(FileName)' == 'Uno.UI.SourceGenerators'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Client.WinUI\Singulink.Net.Http.Api.Client.WinUI.csproj" />
+  </ItemGroup>
+</Project>

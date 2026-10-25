@@ -50,10 +50,12 @@ public sealed class ApiExceptionHandlerTests
 
         string body = await response.Content.ReadAsStringAsync();
         body.ShouldStartWith("An unexpected error has occurred and has been logged. Reference ID: ");
+        body.ShouldEndWith(".");
         body.ShouldNotContain("secret details");
 
-        var referenceId = Guid.Parse(body[(body.LastIndexOf(' ') + 1)..]);
+        var referenceId = Guid.Parse(body[(body.LastIndexOf(' ') + 1)..^1]);
         referenceId.Version.ShouldBe(7);
+        response.Headers.GetValues("Reference-Id").ShouldBe([referenceId.ToString("D")]);
 
         var log = host.WarningLogs.ShouldHaveSingleItem();
         log.Level.ShouldBe(LogLevel.Error);
@@ -81,6 +83,10 @@ public sealed class ApiExceptionHandlerTests
         error.GetProperty("status").GetInt32().ShouldBe(500);
         error.GetProperty("message").GetString()!.ShouldStartWith("An unexpected error has occurred and has been logged. Reference ID: ");
         error.TryGetProperty("code", out _).ShouldBeFalse();
+
+        string referenceId = error.GetProperty("referenceId").GetString()!;
+        Guid.Parse(referenceId).Version.ShouldBe(7);
+        error.GetProperty("message").GetString()!.ShouldEndWith($"{referenceId}.");
 
         var log = host.WarningLogs.ShouldHaveSingleItem();
         log.Level.ShouldBe(LogLevel.Error);
@@ -152,6 +158,31 @@ public sealed class ApiExceptionHandlerTests
     }
 
     [TestMethod]
+    public async Task Derived_WordsApiExceptionsByTheirErrorCodes()
+    {
+        await using var host = await TestWebHost.StartAsync(
+            app => {
+                app.MapGet("/locked", Item () => throw new ConflictApiException("Locked.") { ErrorCode = "document-locked" });
+                app.MapGet("/locked-stream", () => FailAfterFirstAsync(new ConflictApiException("Locked.") { ErrorCode = "document-locked" }));
+                app.MapGet("/nope", Item () => throw new ForbiddenApiException("no access") { ErrorCode = "denied" });
+            },
+            configureServices: s => s.AddApiExceptionHandler<WordingExceptionHandler>());
+
+        var locked = await host.Client.GetAsync("/locked");
+        locked.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await locked.Content.ReadAsStringAsync()).ShouldBe("[document-locked] Someone else is editing this document.");
+
+        string stream = await host.Client.GetStringAsync("/locked-stream");
+        stream.Split('\n', StringSplitOptions.RemoveEmptyEntries)[1].ShouldBe(
+            """{"error":{"status":409,"code":"document-locked","message":"Someone else is editing this document."}}""");
+
+        // Other API exceptions are reported as they are, and MapAsync isn't called for them.
+        var nope = await host.Client.GetAsync("/nope");
+        nope.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await nope.Content.ReadAsStringAsync()).ShouldBe("[denied] no access");
+    }
+
+    [TestMethod]
     public async Task ServerErrorException_IncludesOriginalAsInnerException()
     {
         Exception? handled = null;
@@ -159,13 +190,33 @@ public sealed class ApiExceptionHandlerTests
         await using var host = await TestWebHost.StartAsync(
             app => app.MapGet("/boom", Item () => throw new InvalidOperationException("secret details")),
             configureServices: s => {
-                s.AddSingleton<IApiExceptionHandler>(sp => new InspectingHandler(sp.GetRequiredService<ILogger<InspectingHandler>>(), sp.GetRequiredService<IHostEnvironment>(), ex => handled = ex));
+                s.AddSingleton<IApiExceptionHandler>(sp => new InspectingHandler(
+                    sp.GetRequiredService<ILogger<InspectingHandler>>(), sp.GetRequiredService<IHostEnvironment>(), ex => handled = ex));
             });
 
         await host.Client.GetAsync("/boom");
 
         var serverError = handled.ShouldBeOfType<ServerErrorApiException>();
         serverError.InnerException.ShouldBeOfType<InvalidOperationException>();
+    }
+
+    /// <summary>
+    /// Handler that words the API exceptions with one error code in its own way, and fails the test if <see cref="ApiExceptionHandler.MapAsync"/> is called
+    /// for an API exception.
+    /// </summary>
+    private sealed class WordingExceptionHandler(ILogger<WordingExceptionHandler> logger, IHostEnvironment environment)
+        : ApiExceptionHandler(logger, environment)
+    {
+        protected override ValueTask<ApiException> MapApiExceptionAsync(HttpContext httpContext, ApiException exception) => new(exception.ErrorCode switch {
+            "document-locked" => exception.WithMessage("Someone else is editing this document."),
+            _ => exception,
+        });
+
+        protected override ValueTask<ApiException?> MapAsync(HttpContext httpContext, Exception exception)
+        {
+            exception.ShouldNotBeAssignableTo<ApiException>();
+            return default;
+        }
     }
 
     private sealed class InspectingHandler(ILogger logger, IHostEnvironment environment, Action<Exception?> inspect) : ApiExceptionHandler(logger, environment)

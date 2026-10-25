@@ -12,7 +12,14 @@ public class BadRequestApiException : ApiException
     /// <summary>
     /// Initializes a new instance of the <see cref="BadRequestApiException"/> class with a specified error message.
     /// </summary>
-    public BadRequestApiException(string message) : base(HttpStatusCode.BadRequest, message)
+    public BadRequestApiException(string message) : this(message, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="BadRequestApiException"/> class with a specified error message and inner exception.
+    /// </summary>
+    public BadRequestApiException(string message, Exception? innerException) : base(HttpStatusCode.BadRequest, message, innerException)
     {
     }
 }

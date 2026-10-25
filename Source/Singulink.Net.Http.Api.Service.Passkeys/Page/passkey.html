@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!--
+  The passkey hand-off page. Apps that cannot run WebAuthn themselves open it in the system browser with the options of a ceremony; it runs the
+  ceremony and returns the credential to the app's callback address. The server fills in the placeholders and writes the checked request into the
+  data attributes of <main>.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{title}}</title>
+  <link rel="stylesheet" href="{{style}}">
+  <script type="module" src="{{script}}"></script>
+</head>
+<body>
+  <main {{data}}>
+    <h1 id="heading">{{heading}}</h1>
+    <p id="message">{{message}}</p>
+    <button id="continue" class="primary" type="button"{{buttons-hidden}}>Continue</button>
+    <button id="cancel" class="secondary" type="button"{{buttons-hidden}}>Cancel</button>
+  </main>
+</body>
+</html>

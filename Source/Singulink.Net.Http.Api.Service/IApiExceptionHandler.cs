@@ -6,7 +6,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// (e.g. logging unexpected exceptions and reporting a reference ID) for both.
 /// </summary>
 /// <remarks>
-/// <see cref="ApiExceptionHandler"/> provides the recommended default behavior and can be registered directly via
+/// <see cref="ApiExceptionHandler"/> provides the default behavior and can be registered directly via
 /// <see cref="ServiceCollectionExtensions.AddApiExceptionHandler(IServiceCollection)"/> or derived from to add application-specific mappings. If no handler is
 /// registered, <see cref="ApiException"/> instances are reported as-is and other exceptions propagate through the request pipeline (or, for streaming
 /// responses that have already started, are reported as a generic server error, with details included only in development environments).

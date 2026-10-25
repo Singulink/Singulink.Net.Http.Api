@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <OutputType>Library</OutputType>
+
+    <Description>Cloudflare support for services built with the Singulink HTTP API Toolkit: trusts the client address and scheme that Cloudflare forwards.</Description>
+    <PackageTags>HTTP; API; Service; Server; Middleware; Cloudflare; Proxy;</PackageTags>
+
+    <!-- The library has no static web assets. Debug builds with the .NET 11 SDK otherwise fail on the hot reload assets of the referenced Service
+         project. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
+  </ItemGroup>
+</Project>

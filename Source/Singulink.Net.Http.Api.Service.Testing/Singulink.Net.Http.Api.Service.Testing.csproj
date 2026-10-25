@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <OutputType>Library</OutputType>
+
+    <Description>Test helpers for services built with the Singulink HTTP API Toolkit: a session context for testing endpoint code without a request, a software passkey authenticator, uploaded files for testing upload handlers, checks of the guarantees of upload stores, and a message handler that injects network faults.</Description>
+    <PackageTags>HTTP; API; Service; Server; Testing; Passkeys; WebAuthn; Uploads;</PackageTags>
+
+    <!-- The library has no static web assets. Debug builds with the .NET 11 SDK otherwise fail on the hot reload assets of the referenced Service
+         project. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
+  </ItemGroup>
+</Project>

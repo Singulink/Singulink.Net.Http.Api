@@ -1,0 +1,11 @@
+{
+  "solution": {
+    "path": "Singulink.Net.Http.Api.sln",
+    "projects": [
+      "Tests\\Singulink.Net.Http.Api.Client.Tests\\Singulink.Net.Http.Api.Client.Tests.csproj",
+      "Tests\\Singulink.Net.Http.Api.Service.Cloudflare.Tests\\Singulink.Net.Http.Api.Service.Cloudflare.Tests.csproj",
+      "Tests\\Singulink.Net.Http.Api.Service.Passkeys.Tests\\Singulink.Net.Http.Api.Service.Passkeys.Tests.csproj",
+      "Tests\\Singulink.Net.Http.Api.Service.Tests\\Singulink.Net.Http.Api.Service.Tests.csproj"
+    ]
+  }
+}

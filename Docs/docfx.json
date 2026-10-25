@@ -10,7 +10,11 @@
             "Singulink.Net.Http.Api/Singulink.Net.Http.Api.csproj",
             "Singulink.Net.Http.Api.Client/Singulink.Net.Http.Api.Client.csproj",
             "Singulink.Net.Http.Api.Client.SignalR/Singulink.Net.Http.Api.Client.SignalR.csproj",
-            "Singulink.Net.Http.Api.Service/Singulink.Net.Http.Api.Service.csproj"
+            "Singulink.Net.Http.Api.Client.WinUI/Singulink.Net.Http.Api.Client.WinUI.csproj",
+            "Singulink.Net.Http.Api.Service/Singulink.Net.Http.Api.Service.csproj",
+            "Singulink.Net.Http.Api.Service.Cloudflare/Singulink.Net.Http.Api.Service.Cloudflare.csproj",
+            "Singulink.Net.Http.Api.Service.Passkeys/Singulink.Net.Http.Api.Service.Passkeys.csproj",
+            "Singulink.Net.Http.Api.Service.Testing/Singulink.Net.Http.Api.Service.Testing.csproj"
           ],
           "src": "../Source"
         }

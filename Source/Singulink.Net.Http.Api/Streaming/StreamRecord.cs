@@ -30,6 +30,17 @@ internal sealed class StreamErrorInfo
     public string? Code { get; set; }
 
     public string? Message { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reference ID of the error, in the <c>D</c> format of <see cref="Guid"/>. A value that is not a GUID is ignored.
+    /// </summary>
+    public string? ReferenceId { get; set; }
+
+    /// <summary>
+    /// Gets or sets how long the client should wait before trying again, in whole seconds. A negative value, or one longer than <see cref="TimeSpan"/> can
+    /// hold, is ignored.
+    /// </summary>
+    public long? RetryAfter { get; set; }
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]

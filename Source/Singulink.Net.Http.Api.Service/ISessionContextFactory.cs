@@ -1,8 +1,8 @@
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// Represents a factory for creating <see cref="SessionContext{TSessionToken}"/> instances for HTTP requests. Register a custom implementation to substitute
-/// the session context, for example in application tests.
+/// Represents a factory for creating <see cref="SessionContext{TSessionToken}"/> instances for HTTP requests. A registered implementation replaces the
+/// session context of session handling.
 /// </summary>
 /// <typeparam name="TSessionToken">The session token type.</typeparam>
 public interface ISessionContextFactory<TSessionToken>

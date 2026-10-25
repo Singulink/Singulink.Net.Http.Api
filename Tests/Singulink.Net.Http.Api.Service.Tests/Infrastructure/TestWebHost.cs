@@ -68,9 +68,11 @@ public sealed class TestWebHost : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(logs);
 
-        // Register the ephemeral provider directly (rather than via AddDataProtection().UseEphemeralDataProtectionProvider()) so that no key ring is
-        // created at all: the default key manager logs environment-specific warnings (e.g. no key encryption on Linux/macOS) that would pollute the logs.
+        // Register the ephemeral provider directly (rather than via AddDataProtection().UseEphemeralDataProtectionProvider()), and before session handling,
+        // which then doesn't register data protection, so that no key ring is created at all: the default key manager logs environment-specific warnings
+        // (e.g. no key encryption on Linux/macOS) that would pollute the logs.
         builder.Services.AddSingleton<IDataProtectionProvider>(new EphemeralDataProtectionProvider());
+        builder.Services.AddApiResponseHandling();
 
         if (exceptionHandler is not null)
             builder.Services.AddSingleton(exceptionHandler);

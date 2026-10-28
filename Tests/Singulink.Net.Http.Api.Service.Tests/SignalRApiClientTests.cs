@@ -20,6 +20,9 @@ public sealed class SignalRApiClientTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
+    // Another host on the same machine, which every OS has: macOS only assigns 127.0.0.1 of the IPv4 loopback addresses.
+    private static readonly IPAddress OtherHostAddress = IPAddress.IPv6Loopback;
+
     public static class EndingHubContract
     {
         public static HubMethod<int> EndSession { get; } = new();
@@ -219,7 +222,7 @@ public sealed class SignalRApiClientTests
     [TestMethod]
     public async Task CrossHostRedirect_DoesNotCarrySessionCookie()
     {
-        using var otherHost = new RawHttpServer(IPAddress.Parse("127.0.0.2"), _ => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        using var otherHost = new RawHttpServer(OtherHostAddress, _ => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         var location = new Uri(otherHost.BaseAddress, "hub");
 
         using var host = new RawHttpServer(IPAddress.Loopback, _ =>
@@ -332,7 +335,7 @@ public sealed class SignalRApiClientTests
     [TestMethod]
     public async Task NegotiateRedirectToOtherHost_DoesNotCarrySessionCookie()
     {
-        using var otherHost = new RawHttpServer(IPAddress.Parse("127.0.0.2"), _ => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        using var otherHost = new RawHttpServer(OtherHostAddress, _ => "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         string body = $$"""{"url":"{{new Uri(otherHost.BaseAddress, "client/?hub=chat")}}","accessToken":"service-token"}""";
 
         // The app's host answers the negotiate request by sending the connection to another host, as Azure SignalR Service does.

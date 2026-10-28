@@ -593,7 +593,7 @@ public sealed class UploadTests
         service.Complete = _ => Responses.Stream(FakeUploadService.PingRecord, FakeUploadService.ErrorRecord(503, null, "The converter is down."));
 
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken);
-        await AdvanceUntilCompletedAsync(time, upload);
+        await AdvanceUntilCompletedAsync(time, upload, toNextTimer: true);
 
         (await Should.ThrowAsync<ServiceUnavailableApiException>(() => upload)).Message.ShouldBe("The converter is down.");
 
@@ -614,7 +614,7 @@ public sealed class UploadTests
 
         var items = ReadAllAsync(
             client.UploadFileStreamingAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken));
-        await AdvanceUntilCompletedAsync(time, items);
+        await AdvanceUntilCompletedAsync(time, items, toNextTimer: true);
 
         (await Should.ThrowAsync<ServiceUnavailableApiException>(() => items)).Message.ShouldBe("The converter is down.");
         service.RequestsOf(UploadRequestKind.Complete).Count().ShouldBeInRange(9, 26);
@@ -1503,16 +1503,19 @@ public sealed class UploadTests
     }
 
     /// <summary>
-    /// Advances the time a second at a time whenever the upload waits on a timer, until the task completes.
+    /// Advances the time whenever the upload waits on a timer, until the task completes: a second at a time, or with <paramref name="toNextTimer"/>,
+    /// straight to the due time of the next timer, for an upload whose only timers are its waits before retries, which can add up to minutes.
     /// </summary>
-    private async Task AdvanceUntilCompletedAsync(ManualTimeProvider time, Task task)
+    private async Task AdvanceUntilCompletedAsync(ManualTimeProvider time, Task task, bool toNextTimer = false)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
 
         while (!task.IsCompleted)
         {
-            if (time.PendingTimerCount > 0)
+            if (toNextTimer)
+                time.AdvanceToNextTimer();
+            else if (time.PendingTimerCount > 0)
                 time.Advance(TimeSpan.FromSeconds(1));
 
             await Task.Delay(10, timeout.Token);

@@ -52,6 +52,20 @@ public sealed class ManualTimeProvider(bool manualTimers = false) : TimeProvider
             timer.Fire();
     }
 
+    /// <summary>
+    /// Advances the time to the due time of the manual timer that fires next, if any is waiting to fire.
+    /// </summary>
+    public void AdvanceToNextTimer()
+    {
+        long? next;
+
+        lock (_timers)
+            next = _timers.Min(t => t.DueTimestamp);
+
+        if (next is { } dueTimestamp)
+            Advance(TimeSpan.FromTicks(Math.Max(dueTimestamp - GetTimestamp(), 0)));
+    }
+
     private sealed class ManualTimer(ManualTimeProvider owner, TimerCallback callback, object? state) : ITimer
     {
         public long? DueTimestamp { get; set; }

@@ -6,7 +6,8 @@ namespace Singulink.Net.Http.Api.Client;
 [PrefixTestClass]
 public sealed class RedirectTests
 {
-    private static readonly IPAddress OtherHostAddress = IPAddress.Parse("127.0.0.2");
+    // Another host on the same machine, which every OS has: macOS only assigns 127.0.0.1 of the IPv4 loopback addresses.
+    private static readonly IPAddress OtherHostAddress = IPAddress.IPv6Loopback;
 
     private static TestApiClient CreateClient(Uri baseAddress, string? sessionToken) => new(handler: null, sessionToken) {
         BaseAddress = baseAddress,

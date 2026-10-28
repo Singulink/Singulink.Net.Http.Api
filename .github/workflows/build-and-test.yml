@@ -33,8 +33,10 @@ jobs:
           10.0.x
     - name: Install workloads
       run: dotnet workload install ios android wasm-tools
+    # The NuGet caches are cleared before the clean, which leaves MSBuild nodes running that keep the task assemblies of the Uno.Sdk package open, and
+    # Windows can't delete open files.
     - name: Clean
-      run: dotnet clean Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }} && dotnet nuget locals all --clear
+      run: dotnet nuget locals all --clear && dotnet clean Singulink.Net.Http.Api.sln --configuration ${{ matrix.configuration }}
     - name: Install dependencies
       run: dotnet restore Singulink.Net.Http.Api.sln
     - name: Build
@@ -64,7 +66,7 @@ jobs:
           10.0.x
           11.0.x
     - name: Clean
-      run: dotnet clean Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} && dotnet nuget locals all --clear
+      run: dotnet nuget locals all --clear && dotnet clean Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }}
     - name: Install dependencies
       run: dotnet restore Singulink.Net.Http.Api.Tests.slnf
     - name: Build

@@ -35,15 +35,9 @@ public sealed class RawHttpServer : IDisposable
     }
 
     /// <summary>
-    /// Gets the address of the server, such as <c>http://127.0.0.1:12345/</c>.
+    /// Gets the address of the server, such as <c>http://127.0.0.1:12345/</c> or <c>http://[::1]:12345/</c>.
     /// </summary>
-    public Uri BaseAddress
-    {
-        get {
-            var endPoint = (IPEndPoint)_listener.LocalEndpoint;
-            return new Uri($"http://{endPoint.Address}:{endPoint.Port}/");
-        }
-    }
+    public Uri BaseAddress => new($"http://{_listener.LocalEndpoint}/");
 
     /// <summary>
     /// Gets the heads of the requests received so far.

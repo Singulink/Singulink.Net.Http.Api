@@ -34,14 +34,27 @@
     <Content Include="..\Shared\passkeys.js" Link="passkeys.js" Pack="false" />
   </ItemGroup>
 
-  <!-- Encrypts the session tokens that SessionTokenStore keeps on desktop and in Windows App SDK apps, on Windows. -->
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' or '$(TargetFramework)' == 'net10.0-desktop' or
-                        $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+  <!-- Encrypts the session tokens that SessionTokenStore keeps on Windows: in the app's settings on Uno Platform desktop and in a file in Windows App SDK
+       apps. The settings code also builds for iOS and Android, where it reads tokens that earlier versions kept unencrypted, and never encrypts. -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0-browserwasm'">
     <PackageReference Include="System.Security.Cryptography.ProtectedData" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Singulink.Net.Http.Api.Client\Singulink.Net.Http.Api.Client.csproj" />
+  </ItemGroup>
+
+  <!-- The schemes that callback addresses can't have, shared with the passkey page's service package. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\BrowserSchemes.cs" Link="BrowserSchemes.cs" />
+  </ItemGroup>
+
+  <!-- The iOS keychain storage and web authentication sessions, which run in every build that an iOS app can load: the iOS build, in apps with Uno
+       Platform's native renderer, and the plain .NET build, which apps with the Skia renderer load instead (see the Native project). The desktop and
+       Android builds reference it too and find it unsupported at run time; Android uses Uno Platform's own APIs at run time instead, which stay native
+       in apps with the Skia renderer. The WebAssembly and Windows App SDK builds, which never run on iOS, don't reference it. -->
+  <ItemGroup Condition="'$(TargetFramework)' != 'net10.0-browserwasm' and $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) != 'windows'">
+    <ProjectReference Include="..\Singulink.Net.Http.Api.Client.Native\Singulink.Net.Http.Api.Client.Native.csproj" />
   </ItemGroup>
 
   <!-- Uno adds package references for the features of its renderers, for app images (Uno.Resizetizer, whose source generator would add a public

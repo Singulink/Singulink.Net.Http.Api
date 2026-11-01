@@ -1,12 +1,13 @@
-#if !__WASM__ && !WINDOWS && !__ANDROID__ && !__IOS__
+#if !__WASM__ && !WINDOWS
 using System.Security.Cryptography;
 using System.Text;
 
 namespace Singulink.Net.Http.Api.Client;
 
 /// <summary>
-/// Keeps a session token in an app's settings for <see cref="SessionTokenStore"/> on desktop. On Windows it is encrypted for the Windows user with DPAPI,
-/// so that a backup restored onto another device or for another user can't use it. Linux and macOS keep it unencrypted.
+/// Keeps a session token in an app's settings for <see cref="SessionTokenStore"/> on Uno Platform desktop, and on platforms without native storage. On
+/// Windows it is encrypted for the Windows user with DPAPI, so that a backup restored onto another device or for another user can't use it. Other
+/// operating systems keep it unencrypted.
 /// </summary>
 internal static class SettingsSessionTokenStorage
 {

@@ -329,6 +329,8 @@ The page shows a Continue button (some browsers only run WebAuthn after a tap) a
 
 If the user closes the browser's passkey prompt, the page offers to try again instead of returning at once. An error that does not come from WebAuthn, such as options that cannot be read, returns to the app at once as `UnknownError`.
 
+Some browsers only hand an address to an app when the user taps a link, not when a script navigates to it. If the page is still showing 2 seconds after it navigated to the callback address, it shows a link that returns to the app with the same address. Once the page has been hidden after it navigated there, such as behind the app, it only says that the tab can be closed, and never offers the link again.
+
 ### Bind sign-ins to the app that started them
 
 On phones, another app can register the same custom scheme and receive the callback instead. For registrations and verifications that does no harm, because finishing them needs the app's session, which never passes through the page. A sign-in credential, however, would let the other app sign in. Therefore every sign-in is bound to a PKCE code challenge when it **begins**:

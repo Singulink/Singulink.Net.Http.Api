@@ -1,4 +1,4 @@
-#if !__WASM__ && !__IOS__ && !__ANDROID__
+#if !__WASM__
 
 using System.Net;
 using System.Net.Sockets;

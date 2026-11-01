@@ -16,9 +16,10 @@
 <body>
   <main {{data}}>
     <h1 id="heading">{{heading}}</h1>
-    <p id="message">{{message}}</p>
+    <p id="message" role="status">{{message}}</p>
     <button id="continue" class="primary" type="button"{{buttons-hidden}}>Continue</button>
     <button id="cancel" class="secondary" type="button"{{buttons-hidden}}>Cancel</button>
+    <a id="return" class="button primary" hidden></a>
   </main>
 </body>
 </html>

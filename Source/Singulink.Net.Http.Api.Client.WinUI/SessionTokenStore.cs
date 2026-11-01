@@ -1,10 +1,5 @@
 using System.Buffers;
-#if __ANDROID__
-using Windows.Security.Credentials;
-#elif __IOS__
-using Foundation;
-using Security;
-#elif WINDOWS
+#if WINDOWS
 using System.Reflection;
 #elif !__WASM__
 using Windows.Storage;
@@ -24,20 +19,20 @@ namespace Singulink.Net.Http.Api.Client;
 /// <para>
 /// Reading and writing are best effort: a token that can't be read or written, such as in a keychain while the device is locked, is reported to the
 /// error handler instead of throwing, so that the session goes on in memory. A stored token that can't be decrypted, such as one that a backup carried to
-/// another device or Windows user, reads as <see langword="null"/> and is removed.
+/// another device or Windows user, reads as <see langword="null"/>. It is removed then, except on Android, where it stays until the next write.
 /// </para>
 /// <para>
-/// On iOS, a token is written by changing the stored item in place, so that a write that fails keeps the token that was stored before.
+/// A write that fails keeps the token that was stored before: on iOS the stored item is changed in place, and elsewhere the stored token is replaced as a
+/// whole. On Android before version 6.0, the password vault can't be used, so reads and writes fail and no token is stored.
+/// </para>
+/// <para>
+/// On iOS and Android, a token that an earlier version kept in the app's local settings under <see cref="Name"/>, unencrypted, is moved into the keychain
+/// or the password vault, and removed from the settings, when they have no token.
 /// </para>
 /// </remarks>
 public sealed class SessionTokenStore
 {
     private const string DefaultName = "SessionToken";
-
-#if __ANDROID__ || __IOS__
-    // The password vault resource on Android, and the keychain service on iOS. Both are the app's own.
-    private const string StoreName = "Singulink.Net.Http.Api.SessionTokens";
-#endif
 
     // The characters that Windows doesn't allow in file names, on every platform (Path.GetInvalidFileNameChars depends on the platform).
     private static readonly SearchValues<char> InvalidNameChars = SearchValues.Create([.. Enumerable.Range(0, 32).Select(c => (char)c), .. "\"*/:<>?\\|"]);
@@ -51,8 +46,11 @@ public sealed class SessionTokenStore
 
     private readonly Action<Exception>? _errorHandler;
 
-#if !__WASM__ && !WINDOWS && !__ANDROID__ && !__IOS__
+#if !__WASM__ && !WINDOWS
     private readonly Func<IDictionary<string, object>> _getSettings;
+
+    // The iOS and Android storage, or null on other platforms.
+    private readonly ISessionTokenStorage? _platformStorage;
 #endif
 
     /// <summary>
@@ -67,21 +65,29 @@ public sealed class SessionTokenStore
     /// them.</param>
     /// <exception cref="ArgumentException"><paramref name="name"/> is empty or not a valid file name on Windows.</exception>
     public SessionTokenStore(string name = DefaultName, Action<Exception>? errorHandler = null)
-#if !__WASM__ && !WINDOWS && !__ANDROID__ && !__IOS__
-        : this(name, errorHandler, () => ApplicationData.Current.LocalSettings.Values)
+#if !__WASM__ && !WINDOWS
+        : this(name, errorHandler, () => ApplicationData.Current.LocalSettings.Values, PlatformSessionTokenStorage.Create(name))
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="SessionTokenStore"/> class that keeps the token in the specified settings on desktop.
+    /// Initializes a new instance of the <see cref="SessionTokenStore"/> class that keeps the token in the specified iOS or Android storage, or in the
+    /// specified settings if there is none.
     /// </summary>
-    internal SessionTokenStore(string name, Action<Exception>? errorHandler, Func<IDictionary<string, object>> getSettings)
+    /// <param name="name">The name that the token is stored under.</param>
+    /// <param name="errorHandler">A callback that receives the exceptions of reads and writes that failed.</param>
+    /// <param name="getSettings">Gets the app's local settings.</param>
+    /// <param name="platformStorage">The iOS or Android storage, which the token stored in the settings is moved to, or <see langword="null"/> to keep the
+    /// token in the settings.</param>
+    internal SessionTokenStore(string name, Action<Exception>? errorHandler, Func<IDictionary<string, object>> getSettings,
+        ISessionTokenStorage? platformStorage = null)
     {
         EnsureValidName(name);
 
         Name = name;
         _errorHandler = errorHandler;
         _getSettings = getSettings;
+        _platformStorage = platformStorage;
     }
 #else
     {
@@ -159,80 +165,7 @@ public sealed class SessionTokenStore
             throw new ArgumentException($"The name '{name}' is a name that Windows reserves for a device.", nameof(name));
     }
 
-#if __ANDROID__
-    private string? ReadCore()
-    {
-        // Uno's vault reads as empty if it can't be read, such as when a backup restored it onto another device.
-        if (FindCredential(new PasswordVault()) is not { } credential)
-            return null;
-
-        credential.RetrievePassword();
-        return credential.Password;
-    }
-
-    private void WriteCore(string? token)
-    {
-        var vault = new PasswordVault();
-
-        // Uno's vault replaces a credential with the same resource and user name.
-        if (token is not null)
-            vault.Add(new PasswordCredential(StoreName, Name, token));
-        else if (FindCredential(vault) is { } credential)
-            vault.Remove(credential);
-    }
-
-    // The vault compares resources and user names ignoring case.
-    private PasswordCredential? FindCredential(PasswordVault vault) => vault.RetrieveAll().FirstOrDefault(c =>
-        string.Equals(c.Resource, StoreName, StringComparison.OrdinalIgnoreCase) && string.Equals(c.UserName, Name, StringComparison.OrdinalIgnoreCase));
-#elif __IOS__
-    // Uno's PasswordVault isn't used on iOS: its keychain items have the default accessibility, which backups carry to other devices.
-
-    private string? ReadCore()
-    {
-        var record = SecKeyChain.QueryAsRecord(CreateQuery(), out var status);
-
-        if (status is SecStatusCode.ItemNotFound)
-            return null;
-
-        if (status is not SecStatusCode.Success)
-            throw new InvalidOperationException($"The session token could not be read from the keychain ({status}).");
-
-        return record?.ValueData?.ToString(NSStringEncoding.UTF8);
-    }
-
-    private void WriteCore(string? token)
-    {
-        if (token is null)
-        {
-            var removeStatus = SecKeyChain.Remove(CreateQuery());
-
-            if (removeStatus is not (SecStatusCode.Success or SecStatusCode.ItemNotFound))
-                throw new InvalidOperationException($"The session token could not be removed from the keychain ({removeStatus}).");
-
-            return;
-        }
-
-        var data = NSData.FromString(token, NSStringEncoding.UTF8);
-
-        // The item is changed in place, so that a write that fails (such as while the device is locked) keeps the token that was stored before.
-        var status = SecKeyChain.Update(CreateQuery(), new SecRecord { ValueData = data });
-
-        if (status is SecStatusCode.ItemNotFound)
-        {
-            status = SecKeyChain.Add(new SecRecord(SecKind.GenericPassword) {
-                Service = StoreName,
-                Account = Name,
-                Accessible = SecAccessible.WhenUnlockedThisDeviceOnly,
-                ValueData = data,
-            });
-        }
-
-        if (status is not SecStatusCode.Success)
-            throw new InvalidOperationException($"The session token could not be stored in the keychain ({status}).");
-    }
-
-    private SecRecord CreateQuery() => new(SecKind.GenericPassword) { Service = StoreName, Account = Name };
-#elif __WASM__
+#if __WASM__
     private string? ReadCore() => null;
 
     private void WriteCore(string? token)
@@ -252,8 +185,62 @@ public sealed class SessionTokenStore
         return Path.Combine(folderPath, Name + ".dat");
     }
 #else
-    private string? ReadCore() => SettingsSessionTokenStorage.Read(_getSettings(), Name);
+    private string? ReadCore()
+    {
+        if (_platformStorage is null)
+            return SettingsSessionTokenStorage.Read(_getSettings(), Name);
 
-    private void WriteCore(string? token) => SettingsSessionTokenStorage.Write(_getSettings(), Name, token);
+        if (_platformStorage.Read() is { } token)
+            return token;
+
+        // Versions that kept the token in the app's settings on iOS and Android, such as Uno Platform apps with the Skia renderer on version 4.0.0 of this
+        // library, stored it unencrypted, so it is moved over and removed from the settings.
+        var settings = _getSettings();
+
+        if (SettingsSessionTokenStorage.Read(settings, Name) is not { } settingsToken)
+            return null;
+
+        try
+        {
+            _platformStorage.Write(settingsToken);
+            settings.Remove(Name);
+        }
+        catch (Exception ex)
+        {
+            // The token stays in the settings, so that the next read moves it, and the session goes on with it.
+            _errorHandler?.Invoke(ex);
+        }
+
+        return settingsToken;
+    }
+
+    private void WriteCore(string? token)
+    {
+        if (_platformStorage is null)
+        {
+            SettingsSessionTokenStorage.Write(_getSettings(), Name, token);
+            return;
+        }
+
+        // A token that a failed move left in the settings is out of date once there is another token or none, and would otherwise be moved over once the
+        // session ends. When the token is removed, both go even if the other fails. After a new token, it goes once the token is stored, so that a write
+        // that fails keeps it.
+        if (token is null)
+        {
+            try
+            {
+                _getSettings().Remove(Name);
+            }
+            finally
+            {
+                _platformStorage.Write(null);
+            }
+
+            return;
+        }
+
+        _platformStorage.Write(token);
+        _getSettings().Remove(Name);
+    }
 #endif
 }

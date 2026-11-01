@@ -28,8 +28,10 @@ public sealed class PasskeyPageTests
         data.ShouldNotContainKey("error-name");
 
         html.ShouldContain("Use your passkey");
+        html.ShouldContain("""<p id="message" role="status">Continue to use your passkey for Example.</p>""");
         html.ShouldContain("""<button id="continue" class="primary" type="button">""");
         html.ShouldContain("""<button id="cancel" class="secondary" type="button">""");
+        html.ShouldContain("""<a id="return" class="button primary" hidden></a>""");
     }
 
     [TestMethod]
@@ -287,6 +289,24 @@ public sealed class PasskeyPageTests
     }
 
     [TestMethod]
+    public async Task PageScript_OffersReturnLink_WhenThePageStillShows()
+    {
+        await using var host = await PageHost.StartAsync();
+
+        string script = await host.Client.GetStringAsync("/passkey/passkey-page.js");
+
+        // Browsers that only hand an address to the app for a tap leave the page showing after the script navigated to it. A link to it shows after 2
+        // seconds, unless the page was hidden in between: then the app is taken to have the response, which is never sent again. So is it once the
+        // page was hidden after the link was tapped, but not before: the link is the only way back to the app.
+        script.ShouldContain("const returnLinkDelay = 2000;");
+        script.ShouldContain("messageText.textContent = `Tap Return to ${appName} to finish.`;");
+        script.ShouldContain("returnLink.textContent = `Return to ${appName}`;");
+        script.ShouldContain("returnLink.href = returnAddress;");
+        script.ShouldContain("if (returnLink.hidden || isLinkTapped) {");
+        script.ShouldContain("messageText.textContent = \"You can close this tab.\";");
+    }
+
+    [TestMethod]
     public async Task Scripts_MakeNoRequests()
     {
         await using var host = await PageHost.StartAsync();
@@ -416,5 +436,6 @@ public sealed class PasskeyPageTests
         html.ShouldContain("This link is not valid");
         html.ShouldContain("""<button id="continue" class="primary" type="button" hidden>""");
         html.ShouldContain("""<button id="cancel" class="secondary" type="button" hidden>""");
+        html.ShouldContain("""<a id="return" class="button primary" hidden></a>""");
     }
 }

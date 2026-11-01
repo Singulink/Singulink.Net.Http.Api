@@ -40,20 +40,25 @@ public sealed class PasskeyAuthenticatorOptions
     }
 
     /// <summary>
-    /// Gets or sets the address the passkey page returns to on iOS and Android, such as <c>myapp://passkey</c>. Default is <see langword="null"/>, which
-    /// uses the web authentication broker's current application callback URI. Not used on desktop, where a loopback address is chosen automatically, or
-    /// on WebAssembly.
+    /// Gets or sets the address the passkey page returns to on iOS and Android, such as <c>myapp://passkey</c>, which must have a custom scheme. Default is
+    /// <see langword="null"/>, which uses the web authentication broker's current application callback URI: Uno Platform's
+    /// <c>WinRTFeatureConfiguration.WebAuthenticationBroker.DefaultReturnUri</c> if it is set, otherwise the first custom scheme of the app followed by
+    /// Uno Platform's default callback path, <c>:/authentication-callback</c>, with no host. On iOS that is the first URL scheme in the app's
+    /// <c>Info.plist</c>, and on Android the first scheme of an activity that derives from Uno Platform's <c>WebAuthenticationBrokerActivityBase</c>.
+    /// Android apps whose activity's intent filter has a host must set this property or <c>DefaultReturnUri</c>. Not used on desktop, where a loopback
+    /// address is chosen automatically, or on WebAssembly.
     /// </summary>
     /// <remarks>
-    /// The scheme must be registered by the app (in <c>Info.plist</c> on iOS, and by a <c>WebAuthenticationBrokerActivityBase</c> activity on Android)
-    /// and allowed by the passkey page.
+    /// The scheme must be allowed by the passkey page. On Android, an activity that derives from <c>WebAuthenticationBrokerActivityBase</c> must have an
+    /// intent filter that matches the address's scheme and host. On iOS, a scheme set here doesn't need to be registered in <c>Info.plist</c>.
     /// </remarks>
-    /// <exception cref="ArgumentException">The value is not an absolute URI.</exception>
+    /// <exception cref="ArgumentException">The value is not an absolute URI with a custom scheme: its scheme is one that browsers handle themselves, such as
+    /// <c>https</c>.</exception>
     public Uri? CallbackUri {
         get;
         set {
-            if (value is not null && !value.IsAbsoluteUri)
-                throw new ArgumentException("The callback URI must be absolute.", nameof(value));
+            if (value is not null && !BrowserSchemes.HasCustomScheme(value))
+                throw new ArgumentException("The callback URI must be an absolute URI with a custom scheme, such as myapp://passkey.", nameof(value));
 
             field = value;
         }
@@ -61,7 +66,8 @@ public sealed class PasskeyAuthenticatorOptions
 
     /// <summary>
     /// Gets or sets a value indicating whether iOS opens the passkey page in an ephemeral browser session, which shares no cookies or website data with
-    /// Safari and skips the system's sign-in consent alert. Not used on other platforms. Default is <see langword="true"/>.
+    /// Safari and skips the system's sign-in consent alert. Not used on other platforms, or when the app registered a web authentication broker provider of
+    /// its own. Default is <see langword="true"/>.
     /// </summary>
     public bool PrefersEphemeralWebBrowserSession { get; set; } = true;
 

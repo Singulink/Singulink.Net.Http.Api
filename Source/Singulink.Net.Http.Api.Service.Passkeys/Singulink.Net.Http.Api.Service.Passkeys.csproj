@@ -19,6 +19,11 @@
     <ProjectReference Include="..\Singulink.Net.Http.Api.Service\Singulink.Net.Http.Api.Service.csproj" />
   </ItemGroup>
 
+  <!-- The schemes that callback addresses can't have, shared with the WinUI client package. -->
+  <ItemGroup>
+    <Compile Include="..\Shared\BrowserSchemes.cs" Link="Internal\BrowserSchemes.cs" />
+  </ItemGroup>
+
   <!-- The hand-off page is served from embedded resources. passkeys.js is shared with client packages, so it is linked rather than copied. -->
   <ItemGroup>
     <None Remove="Page\**" />

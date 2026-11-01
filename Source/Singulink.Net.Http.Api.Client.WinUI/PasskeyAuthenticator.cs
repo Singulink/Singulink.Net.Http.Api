@@ -1,10 +1,7 @@
 #if !__WASM__ && !WINDOWS
-using Windows.Security.Authentication.Web;
-#endif
-
-#if !__WASM__ && !__IOS__ && !__ANDROID__ && !WINDOWS
 using Uno.AuthenticationBroker;
 using Uno.Foundation.Extensibility;
+using Windows.Security.Authentication.Web;
 #endif
 
 namespace Singulink.Net.Http.Api.Client.Passkeys;
@@ -48,12 +45,46 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
     /// </summary>
     public PasskeyAuthenticatorOptions Options { get; }
 
-#if !__WASM__ && !__IOS__ && !__ANDROID__
+#if !__WASM__
     /// <summary>
     /// Gets or sets the factory for the loopback flow used on desktop, unless an Uno Platform app registered a web authentication broker provider of its
     /// own. The flow is configured with the hand-off settings of <see cref="Options"/>. Replaced by tests.
     /// </summary>
     internal Func<LoopbackBrowserFlow> CreateLoopbackFlow { get; set; } = () => new LoopbackBrowserFlow();
+#endif
+
+#if !__WASM__ && !WINDOWS
+    /// <summary>
+    /// Gets or sets a value indicating whether the app registered a web authentication broker provider of its own, other than the toolkit's loopback
+    /// provider, which then runs operations on every platform. Replaced by tests.
+    /// </summary>
+    internal Func<bool> IsBrokerProviderRegistered { get; set; } =
+        () => ApiExtensibility.IsRegistered<IWebAuthenticationBrokerProvider>() && !LoopbackWebAuthenticationBrokerProvider.IsRegistered;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the app runs on Android, where Uno Platform's web authentication broker runs operations: it stays native in
+    /// apps with the Skia renderer, which load the plain .NET build of this library. Replaced by tests.
+    /// </summary>
+    internal bool IsAndroid { get; set; } = OperatingSystem.IsAndroid();
+
+    /// <summary>
+    /// Gets or sets the web authentication session used on iOS, unless the app registered a web authentication broker provider of its own, or
+    /// <see langword="null"/> on other platforms. Decided at run time in every build, since apps with Uno Platform's Skia renderer load the plain .NET
+    /// build on iOS. Replaced by tests.
+    /// </summary>
+    internal NativeWebAuthenticator? NativeAuthenticator { get; set; } = WebAuthenticationNative.IsSupported ? WebAuthenticationNative.AuthenticateAsync : null;
+
+    /// <summary>
+    /// Gets or sets the call of the web authentication broker, used on Android and with a provider that the app registered. Replaced by tests.
+    /// </summary>
+    internal BrokerAuthenticator AuthenticateWithBroker { get; set; } = (requestUri, callbackUri, cancellationToken) =>
+        WebAuthenticationBroker.AuthenticateAsync(WebAuthenticationOptions.None, requestUri, callbackUri).AsTask(cancellationToken);
+
+    /// <summary>
+    /// Gets or sets the web authentication broker's current application callback URI, used on iOS and Android if
+    /// <see cref="PasskeyAuthenticatorOptions.CallbackUri"/> is not set, and on desktop with a provider that the app registered. Replaced by tests.
+    /// </summary>
+    internal Func<Uri> GetDefaultCallbackUri { get; set; } = WebAuthenticationBroker.GetCurrentApplicationCallbackUri;
 #endif
 
     /// <summary>
@@ -103,6 +134,7 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
     /// <returns>The credential to post to the app's API, and whether the passkey was on this device.</returns>
     /// <exception cref="PasskeyAuthenticatorException">The operation failed or the person cancelled it. <see cref="PasskeyAuthenticatorException.Reason"/>
     /// says why.</exception>
+    /// <exception cref="ArgumentException"><paramref name="requestOptionsJson"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">This platform uses the passkey page and <see cref="PasskeyAuthenticatorOptions.PageUri"/> is not set,
     /// or the app's callback isn't set up.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
@@ -127,6 +159,7 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
     /// <returns>The new credential to post to the app's API, and whether the passkey was created on this device.</returns>
     /// <exception cref="PasskeyAuthenticatorException">The operation failed or the person cancelled it. <see cref="PasskeyAuthenticatorException.Reason"/>
     /// says why.</exception>
+    /// <exception cref="ArgumentException"><paramref name="creationOptionsJson"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">This platform uses the passkey page and <see cref="PasskeyAuthenticatorOptions.PageUri"/> is not set,
     /// or the app's callback isn't set up.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
@@ -180,25 +213,29 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
         cancellationToken.ThrowIfCancellationRequested();
         string state = PasskeyPageProtocol.CreateState();
 
-#if __IOS__ || __ANDROID__
-        Uri callbackUri = Options.CallbackUri ?? WebAuthenticationBroker.GetCurrentApplicationCallbackUri();
-        var requestUri = PasskeyPageProtocol.BuildRequestUri(pageUri, operation, optionsJson, callbackUri, state);
-
-        return await RunWithBrokerAsync(requestUri, callbackUri, state, cancellationToken).ConfigureAwait(false);
-#else
-        // Neither Uno desktop apps nor WinUI 3 desktop apps have a working web authentication broker, so the loopback flow is used, unless an Uno app
-        // registered a provider of its own. The toolkit's loopback provider would run the same flow with its own settings, so the flow runs here with the
-        // options' settings instead, which apply on every desktop target.
 #if !WINDOWS
-        if (ApiExtensibility.IsRegistered<IWebAuthenticationBrokerProvider>() && !LoopbackWebAuthenticationBrokerProvider.IsRegistered)
+        // A web authentication broker provider that the app registered runs the operation, and on Android, Uno Platform's own broker does.
+        if (IsBrokerProviderRegistered() || IsAndroid)
         {
-            Uri brokerCallbackUri = WebAuthenticationBroker.GetCurrentApplicationCallbackUri();
+            // The callback address of the options is only used on iOS and Android.
+            Uri brokerCallbackUri = (IsAndroid || NativeAuthenticator is not null) ? GetMobileCallbackUri() : GetDefaultCallbackUri();
             var brokerRequestUri = PasskeyPageProtocol.BuildRequestUri(pageUri, operation, optionsJson, brokerCallbackUri, state);
 
             return await RunWithBrokerAsync(brokerRequestUri, brokerCallbackUri, state, cancellationToken).ConfigureAwait(false);
         }
+
+        // iOS.
+        if (NativeAuthenticator is { } nativeAuthenticator)
+        {
+            Uri nativeCallbackUri = GetMobileCallbackUri();
+            var nativeRequestUri = PasskeyPageProtocol.BuildRequestUri(pageUri, operation, optionsJson, nativeCallbackUri, state);
+
+            return await RunWithNativeAsync(nativeAuthenticator, nativeRequestUri, nativeCallbackUri, state, cancellationToken).ConfigureAwait(false);
+        }
 #endif
 
+        // Neither Uno desktop apps nor WinUI 3 desktop apps have a working web authentication broker, so the loopback flow runs here, with the options'
+        // settings, which apply on every desktop target.
         var flow = CreateLoopbackFlow();
         flow.CompletedMessage = Options.CompletedMessage;
         flow.Timeout = Options.Timeout;
@@ -219,36 +256,73 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
             // The browser didn't return in time. A flow that the caller cancelled has thrown above.
             _ => throw new PasskeyAuthenticatorException(PasskeyErrorReason.TimedOut, "The browser did not return from the passkey page in time."),
         };
-#endif
     }
 #endif
 
 #if !__WASM__ && !WINDOWS
+    private async Task<string> RunWithNativeAsync(
+        NativeWebAuthenticator nativeAuthenticator, Uri requestUri, Uri callbackUri, string state, CancellationToken cancellationToken)
+    {
+        var result = await nativeAuthenticator(requestUri, callbackUri, Options.PrefersEphemeralWebBrowserSession, cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return result.Status switch {
+            WebAuthenticationNativeStatus.Success => PasskeyPageProtocol.ParseResponse(result.CallbackUri, state),
+            WebAuthenticationNativeStatus.UserCancel => throw new PasskeyAuthenticatorException(PasskeyErrorReason.Cancelled, null),
+            WebAuthenticationNativeStatus.NotOpened => throw new PasskeyAuthenticatorException(
+                PasskeyErrorReason.PageNotOpened, $"The passkey page could not be opened ({result.ErrorMessage ?? "no details"})."),
+            _ => throw new PasskeyAuthenticatorException(
+                PasskeyErrorReason.Unknown, $"The passkey page could not be completed ({result.ErrorMessage ?? "no details"})."),
+        };
+    }
+
+    /// <summary>
+    /// Gets the callback address on iOS and Android: the one in the options, whose setter makes sure it has a custom scheme, or the web authentication
+    /// broker's, which must have one too.
+    /// </summary>
+    private Uri GetMobileCallbackUri()
+    {
+        if (Options.CallbackUri is { } callbackUri)
+            return callbackUri;
+
+        Uri defaultCallbackUri;
+
+        try
+        {
+            defaultCallbackUri = GetDefaultCallbackUri();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotImplementedException or NotSupportedException)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(PasskeyAuthenticatorOptions)}.{nameof(PasskeyAuthenticatorOptions.CallbackUri)} must be set: the app's callback address " +
+                $"could not be determined. {ex.Message}", ex);
+        }
+
+        // The broker's default address can be set by the app (Uno Platform's WinRTFeatureConfiguration.WebAuthenticationBroker.DefaultReturnUri).
+        if (!BrowserSchemes.HasCustomScheme(defaultCallbackUri))
+        {
+            throw new InvalidOperationException(
+                $"The web authentication broker's callback address must have a custom scheme to be used on iOS and Android: '{defaultCallbackUri.Scheme}' " +
+                $"is a scheme that browsers handle themselves. Set {nameof(PasskeyAuthenticatorOptions)}." +
+                $"{nameof(PasskeyAuthenticatorOptions.CallbackUri)}.");
+        }
+
+        return defaultCallbackUri;
+    }
+
     private async Task<string> RunWithBrokerAsync(Uri requestUri, Uri callbackUri, string state, CancellationToken cancellationToken)
     {
         WebAuthenticationResult result;
 
-#if __IOS__
-        bool previousPrefersEphemeral = Uno.WinRTFeatureConfiguration.WebAuthenticationBroker.PrefersEphemeralWebBrowserSession;
-        Uno.WinRTFeatureConfiguration.WebAuthenticationBroker.PrefersEphemeralWebBrowserSession = Options.PrefersEphemeralWebBrowserSession;
-#endif
-
         try
         {
-            result = await WebAuthenticationBroker.AuthenticateAsync(WebAuthenticationOptions.None, requestUri, callbackUri)
-                .AsTask(cancellationToken).ConfigureAwait(false);
+            result = await AuthenticateWithBroker(requestUri, callbackUri, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // The Android broker reports a browser tab closed without a result as a cancellation.
             throw new PasskeyAuthenticatorException(PasskeyErrorReason.Cancelled, null);
         }
-#if __IOS__
-        finally
-        {
-            Uno.WinRTFeatureConfiguration.WebAuthenticationBroker.PrefersEphemeralWebBrowserSession = previousPrefersEphemeral;
-        }
-#endif
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -256,10 +330,14 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
             WebAuthenticationStatus.Success => PasskeyPageProtocol.ParseResponse(result.ResponseData, state),
             WebAuthenticationStatus.UserCancel => throw new PasskeyAuthenticatorException(PasskeyErrorReason.Cancelled, null),
             WebAuthenticationStatus.ErrorHttp => throw new PasskeyAuthenticatorException(
-                PasskeyErrorReason.PageNotOpened, $"The passkey page could not be opened ({result.ResponseData ?? "no details"})."),
+                PasskeyErrorReason.PageNotOpened, $"The passkey page could not be opened ({GetHttpErrorDetails(result)})."),
             _ => throw new PasskeyAuthenticatorException(
                 PasskeyErrorReason.Unknown, $"The passkey page could not be completed ({result.ResponseData ?? result.ResponseStatus.ToString()})."),
         };
     }
+
+    // The HTTP status, if the broker reported one, and its description.
+    private static string GetHttpErrorDetails(WebAuthenticationResult result) =>
+        result.ResponseErrorDetail is 0 ? result.ResponseData ?? "no details" : $"HTTP {result.ResponseErrorDetail}, {result.ResponseData ?? "no details"}";
 #endif
 }

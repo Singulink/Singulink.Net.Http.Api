@@ -6,9 +6,10 @@
 
 ### Packages
 
-The client's passkey support is in three packages:
+The client's passkey support is in these packages:
 
 - `Singulink.Net.Http.Api.Client.WinUI`, a library for Windows App SDK (WinUI 3) apps and for Uno Platform apps on WebAssembly, iOS, Android and desktop, has the authenticator, <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticator>, and the loopback web authentication broker for Uno Platform desktop apps.
+- `Singulink.Net.Http.Api.Client.Native` is installed with the WinUI package, and has no public API.
 - `Singulink.Net.Http.Api.Client`, which has no UI framework dependency, has the interface that the authenticator implements, <xref:Singulink.Net.Http.Api.Client.Passkeys.IPasskeyAuthenticator>, and the types it uses: <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyCredential>, <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyErrorReason> and <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorException>. It also has <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyCeremonyPrefetch`1> and the <xref:Singulink.Net.Http.Api.Client.Pkce> helper used for sign-in.
 - The shared `Singulink.Net.Http.Api` package has <xref:Singulink.Net.Http.Api.DataContracts.PasskeyAttachment> and <xref:Singulink.Net.Http.Api.DataContracts.PasskeyCeremony>.
 
@@ -42,7 +43,7 @@ var passkeys = new PasskeyAuthenticator(new PasskeyAuthenticatorOptions
 ```
 
 - <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PageUri> is required everywhere except WebAssembly. It must use HTTPS, except for loopback hosts, where HTTP is accepted.
-- <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.CallbackUri> is used on iOS and Android. If it isn't set, the web authentication broker's default callback address is used. Desktop apps always use a loopback address.
+- <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.CallbackUri> is used on iOS and Android, and must have a custom scheme: setting one that browsers handle themselves, such as `https`, throws <xref:System.ArgumentException>. If it isn't set, the web authentication broker's default callback address is used: Uno Platform's `WinRTFeatureConfiguration.WebAuthenticationBroker.DefaultReturnUri` if it is set, otherwise the app's first custom scheme followed by `:/authentication-callback`, with no host (see [iOS](#ios) and [Android](#android)). Android apps whose callback activity filters on a host, like the one below, must set `CallbackUri` or `DefaultReturnUri`. Desktop apps always use a loopback address.
 - <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PrefersEphemeralWebBrowserSession> applies to iOS; see [iOS](#ios).
 - <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.CompletedMessage>, <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.Timeout> and <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.StartTimeout> apply to desktop; see [Desktop](#desktop).
 
@@ -218,7 +219,11 @@ catch (PasskeyAuthenticatorException ex) when (ex.Reason is PasskeyErrorReason.A
 }
 ```
 
-The exception message comes from the browser where it supplied one. It isn't localized or written for the person using the app. Cancelling the operation's token throws <xref:System.OperationCanceledException> instead. On desktop the authenticator stops waiting for the browser right away, though the passkey page stays open in it; on WebAssembly it stops waiting but can't close a prompt the browser is already showing. A missing <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PageUri> throws <xref:System.InvalidOperationException>.
+The exception message comes from the browser where it supplied one. It isn't localized or written for the person using the app. On Android, an operation also fails with <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyErrorReason.Cancelled> when another operation starts before it ends.
+
+Cancelling the operation's token throws <xref:System.OperationCanceledException> instead. On iOS the authenticator closes the browser session. On Android and desktop it stops waiting for the browser right away, though the passkey page stays open in the browser tab. On WebAssembly it stops waiting but can't close a prompt the browser is already showing.
+
+A missing <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PageUri> throws <xref:System.InvalidOperationException>, and so does a callback address on iOS and Android that can't be determined or doesn't have a custom scheme. On Android, Uno Platform's web authentication broker throws <xref:System.InvalidOperationException> when no activity of the app receives the callback address (see [Android](#android)).
 
 ## Platform Setup
 
@@ -228,7 +233,7 @@ Nothing needs to be set up in the app. The library's script is deployed with the
 
 ### iOS
 
-Register the callback scheme in `Info.plist`:
+If <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.CallbackUri> isn't set, register the callback scheme in `Info.plist`: the web authentication broker's default callback address is the first URL scheme registered there, followed by `:/authentication-callback`. A callback address set in the options needs no registration on iOS:
 
 ```xml
 <key>CFBundleURLTypes</key>
@@ -244,11 +249,11 @@ Register the callback scheme in `Info.plist`:
 </array>
 ```
 
-By default the passkey page opens in an ephemeral browser session, which shares no cookies or website data with Safari (the page needs none) and skips the system alert asking whether the app may use the website to sign in. Set <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PrefersEphemeralWebBrowserSession> to false to share Safari's website data instead.
+By default the passkey page opens in an ephemeral browser session, which shares no cookies or website data with Safari (the page needs none) and skips the system alert asking whether the app may use the website to sign in. Set <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.PrefersEphemeralWebBrowserSession> to false to share Safari's website data instead. The option isn't used when the app registered a web authentication broker provider of its own.
 
 ### Android
 
-Add an activity that receives the callback. It derives from Uno's `WebAuthenticationBrokerActivityBase` and has an intent filter for the callback address's scheme and host:
+Add an activity that receives the callback. It derives from Uno's `WebAuthenticationBrokerActivityBase` and must have an intent filter that matches the callback address's scheme and host. The web authentication broker's default callback address is the first scheme of such an activity followed by `:/authentication-callback`, with no host, so an activity that filters on a host, like this one, needs <xref:Singulink.Net.Http.Api.Client.Passkeys.PasskeyAuthenticatorOptions.CallbackUri> (here `myapp://passkey`) or Uno's `DefaultReturnUri` set:
 
 ```csharp
 using Android.App;
@@ -265,6 +270,16 @@ using Uno.AuthenticationBroker;
 public class WebAuthenticationCallbackActivity : WebAuthenticationBrokerActivityBase
 {
 }
+```
+
+Uno's web authentication broker opens the passkey page in a Custom Tab. On Android 11 (API level 30) and later, it finds the Custom Tabs service only if the app's manifest declares it, and opens the page in the full browser otherwise:
+
+```xml
+<queries>
+  <intent>
+    <action android:name="android.support.customtabs.action.CustomTabsService" />
+  </intent>
+</queries>
 ```
 
 ### Desktop

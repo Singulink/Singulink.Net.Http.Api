@@ -26,12 +26,6 @@ internal sealed class PasskeyPage
     private static readonly HtmlEncoder Encoder = HtmlEncoder.Default;
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    // Schemes that browsers handle themselves rather than handing them to an app.
-    private static readonly HashSet<string> ReservedSchemes = new(StringComparer.OrdinalIgnoreCase) {
-        "about", "blob", "chrome", "chrome-extension", "data", "edge", "file", "filesystem", "ftp", "http", "https", "intent", "javascript", "mailto",
-        "sms", "tel", "vbscript", "view-source", "ws", "wss",
-    };
-
     private readonly string _appName;
     private readonly HashSet<string> _redirectSchemes;
     private readonly bool _allowLoopbackRedirects;
@@ -45,7 +39,7 @@ internal sealed class PasskeyPage
         {
             string scheme = configuredScheme.TrimEnd(':');
 
-            if (!IsValidScheme(scheme) || ReservedSchemes.Contains(scheme))
+            if (!IsValidScheme(scheme) || BrowserSchemes.Contains(scheme))
                 throw new ArgumentException($"'{configuredScheme}' is not allowed as a redirect scheme: it must be a custom URI scheme.", nameof(options));
 
             _redirectSchemes.Add(scheme);

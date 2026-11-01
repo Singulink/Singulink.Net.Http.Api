@@ -72,7 +72,21 @@ public sealed class PasskeyAuthenticatorOptionsTests
         var options = new PasskeyAuthenticatorOptions { CallbackUri = new Uri("myapp://auth") };
         options.CallbackUri.ShouldBe(new Uri("myapp://auth"));
 
-        Should.Throw<ArgumentException>(() => options.CallbackUri = new Uri("auth", UriKind.Relative));
+        Should.Throw<ArgumentException>(() => options.CallbackUri = new Uri("auth", UriKind.Relative)).ParamName.ShouldBe("value");
+    }
+
+    [TestMethod]
+    [DataRow("https://example.com/passkey")]
+    [DataRow("HTTP://127.0.0.1:5000/callback")]
+    [DataRow("javascript:alert(1)")]
+    [DataRow("intent://passkey")]
+    [DataRow("file:///passkey")]
+    public void Options_CallbackUri_RejectsSchemesThatBrowsersHandle(string callbackUri)
+    {
+        var options = new PasskeyAuthenticatorOptions();
+
+        Should.Throw<ArgumentException>(() => options.CallbackUri = new Uri(callbackUri)).ParamName.ShouldBe("value");
+        options.CallbackUri.ShouldBeNull();
     }
 
     [TestMethod]

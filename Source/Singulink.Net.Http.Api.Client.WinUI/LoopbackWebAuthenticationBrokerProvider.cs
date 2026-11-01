@@ -1,4 +1,4 @@
-#if !__WASM__ && !__IOS__ && !__ANDROID__ && !WINDOWS
+#if !__WASM__ && !WINDOWS
 
 using Singulink.Net.Http.Api.Client.Passkeys;
 using Uno.AuthenticationBroker;

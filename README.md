@@ -23,6 +23,7 @@ Details of each component are provided below:
 | **Singulink.Net.Http.Api.Client** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client/) |
 | **Singulink.Net.Http.Api.Client.SignalR** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.SignalR.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client.SignalR/) |
 | **Singulink.Net.Http.Api.Client.WinUI** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.WinUI.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client.WinUI/) |
+| **Singulink.Net.Http.Api.Client.Native** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Client.Native.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Client.Native/) |
 | **Singulink.Net.Http.Api.Service** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Service.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Service/) |
 | **Singulink.Net.Http.Api.Service.Cloudflare** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Service.Cloudflare.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Service.Cloudflare/) |
 | **Singulink.Net.Http.Api.Service.Passkeys** | Public | [![View nuget package](https://img.shields.io/nuget/v/Singulink.Net.Http.Api.Service.Passkeys.svg)](https://www.nuget.org/packages/Singulink.Net.Http.Api.Service.Passkeys/) |
@@ -130,6 +131,10 @@ Passkey (WebAuthn) support and session token storage for WinUI 3 (Windows App SD
 - Passkeys the service doesn't know reported to the browser's password manager, in browsers with the WebAuthn Signal API.
 - A loopback web authentication broker for Uno Platform desktop apps, which Uno doesn't provide.
 - `SessionTokenStore`, which keeps the token of a persistent session between launches: in the password vault on Android, in a keychain item on iOS that only the device can read, in the local settings on Uno Platform desktop, encrypted with DPAPI on Windows, and in a DPAPI-encrypted file in Windows App SDK apps.
+
+### Singulink.Net.Http.Api.Client.Native
+
+Installed with `Singulink.Net.Http.Api.Client.WinUI`, and has no public API.
 
 ## Upgrading from 3.x
 

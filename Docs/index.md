@@ -24,6 +24,7 @@ The libraries are available on NuGet. Install the packages that match your needs
 - `Singulink.Net.Http.Api.Client` - the API client base class for any .NET platform, including browser, mobile and .NET Framework apps.
 - `Singulink.Net.Http.Api.Client.SignalR` - SignalR hub connections for API clients.
 - `Singulink.Net.Http.Api.Client.WinUI` - passkeys and session token storage in WinUI 3 and Uno Platform apps.
+- `Singulink.Net.Http.Api.Client.Native` - installed with `Singulink.Net.Http.Api.Client.WinUI`, and has no public API.
 - `Singulink.Net.Http.Api` - the shared contracts referenced by both sides (exceptions, error codes, streaming format, hub definitions, JSON null handling, and the data contracts of the standard sign-in steps). Installed automatically as a dependency of the packages above, and referenced directly by data contract assemblies that declare hub contracts or use its data contracts.
 
 **Supported Runtimes**: The shared library and the API client library support .NET 10.0+ and .NET Framework 4.6.2+; browser (WebAssembly) apps require .NET 10.0+. Other runtimes that can load .NET Standard 2.0 libraries, such as .NET 8 and 9, get a build warning: they are not supported or tested. All other packages require .NET 10.0+.

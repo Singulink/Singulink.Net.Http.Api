@@ -325,7 +325,8 @@ public sealed class UploadCancellationTests
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int runs = 0;
 
-        await using var first = await StartAsync(CountAsync, store: store, shortLivedStore: shortLivedStore);
+        await using var first = await StartAsync(
+            CountAsync, options => options.CompletionPingInterval = TimeSpan.FromDays(1), store: store, shortLivedStore: shortLivedStore);
         await using var second = await StartAsync(CountAsync, store: store, shortLivedStore: shortLivedStore);
 
         var session = await first.CreateUploadAsync("a", 10);
@@ -364,7 +365,8 @@ public sealed class UploadCancellationTests
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int runs = 0;
 
-        await using var host = await StartAsync(CountAsync, shortLivedStore: shortLivedStore);
+        await using var host = await StartAsync(
+            CountAsync, options => options.CompletionPingInterval = TimeSpan.FromDays(1), shortLivedStore: shortLivedStore);
         var session = await host.CreateUploadAsync("a", 10);
         await host.PutChunksAsync(session, UploadTestHost.CreateFile(10));
 

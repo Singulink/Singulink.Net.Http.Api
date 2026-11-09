@@ -4,14 +4,14 @@ using Singulink.Net.Http.Api.Service.Uploads;
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
-/// An upload store that keeps uploads in memory, like a store over an object store: its content is only available as a stream, and it can have chunk
-/// size limits of its own.
+/// An upload store that keeps uploads in memory, like a store over an object store: its content is only available as a stream, it can have chunk size
+/// limits of its own, and it keeps finished uploads apart from the open ones.
 /// </summary>
 public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
 {
     private readonly Lock _lock = new();
-    private readonly Dictionary<string, Entry> _uploads = new(StringComparer.Ordinal);
-    private readonly Dictionary<(string UserId, string Key), UploadKeyReservation> _keys = [];
+    private readonly Dictionary<(string UserId, string Id), Entry> _uploads = [];
+    private readonly Dictionary<(string UserId, string Id), Finished> _finished = [];
 
     public int MinChunkSize { get; init; }
 
@@ -20,10 +20,36 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
     public int MaxChunkCount { get; init; } = int.MaxValue;
 
     /// <summary>
-    /// Gets or sets an action that is called with the name of an operation before it runs: <c>Get</c>, <c>WriteChunk</c> or <c>Renew</c>. It makes
-    /// the operation fail by throwing.
+    /// Gets who uses the store: one host (<see cref="StoreSharingMode.ProcessLocal"/>), which is the default, or several. Hosts that share the store set it to
+    /// <see cref="StoreSharingMode.Shared"/>, and share a shared short-lived store too, such as a <see cref="DeclaredSharedShortLivedStore"/>.
+    /// </summary>
+    public StoreSharingMode SharingMode { get; init; } = StoreSharingMode.ProcessLocal;
+
+    /// <summary>
+    /// Gets <see cref="Usage"/>, after <see cref="BeforeOperation"/> with <c>GetUsage</c>.
+    /// </summary>
+    public ValueTask<UploadStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default)
+    {
+        BeforeOperation?.Invoke("GetUsage");
+        return new(Usage);
+    }
+
+    /// <summary>
+    /// Gets or sets the usage that <see cref="GetUsageAsync"/> reports. Default is <see cref="UploadStoreUsage.Unknown"/>.
+    /// </summary>
+    public UploadStoreUsage Usage { get; set; } = UploadStoreUsage.Unknown;
+
+    /// <summary>
+    /// Gets or sets an action that is called with the name of an operation before it runs: <c>Create</c>, <c>Get</c>, <c>WriteChunk</c>, <c>Renew</c> or
+    /// <c>Release</c>. It makes the operation fail by throwing.
     /// </summary>
     public Action<string>? BeforeOperation { get; set; }
+
+    /// <summary>
+    /// Gets or sets an action that is called with the name of an operation once it has succeeded: <c>Create</c>, once an upload is created, and
+    /// <c>WriteChunk</c>, once a chunk is stored.
+    /// </summary>
+    public Action<string>? AfterOperation { get; set; }
 
     /// <summary>
     /// Gets or sets a hook that a claim's renewal awaits with its cancellation token after the renewal was written, such as one that waits for the token and
@@ -32,48 +58,61 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
     public Func<CancellationToken, Task>? AfterRenewal { get; set; }
 
     /// <summary>
+    /// Gets or sets a function that tells whether an upload is being removed, as a store's files can be: a creation of the upload then reports that it
+    /// exists, while reads find none.
+    /// </summary>
+    public Func<UploadRecord, bool>? IsBeingRemoved { get; set; }
+
+    /// <summary>
+    /// Gets or sets a task that listings wait for, such as of a cleanup that is still running.
+    /// </summary>
+    public Task? ListWaitsFor { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether the store has no room for chunks.
     /// </summary>
     public bool IsFull { get; set; }
 
+    /// <summary>
+    /// Gets the number of uploads, open and finished.
+    /// </summary>
     public int Count
     {
         get {
             lock (_lock)
-                return _uploads.Count;
+                return _uploads.Count + _finished.Count;
         }
+    }
+
+    /// <summary>
+    /// Gets the number of uploads that listings have returned so far.
+    /// </summary>
+    public int ListedCount
+    {
+        get {
+            lock (_lock)
+                return field;
+        }
+
+        private set;
     }
 
     private DateTime UtcNow => timeProvider.GetUtcNow().UtcDateTime;
 
-    public ValueTask<UploadKeyReservation> ReserveKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
+    public ValueTask<UploadCreationResult> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
+        BeforeOperation?.Invoke("Create");
+
         lock (_lock)
         {
-            if (!_keys.TryGetValue((userId, key), out var reservation))
-                _keys[(userId, key)] = reservation = new UploadKeyReservation(uploadId, UtcNow);
+            if (_uploads.ContainsKey(Key(upload)) || _finished.ContainsKey(Key(upload)) || IsBeingRemoved?.Invoke(upload) is true)
+                return new(UploadCreationResult.Exists);
 
-            return new(reservation);
-        }
-    }
-
-    public ValueTask ReleaseKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
-    {
-        lock (_lock)
-        {
-            if (_keys.TryGetValue((userId, key), out var reservation) && reservation.UploadId == uploadId)
-                _keys.Remove((userId, key));
+            _uploads.Add(Key(upload), new Entry(upload, new byte[upload.Length], upload.CreatedUtc));
         }
 
-        return default;
-    }
-
-    public ValueTask<bool> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
-    {
-        lock (_lock)
-            _uploads.Add(upload.Id, new Entry(upload, new byte[upload.Length], upload.CreatedUtc));
-
-        return new(true);
+        AfterOperation?.Invoke("Create");
+        return new(UploadCreationResult.Created);
     }
 
     public ValueTask<StoredUpload?> GetAsync(string userId, string uploadId, CancellationToken cancellationToken = default)
@@ -81,18 +120,28 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
         BeforeOperation?.Invoke("Get");
 
         lock (_lock)
-            return new(_uploads.TryGetValue(uploadId, out var entry) && entry.Record.UserId == userId ? Snapshot(entry) : null);
+        {
+            if (_uploads.TryGetValue((userId, uploadId), out var entry))
+                return new(Snapshot(entry));
+
+            if (_finished.TryGetValue((userId, uploadId), out var finished))
+                return new(new StoredUpload(finished.Record, finished.Record.CreatedUtc, outcome: finished.Outcome, outcomeUtc: finished.StoredUtc));
+
+            return new((StoredUpload?)null);
+        }
     }
 
-    public async IAsyncEnumerable<StoredUpload> ListAsync(
-        string? userId = null, bool withoutOutcomes = false, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<StoredUpload> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         List<StoredUpload> uploads;
 
+        if (ListWaitsFor is { } wait)
+            await wait.WaitAsync(cancellationToken);
+
         lock (_lock)
         {
-            uploads = [
-                .. _uploads.Values.Where(e => (userId is null || e.Record.UserId == userId) && (!withoutOutcomes || e.Outcome is null)).Select(Snapshot)];
+            uploads = [.. _uploads.Values.Select(Snapshot)];
+            ListedCount += uploads.Count;
         }
 
         foreach (var upload in uploads)
@@ -112,7 +161,7 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
         // The upload is kept from the start of the write, also while a slow chunk arrives.
         lock (_lock)
         {
-            if (_uploads.TryGetValue(upload.Id, out var started) && started.ClaimId is null && started.Outcome is null)
+            if (_uploads.TryGetValue(Key(upload), out var started) && started.ClaimId is null)
                 started.LastWriteUtc = UtcNow > upload.CreatedUtc ? UtcNow : upload.CreatedUtc.AddTicks(1);
         }
 
@@ -122,82 +171,87 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
         // The chunk is stored all at once, unless the run was claimed while it arrived.
         lock (_lock)
         {
-            if (!_uploads.TryGetValue(upload.Id, out var entry))
-                return ChunkWriteResult.NotFound;
+            if (!_uploads.TryGetValue(Key(upload), out var entry))
+                return _finished.ContainsKey(Key(upload)) ? ChunkWriteResult.Closed : ChunkWriteResult.NotFound;
 
-            if (entry.ClaimId is not null || entry.Outcome is not null)
+            if (entry.ClaimId is not null)
                 return ChunkWriteResult.Closed;
 
             buffer.ToArray().CopyTo(entry.Data, upload.GetChunkOffset(index));
             entry.Chunks.Add(index);
             entry.LastWriteUtc = UtcNow > upload.CreatedUtc ? UtcNow : upload.CreatedUtc.AddTicks(1);
-
-            return ChunkWriteResult.Written;
         }
+
+        AfterOperation?.Invoke("WriteChunk");
+        return ChunkWriteResult.Written;
     }
 
     public ValueTask<IReadOnlyCollection<int>> GetReceivedChunksAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
         lock (_lock)
-            return new(_uploads.TryGetValue(upload.Id, out var entry) ? [.. entry.Chunks] : []);
+            return new(_uploads.TryGetValue(Key(upload), out var entry) ? [.. entry.Chunks] : []);
     }
 
     public ValueTask<IUploadRunClaim?> TryClaimRunAsync(UploadRecord upload, TimeSpan leaseDuration, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
-            if (!_uploads.TryGetValue(upload.Id, out var entry) || entry.ClaimId is not null || entry.Outcome is not null)
+            if (!_uploads.TryGetValue(Key(upload), out var entry) || entry.ClaimId is not null)
                 return new((IUploadRunClaim?)null);
 
             entry.ClaimId = Guid.NewGuid();
             entry.LeaseDuration = leaseDuration;
             entry.RunStartedUtc = entry.RenewedUtc = UtcNow;
 
-            return new(new Claim(this, upload.Id, entry.ClaimId.Value));
+            return new(new Claim(this, Key(upload), entry.ClaimId.Value));
         }
     }
 
     public ValueTask<UploadContent> GetContentAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
         lock (_lock)
-            return new(new MemoryContent(_uploads[upload.Id].Data));
+            return new(new MemoryContent(_uploads[Key(upload)].Data));
     }
 
     public ValueTask<bool> TrySetOutcomeAsync(UploadRecord upload, string outcome, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
-            if (!_uploads.TryGetValue(upload.Id, out var entry) || entry.Outcome is not null)
+            // The upload moves from the open uploads to the finished ones.
+            if (_finished.ContainsKey(Key(upload)) || !_uploads.Remove(Key(upload), out var entry))
                 return new(false);
 
-            entry.Outcome = outcome;
-            entry.OutcomeUtc = UtcNow;
-            entry.ClaimId = null;
-            entry.Data = [];
-            entry.Chunks.Clear();
-
+            _finished[Key(upload)] = new Finished(entry.Record, outcome, UtcNow);
             return new(true);
         }
     }
 
-    public ValueTask DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
+    public ValueTask<bool> DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
         lock (_lock)
         {
-            _uploads.Remove(upload.Id);
+            bool isDeleted = _uploads.Remove(Key(upload));
+            _finished.Remove(Key(upload));
 
-            if (upload.IdempotencyKey is { } key && _keys.TryGetValue((upload.UserId, key), out var reservation) && reservation.UploadId == upload.Id)
-                _keys.Remove((upload.UserId, key));
+            return new(isDeleted);
+        }
+    }
+
+    public ValueTask RemoveOutcomesAsync(DateTime storedBeforeUtc, CancellationToken cancellationToken = default)
+    {
+        lock (_lock)
+        {
+            foreach (var finished in _finished.Values.Where(f => f.StoredUtc < storedBeforeUtc).ToList())
+                _finished.Remove(Key(finished.Record));
         }
 
         return default;
     }
 
+    private static (string UserId, string Id) Key(UploadRecord upload) => (upload.UserId, upload.Id);
+
     private StoredUpload Snapshot(Entry entry)
     {
-        if (entry.Outcome is not null)
-            return new StoredUpload(entry.Record, entry.LastWriteUtc, outcome: entry.Outcome, outcomeUtc: entry.OutcomeUtc);
-
         if (entry.ClaimId is not null)
         {
             var state = entry.RenewedUtc + entry.LeaseDuration < UtcNow ? UploadRunState.Lapsed : UploadRunState.Running;
@@ -224,13 +278,11 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
         public DateTime RunStartedUtc { get; set; }
 
         public DateTime RenewedUtc { get; set; }
-
-        public string? Outcome { get; set; }
-
-        public DateTime? OutcomeUtc { get; set; }
     }
 
-    private sealed class Claim(MemoryUploadStore store, string uploadId, Guid claimId) : IUploadRunClaim
+    private sealed record Finished(UploadRecord Record, string Outcome, DateTime StoredUtc);
+
+    private sealed class Claim(MemoryUploadStore store, (string UserId, string Id) key, Guid claimId) : IUploadRunClaim
     {
         public async ValueTask<bool> RenewAsync(CancellationToken cancellationToken = default)
         {
@@ -238,7 +290,7 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
 
             lock (store._lock)
             {
-                if (!store._uploads.TryGetValue(uploadId, out var entry) || entry.ClaimId != claimId)
+                if (!store._uploads.TryGetValue(key, out var entry) || entry.ClaimId != claimId)
                     return false;
 
                 entry.RenewedUtc = store.UtcNow;
@@ -256,7 +308,7 @@ public sealed class MemoryUploadStore(TimeProvider timeProvider) : IUploadStore
 
             lock (store._lock)
             {
-                if (store._uploads.TryGetValue(uploadId, out var entry) && entry.ClaimId == claimId)
+                if (store._uploads.TryGetValue(key, out var entry) && entry.ClaimId == claimId)
                 {
                     entry.ClaimId = null;
                     entry.LastWriteUtc = store.UtcNow;

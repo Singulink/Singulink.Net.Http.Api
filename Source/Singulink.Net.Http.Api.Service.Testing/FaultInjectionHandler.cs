@@ -34,9 +34,11 @@ public sealed class FaultInjectionHandler : DelegatingHandler
     }
 
     /// <summary>
-    /// Gets the requests that the handler received, in the order it received them, whether it failed them or sent them on. They are recorded when they are
-    /// received, so they stay readable after the requests are disposed.
+    /// Gets the requests that the handler received, in the order it received them, whether it failed them or sent them on.
     /// </summary>
+    /// <remarks>
+    /// They are recorded when they are received, so they stay readable after the requests are disposed.
+    /// </remarks>
     public IReadOnlyList<RecordedRequest> Requests
     {
         get {

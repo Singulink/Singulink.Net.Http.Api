@@ -13,6 +13,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,5 +25,7 @@
   <ItemGroup>
     <Compile Include="..\Singulink.Net.Http.Api.Client.Tests\Infrastructure\RawHttpServer.cs" Link="Infrastructure\RawHttpServer.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Client.Tests\Infrastructure\ManualTimeProvider.cs" Link="Infrastructure\ManualTimeProvider.cs" />
+    <Compile Include="..\Singulink.Net.Http.Api.Client.Tests\Infrastructure\CancellingProgress.cs" Link="Infrastructure\CancellingProgress.cs" />
+    <Compile Include="..\Singulink.Net.Http.Api.Client.Tests\Infrastructure\CancellationAssertions.cs" Link="Infrastructure\CancellationAssertions.cs" />
   </ItemGroup>
 </Project>

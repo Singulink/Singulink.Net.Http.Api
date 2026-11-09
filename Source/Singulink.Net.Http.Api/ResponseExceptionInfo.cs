@@ -421,6 +421,9 @@ internal readonly struct ResponseExceptionInfo
             429 => new TooManyRequestsApiException(message, innerException) {
                 ErrorCode = code, ErrorContent = content, RetryAfter = retryAfter, ReferenceId = referenceId, Location = location,
             },
+            431 => new HeadersTooLargeApiException(message, innerException) {
+                ErrorCode = code, ErrorContent = content, RetryAfter = retryAfter, ReferenceId = referenceId, Location = location,
+            },
             500 => new ServerErrorApiException(message, innerException) {
                 ErrorCode = code, ErrorContent = content, RetryAfter = retryAfter, ReferenceId = referenceId, Location = location,
             },

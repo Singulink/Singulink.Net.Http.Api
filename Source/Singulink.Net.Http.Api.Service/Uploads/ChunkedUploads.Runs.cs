@@ -25,6 +25,9 @@ internal sealed partial class ChunkedUploads
     private static readonly TimeSpan ReleaseRetryInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxReleaseRetryTime = TimeSpan.FromMinutes(10);
 
+    // How long a handler can take to stop or finish after its upload was cancelled before a warning is logged.
+    private static readonly TimeSpan SlowStopWarningTime = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// Completes an upload: <c>POST {path}/uploads/{id}/complete</c>. The first completion runs the handler, and the request streams its items. A later one
     /// attaches to the run, or gets the outcome once the run has ended.
@@ -32,16 +35,51 @@ internal sealed partial class ChunkedUploads
     public async Task CompleteAsync(HttpContext context, UploadEndpoint endpoint)
     {
         string userId = await _user.GetUserIdAsync(context);
-        var clientAborted = context.RequestAborted;
         var serializerOptions = GetSerializerOptions(context);
-        using var writer = new CompletionWriter(
-            context, serializerOptions.Encoder, clientAborted, endpoint.PingInterval ?? _options.CompletionPingInterval, _timeProvider);
+        using var writer = CreateCompletionWriter(context, endpoint, serializerOptions, StatusCodes.Status200OK);
+
+        await RunCompletionAsync(context, endpoint, writer, serializerOptions, ct => FindAsync(context, endpoint, 3, userId, ct));
+    }
+
+    /// <summary>
+    /// Creates the writer of the completion stream of a request that completes an upload or uploads it directly, which pings at the endpoint's interval and
+    /// starts the response with the specified status.
+    /// </summary>
+    private CompletionWriter CreateCompletionWriter(HttpContext context, UploadEndpoint endpoint, JsonSerializerOptions serializerOptions, int statusCode)
+    {
+        var pingInterval = endpoint.PingInterval ?? _options.CompletionPingInterval;
+        return new CompletionWriter(
+            context,
+            serializerOptions.Encoder,
+            clientAborted: context.RequestAborted,
+            pingInterval: pingInterval,
+            timeProvider: _timeProvider,
+            statusCode: statusCode);
+    }
+
+    /// <summary>
+    /// Completes an upload in a request that completes it, or that uploads it directly: runs the handler, attaches to its run, or writes its outcome, as
+    /// the upload's state requires.
+    /// </summary>
+    /// <param name="context">The context of the request.</param>
+    /// <param name="endpoint">The upload endpoint.</param>
+    /// <param name="writer">The writer of the request's completion stream.</param>
+    /// <param name="serializerOptions">The app's JSON options.</param>
+    /// <param name="find">Finds the upload, again each time the request looks at its state.</param>
+    private async Task RunCompletionAsync(
+        HttpContext context,
+        UploadEndpoint endpoint,
+        CompletionWriter writer,
+        JsonSerializerOptions serializerOptions,
+        Func<CancellationToken, ValueTask<(StoredUpload Upload, UploadMetadata Metadata)?>> find)
+    {
+        var clientAborted = writer.ClientAborted;
 
         try
         {
             while (!writer.IsClientGone)
             {
-                var found = await FindAsync(context, endpoint, 3, userId, clientAborted);
+                var found = await find(clientAborted);
 
                 if (found is not var (upload, metadata))
                 {
@@ -64,13 +102,13 @@ internal sealed partial class ChunkedUploads
                     return;
                 }
 
-                if (_releases.ContainsKey(record.Id))
+                if (_releases.ContainsKey(UserUploadId.Of(record)))
                 {
                     await writer.FailAsync(UploadErrors.StoreUnavailable(GuardedUploadStore.RetryAfter));
                     return;
                 }
 
-                if (_runs.TryGetValue(record.Id, out var localRun))
+                if (_runs.TryGetValue(UserUploadId.Of(record), out var localRun))
                 {
                     if (await ViewRunAsync(localRun, writer, isRunner: false))
                         return;
@@ -115,7 +153,7 @@ internal sealed partial class ChunkedUploads
                 {
                     // A request on this server claimed the run in the meantime, which the request attaches to. Otherwise another server claimed it, or a
                     // chunk is being written, and the request waits a moment before it looks again.
-                    if (!_runs.ContainsKey(record.Id) && await WaitForOtherServerAsync(writer, record))
+                    if (!_runs.ContainsKey(UserUploadId.Of(record)) && await WaitForOtherServerAsync(writer, record))
                         return;
 
                     continue;
@@ -172,7 +210,7 @@ internal sealed partial class ChunkedUploads
             return;
         }
 
-        _logger.LogError("The outcome of upload {UploadId} cannot be read.", record.Id);
+        _logger.LogError("The outcome of upload {UploadId} of user {UserId} cannot be read.", record.Id, record.UserId);
         await writer.FailAsync(UploadErrors.OutcomeUnreadable());
     }
 
@@ -212,8 +250,11 @@ internal sealed partial class ChunkedUploads
                     var upload = await _store.GetAsync(record.UserId, record.Id, cancellation.Token);
                     lastPoll = _timeProvider.GetTimestamp();
 
-                    if (upload is null || upload.Outcome is not null || upload.RunState is not UploadRunState.Running || _runs.ContainsKey(record.Id))
+                    if (upload is null || upload.Outcome is not null || upload.RunState is not UploadRunState.Running ||
+                        _runs.ContainsKey(UserUploadId.Of(record)))
+                    {
                         return false;
+                    }
                 }
             }
         }
@@ -281,7 +322,13 @@ internal sealed partial class ChunkedUploads
             return true;
         }
 
-        if (end.IsAborted)
+        if (end.IsCancelled)
+        {
+            await writer.FailAsync(UploadErrors.Cancelled());
+            return true;
+        }
+
+        if (end.IsDeleted)
         {
             await writer.FailAsync(UploadErrors.NotFound());
             return true;
@@ -304,8 +351,8 @@ internal sealed partial class ChunkedUploads
         CompletionWriter writer,
         JsonSerializerOptions serializerOptions)
     {
-        using var run = new UploadRun(claim, _stopping, _options.IdleExpiry, _timeProvider);
-        _runs[record.Id] = run;
+        using var run = new UploadRun(claim, _stopping, _options.ProcessingTimeout, _timeProvider);
+        _runs[UserUploadId.Of(record)] = run;
 
         // The handler's cancellation token, and the request's token that its services see, are the run's: the client disconnecting does not stop the
         // handler, so that the client gets its outcome when it comes back.
@@ -338,26 +385,31 @@ internal sealed partial class ChunkedUploads
 
         try
         {
-            (end, lateHandler) = await RunHandlerAsync(context, endpoint, record, metadata, run, serializerOptions);
+            string cancelKey = GetCancelKey(record.UserId, record.Id, metadata.Endpoint, metadata.RouteValues);
+            (end, lateHandler) = await RunHandlerAsync(context, endpoint, record, metadata, cancelKey, run, serializerOptions);
 
             try
             {
-                end = await StoreEndAsync(record, run, end);
+                end = await StoreEndAsync(record, cancelKey, run, end);
             }
             catch (Exception ex)
             {
                 // The completion requests attached to the run still get its end, and the claim lapses, which ends the upload as interrupted.
-                _logger.LogError(ex, "The end of the run of the handler of upload {UploadId} could not be stored.", record.Id);
+                _logger.LogError(ex, "The end of the run of the handler of upload {UploadId} of user {UserId} could not be stored.", record.Id, record.UserId);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "The run of the handler of upload {UploadId} failed. Its claim lapses, which ends the upload as interrupted.", record.Id);
+            _logger.LogError(
+                ex,
+                "The run of the handler of upload {UploadId} of user {UserId} failed. Its claim lapses, which ends the upload as interrupted.",
+                record.Id,
+                record.UserId);
         }
         finally
         {
             run.End(end ?? new RunEnd { Outcome = UploadOutcome.Failure(UploadErrors.Interrupted()) });
-            _runs.TryRemove(new KeyValuePair<string, UploadRun>(record.Id, run));
+            _runs.TryRemove(new KeyValuePair<UserUploadId, UploadRun>(UserUploadId.Of(record), run));
         }
 
         if (lateHandler is not null)
@@ -365,25 +417,68 @@ internal sealed partial class ChunkedUploads
     }
 
     /// <summary>
-    /// Runs the upload's handler while the claim of its run is renewed. A handler that is still running a lease after its time limit, although its
-    /// cancellation token was cancelled at the limit, is left to finish on its own, and the run ends as interrupted.
+    /// Runs the upload's handler while the claim of its run is renewed, unless the upload was cancelled before, and checks for a cancellation on another
+    /// server while it runs if the upload store is shared. A handler that is still running a lease after its time limit, although its cancellation token was
+    /// cancelled at the limit, is left to finish on its own, and the run ends as interrupted.
     /// </summary>
     /// <returns>How the run ended, and the task that waits for a handler that runs on after it, if one does.</returns>
     private async Task<(RunEnd End, Task? LateHandler)> RunHandlerAsync(
-        HttpContext context, UploadEndpoint endpoint, UploadRecord record, UploadMetadata metadata, UploadRun run, JsonSerializerOptions serializerOptions)
+        HttpContext context,
+        UploadEndpoint endpoint,
+        UploadRecord record,
+        UploadMetadata metadata,
+        string cancelKey,
+        UploadRun run,
+        JsonSerializerOptions serializerOptions)
     {
         var renewals = RenewAsync(run, record);
+        Task? cancelChecks = null;
 
         try
         {
+            // The run is claimed, so a cancellation that is written from now on finds the claim and leaves the upload to the run (see AbortAsync). A check
+            // that fails leaves the handler unstarted, and the upload with all its chunks for the completion made again, as a handler that can't run at the
+            // moment does.
+            bool isCancelled;
+
+            try
+            {
+                isCancelled = await _shortLivedStore.GetAsync(cancelKey, CancellationToken.None) is not null;
+            }
+            catch (Exception ex) when (ex is not ApiException)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Whether upload {UploadId} of user {UserId} was cancelled could not be checked, so its handler is not started.",
+                    record.Id,
+                    record.UserId);
+
+                var error = UploadErrors.CancellationUnavailable(CancellationRetryAfter, ex);
+                return (new RunEnd { RetryError = ToStreamError(error), RunnerError = error }, null);
+            }
+
+            if (isCancelled)
+                return (new RunEnd { IsCancelled = true }, null);
+
+            if (_store.SharingMode is StoreSharingMode.Shared)
+                cancelChecks = CheckCancellationAsync(run, record, cancelKey);
+
             var handler = InvokeHandlerAsync(context, endpoint, record, metadata, run, serializerOptions);
-            var deadline = Task.Delay(Min(_options.IdleExpiry + LeaseDuration, MaxTimerDelay), _timeProvider, run.RenewalToken);
+
+            using var stopWarning = run.Token.Register(() => {
+                if (run.CancelReason is RunCancelReason.Aborted)
+                    _ = WarnIfSlowToStopAsync(handler, record, metadata);
+            });
+
+            var deadline = Task.Delay(Min(_options.ProcessingTimeout + LeaseDuration, MaxTimerDelay), _timeProvider, run.RenewalToken);
 
             if (await Task.WhenAny(handler, deadline) != handler)
             {
                 _logger.LogError(
-                    "The handler of upload {UploadId} did not stop when it reached its time limit, so the upload is ended as interrupted while it runs on.",
-                    record.Id);
+                    "The handler of upload {UploadId} of user {UserId} did not stop when it reached its time limit, so the upload is ended as interrupted " +
+                    "while it runs on.",
+                    record.Id,
+                    record.UserId);
 
                 return (new RunEnd { Outcome = UploadOutcome.Failure(UploadErrors.Interrupted()) }, ObserveLateHandlerAsync(handler, record));
             }
@@ -400,9 +495,73 @@ internal sealed partial class ChunkedUploads
         {
             run.StopRenewing();
             await renewals;
-        }
 
-        static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
+            if (cancelChecks is not null)
+                await cancelChecks;
+        }
+    }
+
+    /// <summary>
+    /// Logs a warning if the handler of an upload whose cancellation token was cancelled for the upload's cancellation has not stopped or finished 10 seconds
+    /// later.
+    /// </summary>
+    private async Task WarnIfSlowToStopAsync(Task handler, UploadRecord record, UploadMetadata metadata)
+    {
+        if (await Task.WhenAny(handler, Task.Delay(SlowStopWarningTime, _timeProvider)) != handler)
+        {
+            _logger.LogWarning(
+                "The handler of upload {UploadId} of user {UserId} at endpoint {Endpoint} has not stopped or finished {Seconds} seconds after the upload was " +
+                "cancelled.",
+                record.Id,
+                record.UserId,
+                metadata.Endpoint,
+                SlowStopWarningTime.TotalSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Checks at an interval whether the upload of a run was cancelled on another server, until the run has ended or its handler's token is cancelled, and
+    /// cancels the token when it was. A check that fails is logged, and the next one is made at the interval.
+    /// </summary>
+    private async Task CheckCancellationAsync(UploadRun run, UploadRecord record, string cancelKey)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(_options.CancelCheckInterval, _timeProvider);
+
+            while (await timer.WaitForNextTickAsync(run.RenewalToken) && !run.Token.IsCancellationRequested)
+            {
+                bool isCancelled;
+
+                try
+                {
+                    isCancelled = await _shortLivedStore.GetAsync(cancelKey, run.RenewalToken) is not null;
+                }
+                catch (Exception ex) when (!run.RenewalToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Whether upload {UploadId} of user {UserId} was cancelled could not be checked. The next check follows at the interval.",
+                        record.Id,
+                        record.UserId);
+                    continue;
+                }
+
+                if (isCancelled)
+                {
+                    run.Cancel(RunCancelReason.Aborted);
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (run.RenewalToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            // Such as an exception of a callback of the handler's cancellation token.
+            _logger.LogError(ex, "The checks for the cancellation of upload {UploadId} of user {UserId} failed.", record.Id, record.UserId);
+        }
     }
 
     /// <summary>
@@ -439,7 +598,7 @@ internal sealed partial class ChunkedUploads
         catch (ServiceUnavailableApiException ex) when (ex.ErrorCode is UploadErrorCodes.StoreUnavailable)
         {
             var release = new object();
-            _releases[record.Id] = release;
+            _releases[UserUploadId.Of(record)] = release;
             _ = KeepReleasingAsync(record, claim, renewedTimestamp, release);
         }
     }
@@ -463,7 +622,11 @@ internal sealed partial class ChunkedUploads
                 // A claim that could not be renewed for its lease has lapsed, and the next request for the upload ends it as interrupted.
                 if (_timeProvider.GetElapsedTime(renewed) >= LeaseDuration)
                 {
-                    _logger.LogError(failure, "The claim of the run of upload {UploadId} could not be released or renewed, so it lapsed.", record.Id);
+                    _logger.LogError(
+                        failure,
+                        "The claim of the run of upload {UploadId} of user {UserId} could not be released or renewed, so it lapsed.",
+                        record.Id,
+                        record.UserId);
                     return;
                 }
 
@@ -498,22 +661,29 @@ internal sealed partial class ChunkedUploads
 
             _logger.LogError(
                 failure,
-                "The claim of the run of upload {UploadId} could not be released for 10 minutes, so it lapses, which ends the upload as interrupted.",
-                record.Id);
+                "The claim of the run of upload {UploadId} of user {UserId} could not be released for 10 minutes, so it lapses and ends the upload.",
+                record.Id,
+                record.UserId);
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
             _logger.LogWarning(
-                failure, "The claim of the run of upload {UploadId} could not be released before the application stopped, so it lapses.", record.Id);
+                failure,
+                "The claim of the run of upload {UploadId} of user {UserId} could not be released before the application stopped, so it lapses.",
+                record.Id,
+                record.UserId);
         }
         catch (Exception ex)
         {
             _logger.LogError(
-                ex, "The claim of the run of upload {UploadId} could not be released, so it lapses, which ends the upload as interrupted.", record.Id);
+                ex,
+                "The claim of the run of upload {UploadId} of user {UserId} could not be released, so it lapses, which ends the upload as interrupted.",
+                record.Id,
+                record.UserId);
         }
         finally
         {
-            _releases.TryRemove(new KeyValuePair<string, object>(record.Id, release));
+            _releases.TryRemove(new KeyValuePair<UserUploadId, object>(UserUploadId.Of(record), release));
         }
     }
 
@@ -525,11 +695,18 @@ internal sealed partial class ChunkedUploads
         try
         {
             await handler;
-            _logger.LogWarning("The handler of upload {UploadId} finished after the upload was ended as interrupted.", record.Id);
+            _logger.LogWarning(
+                "The handler of upload {UploadId} of user {UserId} finished after the upload was ended as interrupted.",
+                record.Id,
+                record.UserId);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "The handler of upload {UploadId} failed after the upload was ended as interrupted.", record.Id);
+            _logger.LogWarning(
+                ex,
+                "The handler of upload {UploadId} of user {UserId} failed after the upload was ended as interrupted.",
+                record.Id,
+                record.UserId);
         }
     }
 
@@ -606,7 +783,11 @@ internal sealed partial class ChunkedUploads
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "The API exception handler failed to map an exception of the handler of upload {UploadId}.", record.Id);
+            _logger.LogError(
+                ex,
+                "The API exception handler failed to map an exception of the handler of upload {UploadId} of user {UserId}.",
+                record.Id,
+                record.UserId);
 
             if (exception is ApiException apiException)
                 return apiException;
@@ -615,7 +796,11 @@ internal sealed partial class ChunkedUploads
         var referenceId = Guid.CreateVersion7();
 
         _logger.LogError(
-            exception, "Unhandled exception while running the handler of upload {UploadId} (reference ID: {ReferenceId}).", record.Id, referenceId);
+            exception,
+            "Unhandled exception while running the handler of upload {UploadId} of user {UserId} (reference ID: {ReferenceId}).",
+            record.Id,
+            record.UserId,
+            referenceId);
 
         string message = _isDevelopment
             ? ResponseExceptionInfo.FromException(exception, developmentMode: true).Message
@@ -628,22 +813,24 @@ internal sealed partial class ChunkedUploads
     {
         var reason = run.CancelReason;
 
-        if (reason is RunCancelReason.Aborted)
-            return new RunEnd { IsAborted = true };
+        if (IsCancelledReason(reason))
+            return new RunEnd { IsCancelled = true };
 
         // An orderly shutdown stops the handler through its token, so its exception tells nothing more.
         if (reason is RunCancelReason.Stopping)
         {
             _logger.LogWarning(
-                "The handler of upload {UploadId} was stopped by the application's shutdown before it finished, so the upload is ended as interrupted.",
-                record.Id);
+                "The handler of upload {UploadId} of user {UserId} was stopped by the application's shutdown before it finished, so the upload is ended as " +
+                "interrupted.",
+                record.Id,
+                record.UserId);
         }
         else
         {
             _logger.LogWarning(
                 exception,
-                "The handler of upload {UploadId} was stopped ({Reason}) before it finished, so the upload is ended as interrupted.",
-                record.Id,
+                "The handler of upload {UploadId} of user {UserId} was stopped ({Reason}) before it finished, so the upload is ended as interrupted.",
+                record.Id, record.UserId,
                 reason);
         }
 
@@ -651,28 +838,92 @@ internal sealed partial class ChunkedUploads
     }
 
     /// <summary>
-    /// Stores how a run ended: releases the claim for a run that can run again, deletes an aborted upload, or stores the outcome.
+    /// Stores how a run ended: deletes a cancelled upload, releases the claim for a run that can run again, or stores the outcome. A run whose token the
+    /// upload's cancellation cancelled, and that ended without an outcome, is cancelled too. The cancellation is removed once the run has ended the upload
+    /// after it found it (see <see cref="RemoveCancellationAsync"/>), unless a request can create the upload again (see <see cref="MayBeCreatedAgain"/>).
     /// </summary>
     /// <returns>How the run ended for the completion requests attached to it, which is the outcome that another server stored if it ended the run
     /// first.</returns>
-    private async Task<RunEnd> StoreEndAsync(UploadRecord record, UploadRun run, RunEnd end)
+    private async Task<RunEnd> StoreEndAsync(UploadRecord record, string cancelKey, UploadRun run, RunEnd end)
     {
-        if (end.IsNotStarted || end.RetryError is not null)
+        // The reason is read once: a cancellation that arrives once the run has decided how it ends leaves its key, which the next run finds.
+        var reason = run.CancelReason;
+        bool isCancelled = end.IsCancelled || (end.Outcome is null && IsCancelledReason(reason));
+
+        if (!isCancelled && (end.IsNotStarted || end.RetryError is not null))
         {
             await ReleaseClaimAsync(record, run.Claim, run.RenewedTimestamp);
             return end;
         }
 
-        if (end.IsAborted)
+        try
         {
-            await _store.DeleteAsync(record, CancellationToken.None);
-            _total.End(record.Id);
-            return end;
-        }
+            if (isCancelled)
+            {
+                if (await _store.DeleteAsync(record, CancellationToken.None))
+                {
+                    await _counters.SubtractAsync(record);
+                    _metrics?.UploadEnded("cancelled");
+                }
 
+                return end.IsCancelled ? end : new RunEnd { IsCancelled = true };
+            }
+
+            return await StoreOutcomeAsync(record, end);
+        }
+        finally
+        {
+            if ((isCancelled || IsCancelledReason(reason)) && !MayBeCreatedAgain(record))
+                await RemoveCancellationAsync(record, cancelKey);
+        }
+    }
+
+    /// <summary>
+    /// Gets how an upload ended with an outcome, for the metrics: <c>succeeded</c>, <c>interrupted</c> or <c>failed</c>.
+    /// </summary>
+    private static string GetEndName(UploadOutcome outcome)
+    {
+        if (outcome.Error is not { } error)
+            return "succeeded";
+
+        return error.Code is UploadErrorCodes.Interrupted ? "interrupted" : "failed";
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether a run's token was cancelled for the upload's cancellation, or because the upload was deleted while it ran.
+    /// </summary>
+    private static bool IsCancelledReason(RunCancelReason reason) => reason is RunCancelReason.Aborted or RunCancelReason.Deleted;
+
+    /// <summary>
+    /// Removes the cancellation of an upload that its run has ended. A removal that fails is logged, and the cancellation stays until it expires.
+    /// </summary>
+    private async ValueTask RemoveCancellationAsync(UploadRecord record, string cancelKey)
+    {
+        try
+        {
+            await _shortLivedStore.RemoveAsync(cancelKey, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "The cancellation of upload {UploadId} of user {UserId} could not be removed, and stays until it expires.",
+                record.Id,
+                record.UserId);
+        }
+    }
+
+    /// <summary>
+    /// Stores the outcome of a run.
+    /// </summary>
+    /// <returns>How the run ended for the completion requests attached to it (see <see cref="StoreEndAsync"/>).</returns>
+    private async Task<RunEnd> StoreOutcomeAsync(UploadRecord record, RunEnd end)
+    {
         if (await _store.TrySetOutcomeAsync(record, end.Outcome!.Write(), CancellationToken.None))
         {
-            _total.End(record.Id);
+            await _counters.SubtractAsync(record);
+            _metrics?.UploadEnded(GetEndName(end.Outcome));
+
             return end;
         }
 
@@ -682,12 +933,20 @@ internal sealed partial class ChunkedUploads
         if (upload?.Outcome is { } storedOutcome && UploadOutcome.Read(storedOutcome) is { } outcome)
         {
             _logger.LogWarning(
-                "The outcome of the handler of upload {UploadId} was not stored, because the upload had already been ended as interrupted.", record.Id);
+                "The outcome of the handler of upload {UploadId} of user {UserId} was not stored, because the upload had already been ended as interrupted.",
+                record.Id,
+                record.UserId);
 
             return new RunEnd { Outcome = outcome };
         }
 
-        return new RunEnd { IsAborted = true };
+        if (upload is null)
+            _logger.LogInformation(
+                "The handler of upload {UploadId} of user {UserId} finished, but the upload had been deleted, so its outcome was not stored.",
+                record.Id,
+                record.UserId);
+
+        return new RunEnd { IsDeleted = true };
     }
 
     /// <summary>
@@ -719,14 +978,19 @@ internal sealed partial class ChunkedUploads
                     // The claim is renewed again at the next interval, unless its lease runs out before then.
                     if (_timeProvider.GetElapsedTime(run.RenewedTimestamp) + RenewInterval < LeaseDuration)
                     {
-                        _logger.LogWarning(ex, "The claim of the run of the handler of upload {UploadId} could not be renewed.", record.Id);
+                        _logger.LogWarning(
+                            ex,
+                            "The claim of the run of the handler of upload {UploadId} of user {UserId} could not be renewed.",
+                            record.Id,
+                            record.UserId);
                         continue;
                     }
 
                     _logger.LogError(
                         ex,
-                        "The claim of the run of the handler of upload {UploadId} could not be renewed before its lease ran out, so the handler is stopped.",
-                        record.Id);
+                        "The claim of the run of upload {UploadId} of user {UserId} could not be renewed before its lease ran out, so the handler is stopped.",
+                        record.Id,
+                        record.UserId);
 
                     run.Cancel(RunCancelReason.ClaimLost);
                     return;
@@ -738,7 +1002,7 @@ internal sealed partial class ChunkedUploads
                     continue;
                 }
 
-                run.Cancel(await IsDeletedAsync(run, record) ? RunCancelReason.Aborted : RunCancelReason.ClaimLost);
+                run.Cancel(await IsDeletedAsync(run, record) ? RunCancelReason.Deleted : RunCancelReason.ClaimLost);
                 return;
             }
         }
@@ -748,13 +1012,13 @@ internal sealed partial class ChunkedUploads
         catch (Exception ex)
         {
             // Such as an exception of a callback of the handler's cancellation token.
-            _logger.LogError(ex, "The renewals of the claim of the run of the handler of upload {UploadId} failed.", record.Id);
+            _logger.LogError(ex, "The renewals of the claim of the run of the handler of upload {UploadId} of user {UserId} failed.", record.Id, record.UserId);
         }
     }
 
     /// <summary>
-    /// Gets a value indicating whether the upload of a run whose claim was lost was deleted, such as by an abort on another server, rather than ended by
-    /// another server.
+    /// Gets a value indicating whether the upload of a run whose claim was lost was deleted, such as by a cancellation on another server that found the
+    /// claim lapsed, rather than ended by another server.
     /// </summary>
     private async ValueTask<bool> IsDeletedAsync(UploadRun run, UploadRecord record)
     {
@@ -767,7 +1031,7 @@ internal sealed partial class ChunkedUploads
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Upload {UploadId} could not be read after the claim of its run was lost.", record.Id);
+            _logger.LogWarning(ex, "Upload {UploadId} of user {UserId} could not be read after the claim of its run was lost.", record.Id, record.UserId);
             return false;
         }
     }

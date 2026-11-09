@@ -27,8 +27,11 @@ public sealed class VerifiedPasskey
     public string UserId => Passkey.UserId;
 
     /// <summary>
-    /// Gets the passkey, with the values it reported in this ceremony. They have already been saved through <see cref="IPasskeyStore.UpdateAsync"/>.
+    /// Gets the passkey, with the values it reported in this ceremony.
     /// </summary>
+    /// <remarks>
+    /// They have already been saved through <see cref="IPasskeyStore.UpdateAsync"/>.
+    /// </remarks>
     public PasskeyRecord Passkey { get; }
 
     /// <summary>

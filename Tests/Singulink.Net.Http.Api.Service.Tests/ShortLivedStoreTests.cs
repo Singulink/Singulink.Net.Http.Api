@@ -280,6 +280,57 @@ public abstract class ShortLivedStoreTests
     }
 
     [TestMethod]
+    public async Task Set_AddsOrReplacesAValueOrACounter_WithTheLifetimeFromNow()
+    {
+        var store = CreateStore();
+
+        await store.SetAsync(Key, "first", Lifetime);
+        (await store.GetAsync(Key)).ShouldBe("first");
+
+        Clock.Advance(Lifetime - TimeSpan.FromSeconds(1));
+        await store.SetAsync(Key, "second", Lifetime);
+        Clock.Advance(Lifetime - TimeSpan.FromSeconds(1));
+        (await store.GetAsync(Key)).ShouldBe("second");
+
+        Clock.Advance(TimeSpan.FromSeconds(1));
+        (await store.GetAsync(Key)).ShouldBeNull();
+
+        await store.IncrementAsync("test:counter", 3, Lifetime);
+        await store.SetAsync("test:counter", "value", TimeSpan.FromSeconds(10));
+        (await store.TryAddAsync("test:counter", "other", Lifetime)).ShouldBeFalse();
+        (await store.GetAsync("test:counter")).ShouldBe("value");
+
+        Clock.Advance(TimeSpan.FromSeconds(10));
+        (await store.GetAsync("test:counter")).ShouldBeNull();
+    }
+
+    [TestMethod]
+    public async Task Set_ShorterLifetime_ReplacesALongerOne()
+    {
+        var store = CreateStore();
+
+        await store.SetAsync(Key, "value", Lifetime);
+        await store.SetAsync(Key, "value", TimeSpan.FromSeconds(10));
+
+        Clock.Advance(TimeSpan.FromSeconds(10));
+        (await store.GetAsync(Key)).ShouldBeNull();
+    }
+
+    [TestMethod]
+    public async Task Get_WhileSetConcurrently_AlwaysFindsAValue()
+    {
+        var store = CreateStore();
+        await store.SetAsync(Key, "value", Lifetime);
+
+        var results = Concurrently.RunTasks(threads: 8, rounds: 50, async _ => {
+            await store.SetAsync(Key, "value", Lifetime);
+            return await store.GetAsync(Key);
+        });
+
+        results.SelectMany(r => r).ShouldAllBe(value => value == "value");
+    }
+
+    [TestMethod]
     public async Task Increment_OnValueThatIsNotACount_Throws()
     {
         var store = CreateStore();
@@ -295,6 +346,7 @@ public abstract class ShortLivedStoreTests
         var store = CreateStore();
 
         await Should.ThrowAsync<ArgumentOutOfRangeException>(async () => await store.TryAddAsync(Key, "value", TimeSpan.Zero));
+        await Should.ThrowAsync<ArgumentOutOfRangeException>(async () => await store.SetAsync(Key, "value", TimeSpan.Zero));
         await Should.ThrowAsync<ArgumentOutOfRangeException>(async () => await store.IncrementAsync(Key, 1, TimeSpan.FromSeconds(-1)));
         await Should.ThrowAsync<ArgumentOutOfRangeException>(async () => await store.AddAsync("test:", "value", TimeSpan.Zero));
     }

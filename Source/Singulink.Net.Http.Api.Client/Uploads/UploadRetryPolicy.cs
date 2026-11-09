@@ -73,8 +73,10 @@ internal sealed class UploadRetryPolicy
 
     /// <summary>
     /// Gets how long to wait before making a request again that failed with the exception, or <see langword="null"/> if it must not be made again: the
-    /// failure is not retryable (see <see cref="IsRetryable(Exception)"/>), or the wait would end after the retry timeout. The wait is the failure's
-    /// <see cref="ApiException.RetryAfter"/> if it has one that is not zero, and the backoff otherwise (see <see cref="GetBackoff(int, double)"/>).
+    /// failure is not retryable (see <see cref="IsRetryable(Exception)"/>), or the wait would end after the retry timeout. The wait is the backoff (see
+    /// <see cref="GetBackoff(int, double)"/>), or the failure's <see cref="ApiException.RetryAfter"/> if it has one that is not zero, raised at random (see
+    /// <see cref="GetRetryAfterWait(TimeSpan, double)"/>). A retry time that would end after the retry timeout is not waited for; one that fits is waited for,
+    /// raised at random but never past the timeout.
     /// </summary>
     /// <param name="exception">The exception that the request failed with.</param>
     /// <param name="failedAttempts">The number of failed attempts of the request, from 1.</param>
@@ -83,18 +85,33 @@ internal sealed class UploadRetryPolicy
         if (!IsRetryable(exception))
             return null;
 
-        var delay = exception is ApiException { RetryAfter: { } retryAfter } && retryAfter > TimeSpan.Zero
-            ? retryAfter
-            : NextBackoff(failedAttempts);
+        if (exception is not ApiException { RetryAfter: { } retryAfter } || retryAfter <= TimeSpan.Zero)
+            return WithinRetryTimeout(NextBackoff(failedAttempts));
 
-        if (delay > MaxWait)
-            delay = MaxWait;
-
-        if (_retryTimeout != Timeout.InfiniteTimeSpan && _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastSuccessTimestamp)) + delay > _retryTimeout)
+        if (WithinRetryTimeout(retryAfter) is not { } delay)
             return null;
 
-        return delay;
+        var wait = GetRetryAfterWait(delay, NextRandom());
+        var timeLeft = GetTimeLeft();
+
+        return wait < timeLeft ? wait : timeLeft;
     }
+
+    /// <summary>
+    /// Gets how long to wait for a retry time that a failure has: the retry time raised by up to half at random, so that clients that a service told to
+    /// come back together don't come back together.
+    /// </summary>
+    /// <param name="retryAfter">The retry time.</param>
+    /// <param name="random">A random value from 0 (inclusive) to 1 (exclusive).</param>
+    public static TimeSpan GetRetryAfterWait(TimeSpan retryAfter, double random) => TimeSpan.FromTicks((long)(retryAfter.Ticks * (1 + (random / 2))));
+
+    /// <summary>
+    /// Gets how long to wait before making a request again after the specified number of failed attempts, whatever it failed with: the backoff (see
+    /// <see cref="GetBackoff(int, double)"/>), or <see langword="null"/> if the wait would end after the retry timeout. Its only use is a direct upload that
+    /// failed without a response, which is made again once whatever it failed with.
+    /// </summary>
+    /// <param name="failedAttempts">The number of failed attempts of the request, from 1.</param>
+    public TimeSpan? GetRetryDelay(int failedAttempts) => WithinRetryTimeout(NextBackoff(failedAttempts));
 
     /// <summary>
     /// Waits for the specified time, measured with the time provider.
@@ -116,5 +133,31 @@ internal sealed class UploadRetryPolicy
         lock (SharedRandom)
             return SharedRandom.NextDouble();
 #endif
+    }
+
+    /// <summary>
+    /// Gets the time until the retry timeout ends, at most the longest wait of a timer.
+    /// </summary>
+    private TimeSpan GetTimeLeft()
+    {
+        if (_retryTimeout == Timeout.InfiniteTimeSpan)
+            return MaxWait;
+
+        var timeLeft = _retryTimeout - _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastSuccessTimestamp));
+        return timeLeft < MaxWait ? timeLeft : MaxWait;
+    }
+
+    /// <summary>
+    /// Gets a wait, at most the longest wait of a timer, or <see langword="null"/> if it would end after the retry timeout.
+    /// </summary>
+    private TimeSpan? WithinRetryTimeout(TimeSpan delay)
+    {
+        if (delay > MaxWait)
+            delay = MaxWait;
+
+        if (_retryTimeout != Timeout.InfiniteTimeSpan && _timeProvider.GetElapsedTime(Interlocked.Read(ref _lastSuccessTimestamp)) + delay > _retryTimeout)
+            return null;
+
+        return delay;
     }
 }

@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 using Singulink.Net.Http.Api.Service.Uploads;
 
 namespace Singulink.Net.Http.Api.Service;
@@ -44,16 +46,16 @@ public static class ChunkedUploadEndpointRouteBuilderExtensions
     /// <returns>A builder for adding conventions to all the endpoints of the upload, such as rate limits.</returns>
     /// <remarks>
     /// <para>
-    /// The endpoints are <c>POST {pattern}/uploads</c>, which creates an upload, <c>PUT</c>, <c>GET</c> and <c>DELETE</c> on
-    /// <c>{pattern}/uploads/{id}</c>, which send a chunk, get the upload's status and abort it, and <c>POST {pattern}/uploads/{id}/complete</c>, which runs
-    /// the handler and streams its result or items, with ping records while it runs. Every request needs a session of the user who created the upload,
-    /// and the endpoint and route values that it was created with. The validator and the handler bind route values and the query string as any endpoint
-    /// does, and take no request body.
+    /// The endpoints are <c>POST {pattern}/uploads</c>, which creates an upload, <c>PUT</c>, <c>GET</c> and <c>DELETE</c> on <c>{pattern}/uploads/{id}</c>,
+    /// which send a chunk, get the upload's status and abort it, <c>POST {pattern}/uploads/{id}/complete</c>, which runs the handler and streams its result or
+    /// items, with ping records while it runs, and <c>POST {pattern}/uploads/direct</c>, which uploads a file directly, in one request: it creates an upload
+    /// with the file as its body and completes it. Every request needs a session of the user who created the upload, and the endpoint and route values that it
+    /// was created with. The validator and the handler bind route values and the query string as any endpoint does, and take no request body.
     /// </para>
     /// <para>
     /// The handler runs at most once for an upload, and keeps running when the client disconnects: a repeated completion request attaches to the run, or
     /// gets its outcome once it has ended. Its cancellation token is cancelled when the upload is aborted, when it has run for
-    /// <see cref="ChunkedUploadOptions.IdleExpiry"/>, and when the application stops, which ends the upload with
+    /// <see cref="ChunkedUploadOptions.ProcessingTimeout"/>, and when the application stops, which ends the upload with
     /// <see cref="UploadErrorCodes.Interrupted"/>. A handler that fails with a <c>503</c>, a <see cref="ServiceUnavailableApiException"/> or an exception
     /// that the app's <see cref="IApiExceptionHandler"/> maps to one, leaves the upload with all its chunks and its file, so that the client's next completion
     /// request runs it again.
@@ -88,8 +90,10 @@ public static class ChunkedUploadEndpointRouteBuilderExtensions
 
         var options = new ChunkedUploadEndpointOptions();
         configure?.Invoke(options);
+        options.Freeze();
 
         var endpoint = UploadEndpoint.Create(endpoints.ServiceProvider, validator, handler, options);
+        uploads.AddEndpoint(endpoint);
 
         const string Upload = $"/{{{ChunkedUploads.IdRouteParameter}}}";
         var group = endpoints.MapGroup(pattern).MapGroup("/" + ChunkedUploadProtocol.UploadsSegment);
@@ -102,6 +106,10 @@ public static class ChunkedUploadEndpointRouteBuilderExtensions
         group.MapPut(Upload, (RequestDelegate)(context => uploads.WriteChunkAsync(context, endpoint))).DisableRequestTimeout();
 
         group.MapPost($"{Upload}/{ChunkedUploadProtocol.CompleteSegment}", (RequestDelegate)(context => uploads.CompleteAsync(context, endpoint)))
+            .DisableRequestTimeout();
+
+        // A direct upload takes as long as its body and its handler.
+        group.MapPost("/" + ChunkedUploadProtocol.DirectSegment, (RequestDelegate)(context => uploads.UploadDirectAsync(context, endpoint)))
             .DisableRequestTimeout();
 
         return group;

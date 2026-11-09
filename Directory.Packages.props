@@ -20,6 +20,7 @@
 
   <ItemGroup Label="Singulink">
     <PackageVersion Include="Singulink.Enums" Version="3.0.0" />
+    <PackageVersion Include="Singulink.IO.FileSystem" Version="3.2.0" />
   </ItemGroup>
 
   <ItemGroup Label="Third-Party">
@@ -44,6 +45,7 @@
 
   <ItemGroup Label="Testing">
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.Testing" Version="10.11.0" />
     <PackageVersion Include="PrefixClassName.MsTest" Version="2.0.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
   </ItemGroup>

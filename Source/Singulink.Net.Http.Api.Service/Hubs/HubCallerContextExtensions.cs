@@ -18,9 +18,12 @@ public static class HubCallerContextExtensions
     }
 
     /// <summary>
-    /// Gets the session token for the hub connection. If the user is not signed in, throws an <see cref="UnauthorizedApiException"/> (which is reported to
-    /// the client as an API error when the <see cref="ApiExceptionHubFilter"/> is registered).
+    /// Gets the session token for the hub connection.
     /// </summary>
+    /// <remarks>
+    /// If the user is not signed in, throws an <see cref="UnauthorizedApiException"/> (which is reported to the client as an API error when the
+    /// <see cref="ApiExceptionHubFilter"/> is registered).
+    /// </remarks>
     /// <param name="context">The hub caller context.</param>
     /// <param name="sessionOptions">Option flags for retrieving the session token.</param>
     /// <exception cref="InvalidOperationException">The hub connection does not have an HTTP context or session handling is not registered.</exception>

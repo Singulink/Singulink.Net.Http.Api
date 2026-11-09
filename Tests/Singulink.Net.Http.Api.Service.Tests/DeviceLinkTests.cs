@@ -470,7 +470,7 @@ public abstract class DeviceLinkTests
         var start = await context.Links.StartAsync(pkce.Challenge, Device, DeviceIp, null);
         (await context.Links.ApproveAsync(start.Code, Approver)).Outcome.ShouldBe(DeviceLinkApprovalOutcome.Approved);
 
-        hooks.FailOnce("Remove", ToolkitKeys.DeviceLinkCode);
+        hooks.FailOnceWithPrefix("Remove", ToolkitKeys.DeviceLinkCode);
         await Should.ThrowAsync<InvalidOperationException>(() => context.Links.PollAsync(start.Id, start.PollSecret));
 
         var status = (await context.Links.PollAsync(start.Id, start.PollSecret)).ShouldNotBeNull();
@@ -510,7 +510,7 @@ public abstract class DeviceLinkTests
                 code = key[ToolkitKeys.DeviceLinkCode.Length..];
         };
 
-        hooks.FailOnce("TryAdd", ToolkitKeys.DeviceLink);
+        hooks.FailOnceWithPrefix("TryAdd", ToolkitKeys.DeviceLink);
         await Should.ThrowAsync<InvalidOperationException>(() => context.Links.StartAsync(Client.Pkce.Create().Challenge, Device, DeviceIp, null));
 
         // No one can approve a device that could never collect its sign-in code.
@@ -571,7 +571,7 @@ public abstract class DeviceLinkTests
         for (int i = 0; i < 4; i++)
             (await context.Links.FindAsync(wrongCode, Approver)).ShouldBeNull();
 
-        hooks.FailOnce("Get", ToolkitKeys.DeviceLinkCode);
+        hooks.FailOnceWithPrefix("Get", ToolkitKeys.DeviceLinkCode);
         await Should.ThrowAsync<InvalidOperationException>(() => context.Links.FindAsync(wrongCode, Approver));
 
         (await context.Links.FindAsync(wrongCode, Approver)).ShouldBeNull();

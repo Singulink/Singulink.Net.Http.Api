@@ -40,7 +40,7 @@ public sealed class PasskeyFixture : IDisposable
         services.AddScoped<IPasskeyStore>(_ => Store);
 
         _provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
-        ShortLivedStore = _provider.GetRequiredService<IShortLivedStore>();
+        ShortLivedStore = _provider.GetRequiredKeyedService<IShortLivedStore>(ShortLivedStoreKeys.SignIn);
     }
 
     public InMemoryPasskeyStore Store { get; } = new();

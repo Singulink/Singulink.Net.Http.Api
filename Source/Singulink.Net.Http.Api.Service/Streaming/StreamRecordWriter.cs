@@ -7,7 +7,7 @@ namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
 /// Writes the records of a <see cref="StreamingResponse"/> to a response, flushing each record as it is written. The first record starts the response with
-/// a <c>200 OK</c> status and the streaming content type.
+/// its status, <c>200 OK</c> unless the writer has another, and the streaming content type.
 /// </summary>
 internal sealed class StreamRecordWriter : IDisposable
 {
@@ -16,6 +16,7 @@ internal sealed class StreamRecordWriter : IDisposable
     private readonly HttpContext _httpContext;
     private readonly Utf8JsonWriter _jsonWriter;
     private readonly CancellationToken _cancellationToken;
+    private readonly int _statusCode;
     private bool _started;
 
     /// <summary>
@@ -24,11 +25,13 @@ internal sealed class StreamRecordWriter : IDisposable
     /// <param name="httpContext">The context whose response the records are written to.</param>
     /// <param name="encoder">The encoder of the JSON of the records, such as the one of the app's JSON options.</param>
     /// <param name="cancellationToken">A token that cancels flushing the records, such as when the client disconnects.</param>
-    public StreamRecordWriter(HttpContext httpContext, JavaScriptEncoder? encoder, CancellationToken cancellationToken)
+    /// <param name="statusCode">The status of the response. Default is <c>200 OK</c>.</param>
+    public StreamRecordWriter(HttpContext httpContext, JavaScriptEncoder? encoder, CancellationToken cancellationToken, int statusCode = StatusCodes.Status200OK)
     {
         _httpContext = httpContext;
         _jsonWriter = new Utf8JsonWriter(httpContext.Response.BodyWriter, new JsonWriterOptions { Encoder = encoder });
         _cancellationToken = cancellationToken;
+        _statusCode = statusCode;
     }
 
     /// <summary>
@@ -91,7 +94,7 @@ internal sealed class StreamRecordWriter : IDisposable
             return;
 
         var response = _httpContext.Response;
-        response.StatusCode = StatusCodes.Status200OK;
+        response.StatusCode = _statusCode;
         response.ContentType = StreamingResponse.ContentType;
         _httpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
         _started = true;

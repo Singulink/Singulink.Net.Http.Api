@@ -1,5 +1,7 @@
 using System.Net;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Singulink.IO;
 
 namespace Singulink.Net.Http.Api.Service;
 
@@ -19,7 +21,7 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
     private readonly CloudflareNetworks _networks;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly CloudflareForwardingOptions _options;
-    private readonly string _savedRangesPath;
+    private readonly IAbsoluteFilePath _savedRangesFile;
     private readonly ILogger _logger;
 
     private bool _lastRefreshSucceeded;
@@ -31,16 +33,14 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
         CloudflareNetworks networks,
         IHttpClientFactory httpClientFactory,
         IOptions<CloudflareForwardingOptions> options,
-        IHostEnvironment environment,
         ILogger<CloudflareRangeRefresher> logger)
     {
         _networks = networks;
         _httpClientFactory = httpClientFactory;
         _options = options.Value;
+        _options.Freeze();
         _logger = logger;
-
-        // Options validation ensures the path is set.
-        _savedRangesPath = Path.GetFullPath(_options.SavedRangesPath!, environment.ContentRootPath);
+        _savedRangesFile = _options.SavedRangesFile;
     }
 
     private TimeSpan RetryDelay
@@ -97,6 +97,7 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
     {
         var exception = _options.DownloadRanges ? await TryDownloadAsync(cancellationToken) : await TryReadAsync(cancellationToken);
         _lastRefreshSucceeded = exception is null;
+        _networks.EndRefresh(DateTimeOffset.UtcNow, exception);
 
         return exception;
     }
@@ -117,8 +118,8 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
             return ex;
         }
 
-        _networks.Set(networks);
         _rangesDate = DateTimeOffset.UtcNow;
+        _networks.Set(networks, _rangesDate);
         LogDownloaded(networks.Length);
 
         await SaveAsync(networks, cancellationToken);
@@ -132,10 +133,10 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
     {
         try
         {
-            var (networks, savedAt) = await CloudflareRangesFile.ReadAsync(_savedRangesPath, cancellationToken);
+            var (networks, savedAt) = await CloudflareRangesFile.ReadAsync(_savedRangesFile, cancellationToken);
 
-            if (_networks.Set(networks))
-                LogUsingSavedRangesOnly(networks.Length, _savedRangesPath, savedAt);
+            if (_networks.Set(networks, savedAt))
+                LogUsingSavedRangesOnly(networks.Length, _savedRangesFile.PathDisplay, savedAt);
 
             return null;
         }
@@ -174,12 +175,12 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
     {
         try
         {
-            await CloudflareRangesFile.WriteAsync(_savedRangesPath, networks, cancellationToken);
+            await CloudflareRangesFile.WriteAsync(_savedRangesFile, networks, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             // The downloaded ranges stay in use, so a location that cannot be written (such as a read-only deployment) never stops the service.
-            LogSaveFailed(ex, _savedRangesPath);
+            LogSaveFailed(ex, _savedRangesFile.PathDisplay);
         }
     }
 
@@ -194,8 +195,8 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
 
         try
         {
-            (networks, savedAt) = await CloudflareRangesFile.ReadAsync(_savedRangesPath, cancellationToken);
-            _networks.Set(networks);
+            (networks, savedAt) = await CloudflareRangesFile.ReadAsync(_savedRangesFile, cancellationToken);
+            _networks.Set(networks, savedAt);
             _rangesDate = savedAt;
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
@@ -207,18 +208,18 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
 
         if (networks is not null)
         {
-            LogUsingSavedRanges(networks.Length, _savedRangesPath, savedAt);
+            LogUsingSavedRanges(networks.Length, _savedRangesFile.PathDisplay, savedAt);
 
             if (RangesAreStale)
                 LogRangesOutOfDate(_rangesDate);
         }
         else if (readException is FileNotFoundException or DirectoryNotFoundException)
         {
-            LogNoSavedRanges(_savedRangesPath);
+            LogNoSavedRanges(_savedRangesFile.PathDisplay);
         }
         else
         {
-            LogSavedRangesUnreadable(readException, _savedRangesPath);
+            LogSavedRangesUnreadable(readException, _savedRangesFile.PathDisplay);
         }
     }
 
@@ -227,9 +228,9 @@ internal sealed partial class CloudflareRangeRefresher : BackgroundService
         if (!_options.DownloadRanges)
         {
             if (_networks.IsAvailable)
-                LogReadFailed(exception, _savedRangesPath, RetryDelay);
+                LogReadFailed(exception, _savedRangesFile.PathDisplay, RetryDelay);
             else
-                LogReadFailedWithoutRanges(exception, _savedRangesPath, RetryDelay);
+                LogReadFailedWithoutRanges(exception, _savedRangesFile.PathDisplay, RetryDelay);
         }
         else if (!_networks.IsAvailable)
         {

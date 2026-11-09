@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Hosting;
 
 namespace Singulink.Net.Http.Api.Service;
 
@@ -11,7 +12,10 @@ internal static class ApiExceptionHandling
     /// Maps an exception to the <see cref="ApiException"/> to report using the registered <see cref="IApiExceptionHandler"/> (if any). Returns
     /// <see langword="null"/> if the exception is not an <see cref="ApiException"/> or a <see cref="BadHttpRequestException"/> and no handler mapped it.
     /// </summary>
-    public static async ValueTask<ApiException?> ResolveAsync(HttpContext httpContext, Exception exception)
+    /// <param name="httpContext">The HTTP context of the request that threw the exception.</param>
+    /// <param name="exception">The exception that was thrown.</param>
+    /// <param name="traceExpected">Whether an API exception that is resolved without a handler is traced, as it is unless its error isn't reported.</param>
+    public static async ValueTask<ApiException?> ResolveAsync(HttpContext httpContext, Exception exception, bool traceExpected = true)
     {
         var handler = httpContext.RequestServices.GetService<IApiExceptionHandler>();
         var apiException = handler is null ? null : await handler.HandleAsync(httpContext, exception);
@@ -23,7 +27,7 @@ internal static class ApiExceptionHandling
             _ => null,
         };
 
-        if (handler is null && apiException is not null && Trace.Listeners.Count > 0)
+        if (traceExpected && handler is null && apiException is not null && Trace.Listeners.Count > 0)
             Trace.TraceWarning($"[Singulink.Net.Http.Api] Expected API exception handled ({apiException.StatusCode}): {apiException}");
 
         return apiException;

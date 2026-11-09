@@ -47,8 +47,8 @@ The options are validated when the app starts. <xref:Singulink.Net.Http.Api.Serv
 | <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.CeremonyTimeout> | 3 minutes | How long the browser waits for the user. |
 | <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.CeremonyLifetime> | 5 minutes | How long a started ceremony can be finished. |
 | <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.RequireCodeChallenge> | `true` | Requires every sign-in to be bound to a PKCE code challenge when it begins. |
-| <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.RequireUserVerification> | `true` | Requires a biometric, PIN or screen lock in every ceremony. |
-| <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.RequireDiscoverableCredentials> | `true` | Requires passkeys that can sign in without a user name. |
+| <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.UserVerification> | `Required` | Whether ceremonies require a biometric, PIN or screen lock (`Required`), ask for one when the authenticator supports it (`Preferred`), or ask for none (`Discouraged`). |
+| <xref:Singulink.Net.Http.Api.Service.Passkeys.PasskeyOptions.DiscoverableCredentials> | `Required` | Whether new passkeys must be able to sign in without a user name (`Required`), are asked to (`Preferred`), or are asked not to (`Discouraged`). |
 
 <xref:Singulink.Net.Http.Api.Service.PasskeyServiceCollectionExtensions.AddPasskeys*> also registers <xref:Singulink.Net.Http.Api.Service.SignIn.SignInCodes>, which a sign-in continues with, and the short-lived store that keeps ceremonies, as <xref:Singulink.Net.Http.Api.Service.ServiceCollectionExtensions.AddSignInCodes*> does. Call `AddSignInCodes` as well, before or after, to configure the sign-in codes (see [Sign-In Codes](sign-in-codes.md#options)):
 
@@ -370,7 +370,7 @@ Its properties set what the passkey reports, such as its signature counter, its 
 
 These points concern deployment:
 
-- **Ceremony state is kept in the short-lived store** between the begin and finish requests, which is in memory unless you register another store. Services that run on several servers register a shared store, so that a ceremony begun on one server can finish on another; see [Running Multiple Servers](multiple-servers.md). With the memory store, a restart only fails ceremonies in progress, which users start again.
+- **Ceremony state is kept in the short-lived store** of <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys.SignIn> between the begin and finish requests, which is in memory unless you register another store. Services that run on several servers register a shared store, so that a ceremony begun on one server can finish on another; see [Running Multiple Servers](multiple-servers.md). With the memory store, a restart only fails ceremonies in progress, which users start again.
 - **Begin endpoints** of sign-ins need no session, and each started ceremony is kept in the short-lived store until it expires (see [Rate Limiting](rate-limiting.md)).
 - **Signature counters** are checked and saved, which detects some cloned security keys. Most synced passkeys always report 0, which is normal.
 

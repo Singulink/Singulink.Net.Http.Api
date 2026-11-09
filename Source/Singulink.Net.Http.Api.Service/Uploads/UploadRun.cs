@@ -50,7 +50,7 @@ internal sealed class UploadRun : IDisposable
     }
 
     /// <summary>
-    /// Gets the token of the handler, which is cancelled when the upload is aborted, when the claim is lost, when the run reaches its time limit or when the
+    /// Gets the token of the handler, which is cancelled when the upload is cancelled, when the claim is lost, when the run reaches its time limit or when the
     /// application stops.
     /// </summary>
     public CancellationToken Token => _cancellation.Token;
@@ -193,7 +193,18 @@ internal sealed class UploadRun : IDisposable
 internal enum RunCancelReason
 {
     None,
+
+    /// <summary>
+    /// The upload was cancelled (see <c>ChunkedUploads.AbortAsync</c>).
+    /// </summary>
     Aborted,
+
+    /// <summary>
+    /// The upload was deleted while the handler ran, such as by a cancellation on another server that found the claim lapsed. The run ends as for
+    /// <see cref="Aborted"/>, without the warning of a handler that is slow to stop.
+    /// </summary>
+    Deleted,
+
     ClaimLost,
     TimeLimit,
     Stopping,
@@ -248,9 +259,16 @@ internal sealed class RunEnd
     public bool IsNotStarted { get; init; }
 
     /// <summary>
-    /// Gets a value indicating whether the upload was aborted while the handler ran.
+    /// Gets a value indicating whether the upload was cancelled and its handler did not finish: the run found the cancellation before the handler started,
+    /// or the handler stopped after its token was cancelled for it. The upload is then deleted.
     /// </summary>
-    public bool IsAborted { get; init; }
+    public bool IsCancelled { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the upload was deleted while the handler ran, such as by a cancellation on another server that found the claim
+    /// lapsed, so that its outcome was not stored.
+    /// </summary>
+    public bool IsDeleted { get; init; }
 
     /// <summary>
     /// Gets the error of the handler or of its parameters that the request that ran the handler reports, as it was mapped (see

@@ -282,8 +282,11 @@ public sealed class ApiHubConnection : IAsyncDisposable
     public SynchronizationContext? SynchronizationContext { get; set; }
 
     /// <summary>
-    /// Gets the underlying <see cref="HubConnection"/>. Errors from direct use of it are not translated to <see cref="ApiException"/> instances.
+    /// Gets the underlying <see cref="HubConnection"/>.
     /// </summary>
+    /// <remarks>
+    /// Errors from direct use of it are not translated to <see cref="ApiException"/> instances.
+    /// </remarks>
     public HubConnection UnderlyingConnection => _connection;
 
     /// <summary>
@@ -318,16 +321,16 @@ public sealed class ApiHubConnection : IAsyncDisposable
     public string? ConnectionId => _connection.ConnectionId;
 
     /// <summary>
-    /// Starts the connection, and completes once the service confirms that the hub accepted it (see the remarks of <see cref="ApiHubConnection"/>). With
-    /// <see cref="StayConnected"/>, most failed starts don't throw, and the connection keeps trying (see <see cref="StayConnected"/>).
+    /// Starts the connection, and completes once the service confirms that the hub accepted it (see the remarks of <see cref="ApiHubConnection"/>).
     /// </summary>
     /// <param name="cancellationToken">A token to cancel the start, which stops a connection that the hub hasn't accepted yet. It doesn't cancel the attempts
     /// that follow a failed start. A start whose connection the hub accepted before the cancellation completes, as SignalR's start does once it
     /// connected.</param>
     /// <remarks>
-    /// A start while the connection tries to start again (see <see cref="StayConnected"/>) takes the place of the attempts, and reports how it ends as
-    /// they do: <see cref="Reconnected"/> occurs if it succeeds, and <see cref="Closed"/> if it fails and the connection doesn't try again. An attempt's
-    /// connection that is open by then is stopped first.
+    /// With <see cref="StayConnected"/>, most failed starts don't throw, and the connection keeps trying (see <see cref="StayConnected"/>). A start while
+    /// the connection tries to start again (see <see cref="StayConnected"/>) takes the place of the attempts, and reports how it ends as they do:
+    /// <see cref="Reconnected"/> occurs if it succeeds, and <see cref="Closed"/> if it fails and the connection doesn't try again. An attempt's connection
+    /// that is open by then is stopped first.
     /// </remarks>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -401,8 +404,11 @@ public sealed class ApiHubConnection : IAsyncDisposable
     }
 
     /// <summary>
-    /// Stops and disposes the connection. A connection that fails to close, such as with a failed close handshake, is disposed without an exception.
+    /// Stops and disposes the connection.
     /// </summary>
+    /// <remarks>
+    /// A connection that fails to close, such as with a failed close handshake, is disposed without an exception.
+    /// </remarks>
     public async ValueTask DisposeAsync()
     {
         lock (_lock)
@@ -586,9 +592,11 @@ public sealed class ApiHubConnection : IAsyncDisposable
     // Streaming from the server:
 
     /// <summary>
-    /// Invokes a streaming method on the server and returns the streamed items. The stream is started when enumeration begins and is cancelled when the
-    /// enumeration is disposed or the cancellation token is cancelled.
+    /// Invokes a streaming method on the server and returns the streamed items.
     /// </summary>
+    /// <remarks>
+    /// The stream is started when enumeration begins and is cancelled when the enumeration is disposed or the cancellation token is cancelled.
+    /// </remarks>
     public IAsyncEnumerable<TItem> StreamAsync<TItem>(HubStream<TItem> stream, CancellationToken cancellationToken = default)
         => TranslateAsync(_connection.StreamAsyncCore<TItem>(stream.Name, [], cancellationToken), cancellationToken);
 

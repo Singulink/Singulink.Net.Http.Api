@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Http.Timeouts;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Singulink.Net.Http.Api.Service.Uploads;
 
@@ -15,8 +16,6 @@ namespace Singulink.Net.Http.Api.Service;
 public sealed class ChunkedUploadMappingTests
 {
     private const string Pattern = "/folders/{folderId}/files";
-
-    public sealed record Note(string Text);
 
     public sealed record OtherCommand(int Value);
 
@@ -85,13 +84,13 @@ public sealed class ChunkedUploadMappingTests
     }
 
     [TestMethod]
-    public async Task Start_WithoutDirectoryOrStore_Throws()
+    public async Task Start_WithoutAStore_Throws()
     {
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, HandleAsync),
-            options => options.Directory = null));
+            configureServices: services => services.RemoveAll<IUploadStore>()));
 
-        ex.Message.ShouldContain(nameof(ChunkedUploadOptions.Directory));
+        ex.Message.ShouldContain(nameof(IUploadStore));
     }
 
     [TestMethod]
@@ -99,7 +98,7 @@ public sealed class ChunkedUploadMappingTests
     {
         var ex = await Should.ThrowAsync<InvalidOperationException>(() => TestWebHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, HandleAsync),
-            configureServices: services => services.AddChunkedUploads<TestSessionToken>(o => o.Directory = UploadTestHost.CreateDirectoryPath())));
+            configureServices: services => services.AddChunkedUploads<TestSessionToken>()));
 
         ex.Message.ShouldContain("AddHttpSessionHandling");
     }
@@ -144,14 +143,15 @@ public sealed class ChunkedUploadMappingTests
         Should.Throw<ArgumentOutOfRangeException>(() => options.MaxTotalSize = -1);
         Should.Throw<ArgumentOutOfRangeException>(() => options.MaxTotalSizePerUser = -1);
         Should.Throw<ArgumentOutOfRangeException>(() => options.IdleExpiry = TimeSpan.Zero);
+        Should.Throw<ArgumentOutOfRangeException>(() => options.ProcessingTimeout = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.UnstartedExpiry = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.UnstartedExpiry = TimeSpan.FromDays(25));
         Should.Throw<ArgumentOutOfRangeException>(() => options.OutcomeRetention = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.CompletionPingInterval = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.IdleExpiry = TimeSpan.FromDays(24) + TimeSpan.FromTicks(1));
+        Should.Throw<ArgumentOutOfRangeException>(() => options.ProcessingTimeout = TimeSpan.FromDays(24) + TimeSpan.FromTicks(1));
         Should.Throw<ArgumentOutOfRangeException>(() => options.OutcomeRetention = TimeSpan.MaxValue);
         Should.Throw<ArgumentOutOfRangeException>(() => options.CompletionPingInterval = TimeSpan.FromDays(25));
-        Should.Throw<ArgumentException>(() => options.Directory = " ");
         Should.Throw<ArgumentOutOfRangeException>(() => new ChunkedUploadEndpointOptions().MaxSize = -1);
     }
 
@@ -160,14 +160,14 @@ public sealed class ChunkedUploadMappingTests
     {
         var options = new ChunkedUploadOptions();
 
-        options.Directory.ShouldBeNull();
         options.MaxSize.ShouldBe(1L << 30);
         (options.DefaultChunkSize, options.MinChunkSize, options.MaxChunkSize).ShouldBe((5 << 20, 5 << 20, 64 << 20));
         options.MaxChunkCount.ShouldBe(10_000);
         options.MaxUploadsPerUser.ShouldBe(20);
         options.MaxTotalSize.ShouldBeNull();
         options.MaxTotalSizePerUser.ShouldBeNull();
-        options.IdleExpiry.ShouldBe(TimeSpan.FromDays(1));
+        options.IdleExpiry.ShouldBe(TimeSpan.FromMinutes(15));
+        options.ProcessingTimeout.ShouldBe(TimeSpan.FromHours(1));
         options.UnstartedExpiry.ShouldBe(TimeSpan.FromMinutes(15));
         options.OutcomeRetention.ShouldBe(TimeSpan.FromHours(1));
         options.CompletionPingInterval.ShouldBe(TimeSpan.FromSeconds(10));
@@ -180,12 +180,12 @@ public sealed class ChunkedUploadMappingTests
 
         var endpoints = host.Web.Endpoints.OfType<RouteEndpoint>().Where(e => e.RoutePattern.RawText!.Contains("/uploads")).ToList();
 
-        endpoints.Count.ShouldBe(5);
+        endpoints.Count.ShouldBe(6);
         endpoints.ShouldAllBe(e => e.Metadata.GetMetadata<ITagsMetadata>()!.Tags.Contains("uploads"));
     }
 
     [TestMethod]
-    public async Task ChunkAndCompletion_HaveNoRequestTimeout()
+    public async Task ChunkCompletionAndDirectUpload_HaveNoRequestTimeout()
     {
         await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HandleAsync).WithRequestTimeout(TimeSpan.FromSeconds(1)));
 
@@ -193,6 +193,7 @@ public sealed class ChunkedUploadMappingTests
 
         endpoints.Where(e => e.Metadata.GetMetadata<DisableRequestTimeoutAttribute>() is not null).Select(e => e.DisplayName).Order().ShouldBe([
             "HTTP: POST /folders/{folderId}/files/uploads/{chunkedUploadId}/complete",
+            "HTTP: POST /folders/{folderId}/files/uploads/direct",
             "HTTP: PUT /folders/{folderId}/files/uploads/{chunkedUploadId}",
         ]);
     }

@@ -136,9 +136,13 @@ Passkey (WebAuthn) support and session token storage for WinUI 3 (Windows App SD
 
 Installed with `Singulink.Net.Http.Api.Client.WinUI`, and has no public API.
 
-## Upgrading from 3.x
+## Upgrading to 5.0
 
-Version 4.0 moves the session's refresh info out of the session token and into the session cookie, replaces the session store context with a scoped session store, and changes the cookie format, so users sign in once after upgrading. API clients escape the values in interpolated paths, apply the toolkit's JSON null handling and don't follow redirects, and errors that the toolkit reports itself carry error codes. See [Upgrading from 3.x](https://www.singulink.com/Docs/Singulink.Net.Http.Api/articles/guides/upgrading.html) for the full list of changes.
+Version 5.0 changes chunked uploads: finished uploads are kept apart from the open ones, files that fit in one chunk are uploaded directly, in one request, the limits of open uploads are counted in memory and can be set for each user, and how long a handler can run is an option of its own. Upload stores of apps change with it, and outcomes that 4.x stored are not kept. See [Upgrading to 5.0](https://www.singulink.com/Docs/Singulink.Net.Http.Api/articles/upgrading/upgrading-to-5.html) for the full list of changes.
+
+## Upgrading to 4.0
+
+Version 4.0 moves the session's refresh info out of the session token and into the session cookie, replaces the session store context with a scoped session store, and changes the cookie format, so users sign in once after upgrading. API clients escape the values in interpolated paths, apply the toolkit's JSON null handling and don't follow redirects, and errors that the toolkit reports itself carry error codes. See [Upgrading to 4.0](https://www.singulink.com/Docs/Singulink.Net.Http.Api/articles/upgrading/upgrading-to-4.html) for the full list of changes.
 
 ## Further Reading
 

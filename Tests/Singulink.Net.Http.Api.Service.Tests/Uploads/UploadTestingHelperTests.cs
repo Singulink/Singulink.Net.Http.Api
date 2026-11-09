@@ -15,8 +15,6 @@ public sealed class UploadTestingHelperTests
 {
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(20);
 
-    public sealed record Note(string Text);
-
     public sealed record FolderCommand(string Title);
 
     [TestMethod]
@@ -30,7 +28,7 @@ public sealed class UploadTestingHelperTests
             (file.FileName, file.Length, file.ContentType).ShouldBe(("notes.txt", 100L, "text/plain"));
             ShortLivedId.IsWellFormed(file.Id).ShouldBeTrue();
 
-            path = file.FilePath.ShouldNotBeNull();
+            path = file.File.ShouldNotBeNull().PathExport;
             (await File.ReadAllBytesAsync(path)).ShouldBe(content);
             (await HandleAsync(file)).ShouldBe(new Note($"notes.txt {UploadTestHost.Hash(content)}"));
         }
@@ -57,8 +55,8 @@ public sealed class UploadTestingHelperTests
         {
             using (var file = TestUploadedFile.Create(UploadTestHost.CreateFile(10), "a.txt"))
             {
-                await file.MoveToAsync(destination);
-                file.FilePath.ShouldBe(destination);
+                await file.MoveToAsync(TestPaths.ToFile(destination));
+                file.File.ShouldNotBeNull().PathDisplay.ShouldBe(destination);
             }
 
             File.Exists(destination).ShouldBeTrue();
@@ -91,12 +89,12 @@ public sealed class UploadTestingHelperTests
     {
         string destination = Path.Combine(Path.GetTempPath(), "httpapi-moved-" + Guid.NewGuid().ToString("N"));
         using var file = TestUploadedFile.Create(UploadTestHost.CreateFile(10), "a.txt");
-        string? path = file.FilePath;
+        var original = file.File.ShouldNotBeNull();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => file.MoveToAsync(destination, new CancellationToken(canceled: true)));
+        await Should.ThrowAsync<OperationCanceledException>(() => file.MoveToAsync(TestPaths.ToFile(destination), new CancellationToken(canceled: true)));
 
-        file.FilePath.ShouldBe(path);
-        File.Exists(path).ShouldBeTrue();
+        file.File.ShouldBeSameAs(original);
+        original.Exists.ShouldBeTrue();
         File.Exists(destination).ShouldBeFalse();
     }
 

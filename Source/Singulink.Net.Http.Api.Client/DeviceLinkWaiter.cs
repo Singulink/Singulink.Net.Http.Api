@@ -58,7 +58,7 @@ public sealed class DeviceLinkWaiter
     }
 
     /// <summary>
-    /// Gets or sets how long the waiter waits before each check of the link's status. Default is 2 seconds.
+    /// Gets or sets how long the waiter waits before each check of the link's status. Must be greater than zero. Default is 2 seconds.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public TimeSpan PollInterval

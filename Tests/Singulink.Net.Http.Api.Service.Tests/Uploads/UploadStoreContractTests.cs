@@ -11,20 +11,24 @@ namespace Singulink.Net.Http.Api.Service;
 [PrefixTestClass]
 public sealed class UploadStoreContractTests
 {
-    public sealed record Note(string Text);
-
     [TestMethod]
     public async Task DirectoryStore_KeepsTheGuarantees()
     {
         // The checks wait for a claim's lease to lapse, so the store's clock runs.
         await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload("/files", HandleAsync), timeProvider: TimeProvider.System);
-        await UploadStoreContract.CheckAsync(host.Services.GetRequiredService<IUploadStore>());
+        var store = host.Services.GetRequiredService<IUploadStore>();
+
+        await UploadStoreContract.CheckAsync(store);
+        await UploadStoreContract.CheckOutcomeRemovalAsync(store);
     }
 
     [TestMethod]
     public async Task MemoryStore_KeepsTheGuarantees()
     {
-        await UploadStoreContract.CheckAsync(new MemoryUploadStore(TimeProvider.System));
+        var store = new MemoryUploadStore(TimeProvider.System);
+
+        await UploadStoreContract.CheckAsync(store);
+        await UploadStoreContract.CheckOutcomeRemovalAsync(store);
     }
 
     private static Task<Note> HandleAsync(UploadedFile file) => Task.FromResult(new Note(file.FileName));

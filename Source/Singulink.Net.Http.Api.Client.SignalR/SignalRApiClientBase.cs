@@ -19,8 +19,8 @@ namespace Singulink.Net.Http.Api.Client;
 public abstract class SignalRApiClientBase : ApiClientBase
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using reflection-based JSON serialization with default <see
-    /// cref="JsonSerializerDefaults.Web"/> options.
+    /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using reflection-based JSON serialization with default
+    /// <see cref="JsonSerializerDefaults.Web"/> options.
     /// </summary>
     /// <remarks>
     /// This constructor uses reflection-based JSON serialization which is not compatible with trimming. To support trimming, use a constructor that
@@ -32,8 +32,8 @@ public abstract class SignalRApiClientBase : ApiClientBase
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using reflection-based JSON serialization with default <see
-    /// cref="JsonSerializerDefaults.Web"/> options, the specified session token and session token changed callback.
+    /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using reflection-based JSON serialization with default
+    /// <see cref="JsonSerializerDefaults.Web"/> options, the specified session token and session token changed callback.
     /// </summary>
     /// <remarks>
     /// This constructor uses reflection-based JSON serialization which is not compatible with trimming. To support trimming, use a constructor that
@@ -56,12 +56,12 @@ public abstract class SignalRApiClientBase : ApiClientBase
     /// the request or call that changed the token.</param>
     /// <remarks>
     /// <para>
-    /// The options are used as they are, without the API null handling that the constructors that take a type info resolver apply (see <see
-    /// cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).</para>
+    /// The options are used as they are, without the API null handling that the constructors that take a type info resolver apply (see
+    /// <see cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).</para>
     /// <para>
     /// This constructor accepts arbitrary serializer options whose trimming compatibility cannot be statically verified, so it is not compatible with
-    /// trimming. To support trimming, use a constructor that accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a <see
-    /// cref="System.Text.Json.Serialization.JsonSerializerContext"/>).</para>
+    /// trimming. To support trimming, use a constructor that accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a
+    /// <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).</para>
     /// </remarks>
     [RequiresUnreferencedCode(SerializationUnreferencedCodeMessage)]
     protected SignalRApiClientBase(JsonSerializerOptions serializerOptions, string? sessionToken = null, Action<string?>? sessionTokenChanged = null)
@@ -71,7 +71,7 @@ public abstract class SignalRApiClientBase : ApiClientBase
 
     /// <summary>
     /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using JSON serialization backed by the specified source-generated type
-    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>). This constructor is compatible with trimming.
+    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).
     /// </summary>
     /// <param name="typeInfoResolver">The source-generated JSON type information resolver used for serialization and deserialization.</param>
     /// <param name="configureOptions">An optional callback that further configures the JSON serializer options created from the resolver.</param>
@@ -84,7 +84,7 @@ public abstract class SignalRApiClientBase : ApiClientBase
     /// <summary>
     /// Initializes a new instance of the <see cref="SignalRApiClientBase"/> class using JSON serialization backed by the specified source-generated type
     /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>), with the specified session token and session token
-    /// changed callback. This constructor is compatible with trimming.
+    /// changed callback.
     /// </summary>
     /// <param name="typeInfoResolver">The source-generated JSON type information resolver used for serialization and deserialization.</param>
     /// <param name="sessionToken">The token of a persistent session to continue, such as one stored by <paramref name="sessionTokenChanged"/>.</param>
@@ -137,10 +137,13 @@ public abstract class SignalRApiClientBase : ApiClientBase
             .WithAutomaticReconnect();
 
     /// <summary>
-    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path and query string parameters. The URL includes the user ID precondition like
-    /// request URLs do (see <see cref="ApiClientBase.GetApiUrl(InterpolatedApiPathHandler, ReadOnlySpan{ValueTuple{string, object}})"/>). Session cookies
-    /// and user agent are applied automatically on non-browser platforms.
+    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path and query string parameters.
     /// </summary>
+    /// <remarks>
+    /// The URL includes the user ID precondition like request URLs do (see
+    /// <see cref="ApiClientBase.GetApiUrl(InterpolatedApiPathHandler, ReadOnlySpan{ValueTuple{string, object}})"/>). Session cookies and user agent are
+    /// applied automatically on non-browser platforms.
+    /// </remarks>
     /// <param name="path">The hub endpoint path relative to the base address.</param>
     /// <param name="query">The query string parameters of the hub connection URL, such as <c>[("documentId", id)]</c>. Parameters with a
     /// <see langword="null"/> value are left out.</param>
@@ -150,9 +153,7 @@ public abstract class SignalRApiClientBase : ApiClientBase
     }
 
     /// <summary>
-    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path, connection options and query string parameters. The URL includes the user
-    /// ID precondition like request URLs do (see <see cref="ApiClientBase.GetApiUrl(InterpolatedApiPathHandler, ReadOnlySpan{ValueTuple{string, object}})"/>).
-    /// Session cookies and user agent are applied automatically on non-browser platforms.
+    /// Creates a new <see cref="ApiHubConnection"/> for the specified hub path, connection options and query string parameters.
     /// </summary>
     /// <param name="path">The hub endpoint path relative to the base address.</param>
     /// <param name="configureOptions">Callback that configures the <see cref="HttpConnectionOptions"/> for the connection. The connection uses the WebSockets
@@ -160,6 +161,10 @@ public abstract class SignalRApiClientBase : ApiClientBase
     /// <param name="query">The query string parameters of the hub connection URL, such as <c>[("documentId", id)]</c>. Parameters with a
     /// <see langword="null"/> value are left out.</param>
     /// <remarks>
+    /// <para>
+    /// The URL includes the user ID precondition like request URLs do (see
+    /// <see cref="ApiClientBase.GetApiUrl(InterpolatedApiPathHandler, ReadOnlySpan{ValueTuple{string, object}})"/>). Session cookies and user agent are
+    /// applied automatically on non-browser platforms.</para>
     /// <para>
     /// Without a negotiate request, the connection has no connection ID (<see cref="ApiHubConnection.ConnectionId"/> is <see langword="null"/>), and stateful
     /// reconnect is off.</para>

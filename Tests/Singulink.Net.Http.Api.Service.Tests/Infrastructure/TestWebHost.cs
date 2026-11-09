@@ -16,10 +16,10 @@ public sealed class TestWebHost : IAsyncDisposable
 {
     private readonly CapturingLoggerProvider _logs;
 
-    private TestWebHost(WebApplication app, CapturingLoggerProvider logs)
+    private TestWebHost(WebApplication app, CapturingLoggerProvider logs, bool kestrel)
     {
         App = app;
-        Client = app.GetTestClient();
+        Client = kestrel ? new HttpClient { BaseAddress = new Uri(app.Urls.First()) } : app.GetTestClient();
         _logs = logs;
     }
 
@@ -52,11 +52,14 @@ public sealed class TestWebHost : IAsyncDisposable
     /// <param name="exceptionHandler">An optional exception handler instance to register.</param>
     /// <param name="development">Whether to run in the Development environment (otherwise Production).</param>
     /// <param name="configureServices">Optional additional service registrations.</param>
+    /// <param name="kestrel">Whether the application runs on Kestrel on a port of the loopback address, for tests of what a connection does, rather than on
+    /// the test server.</param>
     public static async Task<TestWebHost> StartAsync(
         Action<WebApplication> map,
         IApiExceptionHandler? exceptionHandler = null,
         bool development = false,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        bool kestrel = false)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions {
             EnvironmentName = development ? Environments.Development : Environments.Production,
@@ -64,7 +67,11 @@ public sealed class TestWebHost : IAsyncDisposable
 
         var logs = new CapturingLoggerProvider();
 
-        builder.WebHost.UseTestServer();
+        if (kestrel)
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+        else
+            builder.WebHost.UseTestServer();
+
         builder.Logging.ClearProviders();
         builder.Logging.AddProvider(logs);
 
@@ -84,7 +91,7 @@ public sealed class TestWebHost : IAsyncDisposable
         app.UseApiResponseHandling();
 
         await app.StartAsync();
-        return new TestWebHost(app, logs);
+        return new TestWebHost(app, logs, kestrel);
     }
 
     public async ValueTask DisposeAsync()

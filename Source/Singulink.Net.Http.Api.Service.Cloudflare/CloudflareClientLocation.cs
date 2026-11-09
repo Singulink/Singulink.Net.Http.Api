@@ -65,9 +65,11 @@ public sealed class CloudflareClientLocation
     public string? TimeZone { get; internal init; }
 
     /// <summary>
-    /// Returns the visitor's city, region and country code, as far as Cloudflare sent them, separated by commas, such as <c>Toronto, Ontario, CA</c>. The
-    /// country code <c>XX</c>, which Cloudflare sends for an unknown country, is left out. Returns an empty string if none of them is known.
+    /// Returns the visitor's city, region and country code, as far as Cloudflare sent them, separated by commas, such as <c>Toronto, Ontario, CA</c>.
     /// </summary>
+    /// <remarks>
+    /// The country code <c>XX</c>, which Cloudflare sends for an unknown country, is left out. Returns an empty string if none of them is known.
+    /// </remarks>
     public override string ToString()
     {
         string? countryCode = CountryCode is "XX" ? null : CountryCode;

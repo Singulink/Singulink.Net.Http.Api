@@ -352,3 +352,6 @@ MigrationBackup/
 
 # macOS unnecessary Files
 ._*
+
+# Launch profiles that Visual Studio creates for web projects
+launchSettings.json

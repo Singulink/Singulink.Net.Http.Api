@@ -14,8 +14,6 @@ public sealed class UploadStoreTests
     private const string Pattern = "/folders/{folderId}/files";
     private const int MiB = 1 << 20;
 
-    public sealed record Note(string Text);
-
     [TestMethod]
     public async Task OwnStore_IsUsedInsteadOfDirectory()
     {
@@ -27,9 +25,9 @@ public sealed class UploadStoreTests
         {
             await using var host = await StartAsync(store, async (UploadedFile uploaded) => {
                 string hash = await UploadTestHost.HashAsync(uploaded);
-                await uploaded.MoveToAsync(destination);
+                await uploaded.MoveToAsync(TestPaths.ToFile(destination));
 
-                return new Note($"{uploaded.FilePath is null} {hash}");
+                return new Note($"{uploaded.File is null} {hash}");
             });
 
             var (_, lines) = await host.UploadAsync(file);
@@ -103,7 +101,6 @@ public sealed class UploadStoreTests
     {
         return UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, handler),
-            options => options.Directory = null,
             configureServices: services => services.AddSingleton<IUploadStore>(store));
     }
 }

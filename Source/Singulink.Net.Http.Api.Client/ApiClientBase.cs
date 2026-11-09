@@ -55,11 +55,13 @@ public abstract partial class ApiClientBase
     private readonly HttpClient? _handlerHttpClient;
 
     /// <summary>
-    /// Gets the JSON serializer options used for serializing and deserializing API request and response content. The constructors that take a type info
-    /// resolver create options with <see cref="JsonSerializerDefaults.Web"/> defaults and the API null handling (see <see
-    /// cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>), the reflection-based constructors without options use <see
-    /// cref="JsonSerializerDefaults.Web"/> defaults, and the constructor that takes options uses them as they are.
+    /// Gets the JSON serializer options used for serializing and deserializing API request and response content.
     /// </summary>
+    /// <remarks>
+    /// The constructors that take a type info resolver create options with <see cref="JsonSerializerDefaults.Web"/> defaults and the API null handling (see
+    /// <see cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>), the reflection-based constructors without options use
+    /// <see cref="JsonSerializerDefaults.Web"/> defaults, and the constructor that takes options uses them as they are.
+    /// </remarks>
     protected JsonSerializerOptions SerializerOptions { get; }
 
     /// <summary>
@@ -79,9 +81,11 @@ public abstract partial class ApiClientBase
     /// Gets the user agent string sent with requests and with the handshakes of hub connections on non-browser platforms, where browsers send their own.
     /// If a parent client exists, returns the parent's value by default; otherwise the name and version of the app's entry assembly followed by the
     /// operating system, such as <c>MyApp/1.2.0.0 (Microsoft Windows 10.0.26100)</c>, or the name and version of this library if the app has no entry
-    /// assembly, as .NET for Android apps don't, or its name can't be used in a user agent. <see cref="CreateUserAgent(string, string)"/> creates a user
-    /// agent of the same form with another product name and version.
+    /// assembly, as .NET for Android apps don't, or its name can't be used in a user agent.
     /// </summary>
+    /// <remarks>
+    /// <see cref="CreateUserAgent(string, string)"/> creates a user agent of the same form with another product name and version.
+    /// </remarks>
     protected virtual string UserAgent
     {
         get {
@@ -94,23 +98,30 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Gets how long a request can take before it is cancelled: from sending it until the response is read, or until the response starts for a streaming
-    /// response or a request that returns the <see cref="HttpResponseMessage"/> itself. A request that times out throws a <see
-    /// cref="TaskCanceledException"/> whose inner exception is a <see cref="TimeoutException"/>. A request can have a timeout of its own (see
-    /// <see cref="SetRequestTimeout(HttpRequestMessage, TimeSpan)"/>). If a parent client exists, returns the parent's value by default; otherwise 100
-    /// seconds.
+    /// response or a request that returns the <see cref="HttpResponseMessage"/> itself. If a parent client exists, returns the parent's value by default;
+    /// otherwise 100 seconds.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// A request that times out throws a <see cref="TaskCanceledException"/> whose inner exception is a <see cref="TimeoutException"/>. A request can have
+    /// a timeout of its own (see <see cref="SetRequestTimeout(HttpRequestMessage, TimeSpan)"/>).
+    /// </para>
+    /// <para>
     /// <see cref="Timeout.InfiniteTimeSpan"/> and values longer than <see cref="int.MaxValue"/> milliseconds (about 24.8 days), such as
     /// <see cref="TimeSpan.MaxValue"/>, mean no timeout. Requests throw an <see cref="InvalidOperationException"/> for zero, and for negative values other
     /// than <see cref="Timeout.InfiniteTimeSpan"/>. Hub connections are not affected.
+    /// </para>
     /// </remarks>
     protected virtual TimeSpan RequestTimeout => _parentClient?.RequestTimeout ?? DefaultRequestTimeout;
 
     /// <summary>
     /// Gets the HTTP message handler that sends the client's requests instead of the handler that all clients share, or <see langword="null"/> for the shared
-    /// one. It can be set in the constructor of a derived client. If a parent client exists and the client doesn't set one, returns the parent's.
+    /// one. If a parent client exists and the client doesn't set one, returns the parent's.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// It can be set in the constructor of a derived client.
+    /// </para>
     /// <para>
     /// The handler receives each request with the headers the client set, such as the session cookie and the user agent, and its response is handled like
     /// a response from the shared handler, which doesn't follow redirects or handle cookies: a handler that does either changes how the client handles
@@ -131,9 +142,12 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Gets a value indicating whether the current session is persistent, which means its token is passed to the session token changed callback to be
-    /// stored. A session is persistent if its token was passed to the constructor, or if the service issued its cookie with an expiry, as it does for
-    /// persistent sessions.
+    /// stored.
     /// </summary>
+    /// <remarks>
+    /// A session is persistent if its token was passed to the constructor, or if the service issued its cookie with an expiry, as it does for persistent
+    /// sessions.
+    /// </remarks>
     protected bool IsPersistentSession => _sessionState.IsPersistent;
 
     /// <summary>
@@ -142,8 +156,8 @@ public abstract partial class ApiClientBase
     protected string? SessionToken => _sessionState.Token;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default <see
-    /// cref="JsonSerializerDefaults.Web"/> options.
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default
+    /// <see cref="JsonSerializerDefaults.Web"/> options.
     /// </summary>
     /// <remarks>
     /// This constructor uses reflection-based JSON serialization which is not compatible with trimming. To support trimming, use a constructor that
@@ -155,8 +169,8 @@ public abstract partial class ApiClientBase
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default <see
-    /// cref="JsonSerializerDefaults.Web"/> options, the specified session token and session token changed callback.
+    /// Initializes a new instance of the <see cref="ApiClientBase"/> class using reflection-based JSON serialization with default
+    /// <see cref="JsonSerializerDefaults.Web"/> options, the specified session token and session token changed callback.
     /// </summary>
     /// <param name="sessionToken">The token of a persistent session to continue, such as one stored by <paramref name="sessionTokenChanged"/>.</param>
     /// <param name="sessionTokenChanged">A callback that stores the token of a persistent session. It is called with the token when a persistent session
@@ -183,12 +197,12 @@ public abstract partial class ApiClientBase
     /// the request or call that changed the token.</param>
     /// <remarks>
     /// <para>
-    /// The options are used as they are, without the API null handling that the constructors that take a type info resolver apply (see <see
-    /// cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).</para>
+    /// The options are used as they are, without the API null handling that the constructors that take a type info resolver apply (see
+    /// <see cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).</para>
     /// <para>
     /// This constructor accepts arbitrary serializer options whose trimming compatibility cannot be statically verified, so it is not compatible with
-    /// trimming. To support trimming, use a constructor that accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a <see
-    /// cref="System.Text.Json.Serialization.JsonSerializerContext"/>).</para>
+    /// trimming. To support trimming, use a constructor that accepts a source-generated <see cref="IJsonTypeInfoResolver"/> (e.g. a
+    /// <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).</para>
     /// </remarks>
     [RequiresUnreferencedCode(SerializationUnreferencedCodeMessage)]
     protected ApiClientBase(JsonSerializerOptions serializerOptions, string? sessionToken = null, Action<string?>? sessionTokenChanged = null)
@@ -198,7 +212,7 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class using JSON serialization backed by the specified source-generated type
-    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>). This constructor is compatible with trimming.
+    /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>).
     /// </summary>
     /// <param name="typeInfoResolver">The source-generated JSON type information resolver used for serialization and deserialization.</param>
     /// <param name="configureOptions">An optional callback that further configures the JSON serializer options created from the resolver.</param>
@@ -211,7 +225,7 @@ public abstract partial class ApiClientBase
     /// <summary>
     /// Initializes a new instance of the <see cref="ApiClientBase"/> class using JSON serialization backed by the specified source-generated type
     /// information resolver (e.g. a <see cref="System.Text.Json.Serialization.JsonSerializerContext"/>), with the specified session token and session token
-    /// changed callback. This constructor is compatible with trimming.
+    /// changed callback.
     /// </summary>
     /// <param name="typeInfoResolver">The source-generated JSON type information resolver used for serialization and deserialization.</param>
     /// <param name="sessionToken">The token of a persistent session to continue, such as one stored by <paramref name="sessionTokenChanged"/>.</param>
@@ -220,9 +234,9 @@ public abstract partial class ApiClientBase
     /// the request or call that changed the token.</param>
     /// <param name="configureOptions">An optional callback that further configures the JSON serializer options created from the resolver.</param>
     /// <remarks>
-    /// The options have <see cref="JsonSerializerDefaults.Web"/> defaults and the API null handling (see <see
-    /// cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>). <paramref name="configureOptions"/> runs after the null handling
-    /// is applied, so the settings it makes take precedence, and resolvers it adds are not covered by the null handling unless it applies it again.
+    /// This constructor is compatible with trimming. The options have <see cref="JsonSerializerDefaults.Web"/> defaults and the API null handling (see
+    /// <see cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>). <paramref name="configureOptions"/> runs after the null
+    /// handling is applied, so the settings it makes take precedence, and resolvers it adds are not covered by the null handling unless it applies it again.
     /// </remarks>
     protected ApiClientBase(
         IJsonTypeInfoResolver typeInfoResolver,
@@ -267,9 +281,12 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Creates a user agent of the form of the default <see cref="UserAgent"/>: the specified product name and version followed by the operating system,
-    /// such as <c>MyApp/2.1.0 (Microsoft Windows 10.0.26100)</c>. Parentheses, backslashes and characters other than printable ASCII are replaced in the
-    /// description of the operating system, which is left out if it is empty.
+    /// such as <c>MyApp/2.1.0 (Microsoft Windows 10.0.26100)</c>.
     /// </summary>
+    /// <remarks>
+    /// Parentheses, backslashes and characters other than printable ASCII are replaced in the description of the operating system, which is left out if it
+    /// is empty.
+    /// </remarks>
     /// <param name="productName">The name of the product. It must be a token: one or more ASCII letters, digits and characters out of
     /// <c>!#$%&amp;'*+-.^_`|~</c>.</param>
     /// <param name="productVersion">The version of the product, such as <c>2.1.0</c>. It must be a token, like the name.</param>
@@ -370,9 +387,11 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Ends the session on this device: drops the session token and calls the session token changed callback with <see langword="null"/>, so that a stored
-    /// token is deleted, and then <see cref="OnSessionEnded"/> if there was a token. This does not end the session on the service. Does nothing on browser
-    /// platforms, where the browser holds the session cookie.
+    /// token is deleted, and then <see cref="OnSessionEnded"/> if there was a token.
     /// </summary>
+    /// <remarks>
+    /// This does not end the session on the service. Does nothing on browser platforms, where the browser holds the session cookie.
+    /// </remarks>
     protected void ClearSessionToken()
     {
         if (OperatingSystem.IsBrowser())
@@ -394,17 +413,22 @@ public abstract partial class ApiClientBase
     /// <summary>
     /// Called when the session ends on this device: when a response clears the session cookie, when a request, streaming response or hub connection that
     /// used the current session token fails with a 401 with the <see cref="ApiErrorCodes.SignInRequired"/> error code, when the service reports that the
-    /// session of a hub connection that used the current session token ended, and when <see cref="ClearSessionToken"/> drops a token. On browser platforms,
-    /// where the browser holds the session cookie and the client doesn't know the session, it is called instead for every such 401 and report of a request
-    /// that began, or a hub connection that last connected, after a session last started (see <see cref="NotifySessionStarted"/>): the reports of the
-    /// others concern the session that the new one replaced. There, a hub connection with <c>ApiHubConnection.StayConnected</c> whose session ended with
-    /// the <see cref="ApiErrorCodes.SignInRequired"/> error code reports it only once its attempt with the browser's session cookie is refused with it too,
-    /// since another tab may have signed in (see the SignalR client library). Does nothing by default.
+    /// session of a hub connection that used the current session token ended, and when <see cref="ClearSessionToken"/> drops a token. Does nothing by
+    /// default.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// On browser platforms, where the browser holds the session cookie and the client doesn't know the session, it is called instead for every such 401
+    /// and report of a request that began, or a hub connection that last connected, after a session last started (see <see cref="NotifySessionStarted"/>):
+    /// the reports of the others concern the session that the new one replaced. There, a hub connection with <c>ApiHubConnection.StayConnected</c> whose
+    /// session ended with the <see cref="ApiErrorCodes.SignInRequired"/> error code reports it only once its attempt with the browser's session cookie is
+    /// refused with it too, since another tab may have signed in (see the SignalR client library).
+    /// </para>
+    /// <para>
     /// It is called on the client that created the session: the client without a parent, whose child clients share its session. It runs after the session
     /// token changed callback, as part of the request or call that ended the session, even if the callback throws, and an exception that it throws
     /// propagates to that request or call.
+    /// </para>
     /// </remarks>
     protected virtual void OnSessionEnded()
     {
@@ -412,11 +436,13 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Reports that a session started on this device, such as with a sign-in, to the hub connections that wait for a new session after theirs ended (see
-    /// <c>ApiHubConnection.StayConnected</c> in the SignalR client library), which then start again. It reports to the connections of all the clients that
-    /// share the session. On non-browser platforms, the client also reports a session itself when a response sets the session cookie while it has none,
-    /// and when a sign-in's response, which the service marks with a <c>Session-Change</c> header, sets it. On browser platforms, where the browser holds
-    /// the session cookie, only this method reports one.
+    /// <c>ApiHubConnection.StayConnected</c> in the SignalR client library), which then start again.
     /// </summary>
+    /// <remarks>
+    /// It reports to the connections of all the clients that share the session. On non-browser platforms, the client also reports a session itself when a
+    /// response sets the session cookie while it has none, and when a sign-in's response, which the service marks with a <c>Session-Change</c> header, sets
+    /// it. On browser platforms, where the browser holds the session cookie, only this method reports one.
+    /// </remarks>
     protected void NotifySessionStarted() => _sessionState.Start();
 
     /// <summary>
@@ -524,11 +550,14 @@ public abstract partial class ApiClientBase
     }
 
     /// <summary>
-    /// Gets the base address for the API client. Request and hub connection URLs are always built by combining this address with the path of the request
-    /// or hub connection, and must be under it. An address whose path has no trailing slash is used as if it had one, so that
-    /// <c>https://example.com/api</c> works like <c>https://example.com/api/</c>. If a parent client exists, returns the parent's base address with the
-    /// base path this client was created with by default. A client without a parent must override this method.
+    /// Gets the base address for the API client. If a parent client exists, returns the parent's base address with the base path this client was created
+    /// with by default.
     /// </summary>
+    /// <remarks>
+    /// Request and hub connection URLs are always built by combining this address with the path of the request or hub connection, and must be under it. An
+    /// address whose path has no trailing slash is used as if it had one, so that <c>https://example.com/api</c> works like
+    /// <c>https://example.com/api/</c>. A client without a parent must override this method.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">The client has no parent and does not override this method, or its base path is not valid or leads
     /// outside the parent's base address.</exception>
     protected virtual Uri GetBaseAddress()
@@ -627,6 +656,7 @@ public abstract partial class ApiClientBase
     /// <exception cref="ValidationApiException">A 422 (Unprocessable Content) response was returned.</exception>
     /// <exception cref="UserRequiredApiException">A 428 (Precondition Required) response was returned.</exception>
     /// <exception cref="TooManyRequestsApiException">A 429 (Too Many Requests) response was returned.</exception>
+    /// <exception cref="HeadersTooLargeApiException">A 431 (Request Header Fields Too Large) response was returned.</exception>
     /// <exception cref="ServerErrorApiException">A 500 (Internal Server Error) response was returned.</exception>
     /// <exception cref="ServiceUnavailableApiException">A 503 (Service Unavailable) response was returned.</exception>
     /// <exception cref="ApiException">Any other error response or a <c>3xx</c> response was returned. Redirects are not followed, except on browser
@@ -878,13 +908,15 @@ public abstract partial class ApiClientBase
     }
 
     /// <summary>
-    /// Sends an API request with the specified content and returns a streaming response (see <see cref="StreamingResponse"/>). Exceptions reported in the
-    /// response stream are thrown from the enumeration as the corresponding <see cref="ApiException"/>. Null items are yielded as <see langword="null"/>,
-    /// whether or not the item type is nullable.
+    /// Sends an API request with the specified content and returns a streaming response (see <see cref="StreamingResponse"/>).
     /// </summary>
+    /// <remarks>
+    /// Exceptions reported in the response stream are thrown from the enumeration as the corresponding <see cref="ApiException"/>. Null items are yielded
+    /// as <see langword="null"/>, whether or not the item type is nullable.
+    /// </remarks>
     /// <inheritdoc cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)" path="/exception"/>
-    /// <exception cref="IOException">The streaming response ended before completion. On .NET 10 and later, this is an <see
-    /// cref="T:System.Net.Http.HttpIOException"/>.</exception>
+    /// <exception cref="IOException">The streaming response ended before completion. On .NET 10 and later, this is an
+    /// <see cref="T:System.Net.Http.HttpIOException"/>.</exception>
     /// <exception cref="FormatException">The response was not a streaming response or contained an unrecognized record.</exception>
     /// <exception cref="TaskCanceledException">The response did not start within the request's timeout (see <see cref="RequestTimeout"/> and
     /// <see cref="SetRequestTimeout(HttpRequestMessage, TimeSpan)"/>). The inner exception is a <see cref="TimeoutException"/>.</exception>
@@ -894,7 +926,7 @@ public abstract partial class ApiClientBase
     {
         string? sessionToken = GetSessionToken(request);
         var sessionStart = NextSessionStart;
-        var activity = StreamActivityCallback.Value;
+        var uploadCallbacks = UploadStreamCallbacks.Value;
         var timeout = GetRequestTimeout(request);
         HttpResponseMessage response;
 
@@ -923,6 +955,7 @@ public abstract partial class ApiClientBase
             if (!string.Equals(mediaType, StreamingResponse.MediaType, StringComparison.OrdinalIgnoreCase))
                 throw new FormatException($"Expected a '{StreamingResponse.MediaType}' streaming response but received '{mediaType ?? "no"}' content.");
 
+            uploadCallbacks?.OnResponse?.Invoke(response);
             var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
 
 #if NET
@@ -932,12 +965,13 @@ public abstract partial class ApiClientBase
             stream = new CancellableResponseStream(stream, response);
 #endif
 
-            if (activity is not null)
-                stream = new ActivityReportingStream(stream, activity);
+            if (uploadCallbacks is not null)
+                stream = new ActivityReportingStream(stream, uploadCallbacks.OnActivity);
 
             var itemTypeInfo = SerializerOptions.GetTypeInfo<TItem>();
             string? userIdPrecondition = GetUserIdPrecondition(request.RequestUri);
-            var items = StreamingResponse.ReadItemsAsync(stream, itemTypeInfo, userIdPrecondition, cancellationToken).ConfigureAwait(false).GetAsyncEnumerator();
+            var items = StreamingResponse.ReadItemsAsync(stream, itemTypeInfo, userIdPrecondition, cancellationToken)
+                .ConfigureAwait(false).GetAsyncEnumerator();
 
             try
             {
@@ -1162,10 +1196,12 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Sets how long the request can take when it is sent with one of the <c>SendAsync</c> or <c>SendStreamingAsync</c> methods, instead of
-    /// <see cref="RequestTimeout"/>. The timeout covers the same part of the request as <see cref="RequestTimeout"/>: from sending it, including its
-    /// content, until the response is read, or until the response starts for a streaming response or a request that returns the
-    /// <see cref="HttpResponseMessage"/> itself.
+    /// <see cref="RequestTimeout"/>.
     /// </summary>
+    /// <remarks>
+    /// The timeout covers the same part of the request as <see cref="RequestTimeout"/>: from sending it, including its content, until the response is read,
+    /// or until the response starts for a streaming response or a request that returns the <see cref="HttpResponseMessage"/> itself.
+    /// </remarks>
     /// <param name="request">The request.</param>
     /// <param name="timeout">How long the request can take. <see cref="Timeout.InfiniteTimeSpan"/> and values longer than <see cref="int.MaxValue"/>
     /// milliseconds (about 24.8 days) mean no timeout.</param>
@@ -1238,8 +1274,8 @@ public abstract partial class ApiClientBase
     private HttpClient GetHttpClient() => _handlerHttpClient ?? _parentClient?.GetHttpClient() ?? _httpClient;
 
     /// <summary>
-    /// Sends the request and reads the response as <typeparamref name="TResponse"/> (see <see cref="SendAsync{T}(HttpRequestMessage, object?,
-    /// CancellationToken)"/>).
+    /// Sends the request and reads the response as <typeparamref name="TResponse"/> (see
+    /// <see cref="SendAsync{T}(HttpRequestMessage, object?, CancellationToken)"/>).
     /// </summary>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = SerializationSuppressionJustification)]
     [UnconditionalSuppressMessage("AOT", "IL3050", Justification = SerializationSuppressionJustification)]
@@ -1456,8 +1492,8 @@ public abstract partial class ApiClientBase
     }
 
     /// <summary>
-    /// Gets the absolute address from the response's <c>Location</c> header, resolved against the request's address if it is relative, or <see
-    /// langword="null"/> if the response has no valid header.
+    /// Gets the absolute address from the response's <c>Location</c> header, resolved against the request's address if it is relative, or
+    /// <see langword="null"/> if the response has no valid header.
     /// </summary>
     private static Uri? GetLocation(HttpResponseMessage response)
     {
@@ -1616,8 +1652,11 @@ public abstract partial class ApiClientBase
 
     /// <summary>
     /// Builds a full API URL from the base address, path and query string parameters, followed by the user ID precondition if the client has one and the
-    /// parameters do not include a parameter of the same name (ignoring case). Including it with a <see langword="null"/> value leaves it out.
+    /// parameters do not include a parameter of the same name (ignoring case).
     /// </summary>
+    /// <remarks>
+    /// Including it with a <see langword="null"/> value leaves it out.
+    /// </remarks>
     /// <param name="path">The path, relative to the base address.</param>
     /// <param name="query">The query string parameters, such as <c>[("page", 2), ("filter", filter)]</c>. Parameters with a <see langword="null"/>
     /// value are left out.</param>

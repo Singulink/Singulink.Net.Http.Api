@@ -42,6 +42,25 @@ public sealed class FakeUploadService : HttpMessageHandler
     public int DefaultChunkSize { get; set; } = 4;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the fake has direct uploads (<c>POST {path}/uploads/direct</c>), as a 5.0 service does. Default is
+    /// <see langword="false"/>, for a service without them, as a 4.x service, which answers them with an empty <c>405</c> as routing does, so that clients
+    /// upload in chunks: a test whose options don't clear <see cref="UploadOptions.AllowsDirectUpload"/> makes a direct upload of a small file first.
+    /// </summary>
+    public bool HasDirectUploads { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the fake chooses the IDs of uploads itself, as a 4.x service does, which ignores the ID of a creation:
+    /// <c>upload-{n}/+</c>, whose characters a path escapes. Default is <see langword="false"/>, for a service whose uploads have the IDs of their
+    /// creations, as a 5.0 service's do.
+    /// </summary>
+    public bool ChoosesIds { get; set; }
+
+    /// <summary>
+    /// Gets or sets the largest file that the fake takes in a direct upload. Longer ones fail with <see cref="UploadErrorCodes.DirectTooLarge"/>.
+    /// </summary>
+    public int MaxDirectUploadLength { get; set; } = 64 << 20;
+
+    /// <summary>
     /// Gets or sets a function that answers a request in the fake's place, or returns <see langword="null"/> to let the fake handle it. It can throw to
     /// fail the request, as a failed connection does, and it runs with the request's cancellation token.
     /// </summary>
@@ -109,6 +128,9 @@ public sealed class FakeUploadService : HttpMessageHandler
         if (request.Kind is UploadRequestKind.Create)
             return Create(request);
 
+        if (request.Kind is UploadRequestKind.Direct)
+            return HasDirectUploads ? UploadDirectly(request) : new HttpResponseMessage(HttpStatusCode.MethodNotAllowed) { Content = new ByteArrayContent([]) };
+
         if (request.UploadId is null || !_uploads.TryGetValue(request.UploadId, out var upload) || upload.IsAborted)
         {
             if (request.Kind is UploadRequestKind.Abort)
@@ -148,11 +170,11 @@ public sealed class FakeUploadService : HttpMessageHandler
     {
         var command = JsonSerializer.Deserialize(request.Body!, UploadTestJsonContext.Default.CreateUploadCommand).ShouldNotBeNull();
 
-        // A creation made again with the key of an earlier one gets its upload, as the service does.
-        if (command.IdempotencyKey is { } key && _uploadsByKey.TryGetValue(key, out var existing))
+        // A creation made again with the ID or key of an earlier one gets its upload, as the service does.
+        if (FindExisting(command) is { } existing)
             return Json(new UploadSession(existing.Id, existing.ChunkSize, ExpiresUtc), UploadTestJsonContext.Default.UploadSession, HttpStatusCode.OK);
 
-        string id = $"upload-{Interlocked.Increment(ref _uploadCount)}/+";
+        string id = GetNewId(command);
         var upload = new FakeUpload(id, command, command.ChunkSize ?? DefaultChunkSize);
         _uploads[id] = upload;
 
@@ -163,6 +185,66 @@ public sealed class FakeUploadService : HttpMessageHandler
         response.Headers.Location = new Uri(request.Uri, $"uploads/{Uri.EscapeDataString(id)}");
 
         return response;
+    }
+
+    /// <summary>
+    /// Creates an upload with the file of the request as its one chunk, unless the request was made before with its key, and completes it: the response
+    /// starts with a ping and the upload's path, as the service's does.
+    /// </summary>
+    private HttpResponseMessage UploadDirectly(UploadRequest request)
+    {
+        if (request.BodyBytes.Length > MaxDirectUploadLength)
+            return Error(new ContentTooLargeApiException("Too large to upload directly.") { ErrorCode = UploadErrorCodes.DirectTooLarge });
+
+        var creation = JsonSerializer.Deserialize(request.CreationJson!, UploadTestJsonContext.Default.CreateUploadCommand).ShouldNotBeNull();
+        creation.Length.ShouldBe(request.BodyBytes.Length);
+
+        string? key = creation.IdempotencyKey;
+        var upload = FindExisting(creation);
+        bool isCreated = upload is null;
+
+        if (upload is null)
+        {
+            string id = GetNewId(creation);
+            upload = new FakeUpload(id, creation, Math.Max(request.BodyBytes.Length, 1));
+            _uploads[id] = upload;
+
+            if (key is not null)
+                _uploadsByKey[key] = upload;
+        }
+
+        if (upload.ChunkCount > 0 && !upload.IsCompleted)
+            upload.Receive(0, request.BodyBytes);
+
+        upload.IsCompleted = true;
+        int index = Interlocked.Increment(ref upload.CompletionCount);
+
+        var response = Complete(new FakeCompletion(upload, index, request));
+        response.Headers.Location = new Uri(request.Uri, Uri.EscapeDataString(upload.Id));
+
+        if (response.IsSuccessStatusCode)
+            response.StatusCode = isCreated ? HttpStatusCode.Created : HttpStatusCode.OK;
+
+        return response;
+    }
+
+    /// <summary>
+    /// Gets the upload that an earlier creation with the creation's ID, or with its key, created, unless it was aborted.
+    /// </summary>
+    private FakeUpload? FindExisting(CreateUploadCommand command)
+    {
+        if (!ChoosesIds && command.Id is { } id)
+            return _uploads.TryGetValue(id.ToString("D"), out var upload) && !upload.IsAborted ? upload : null;
+
+        return command.IdempotencyKey is { } key && _uploadsByKey.TryGetValue(key, out var keyed) ? keyed : null;
+    }
+
+    /// <summary>
+    /// Gets the ID of a new upload: the creation's, or one of the fake's own.
+    /// </summary>
+    private string GetNewId(CreateUploadCommand command)
+    {
+        return !ChoosesIds && command.Id is { } id ? id.ToString("D") : $"upload-{Interlocked.Increment(ref _uploadCount)}/+";
     }
 
     private static HttpResponseMessage ReceiveChunk(FakeUpload upload, UploadRequest request)
@@ -194,6 +276,7 @@ public enum UploadRequestKind
     Status,
     Complete,
     Abort,
+    Direct,
     Other,
 }
 
@@ -210,9 +293,25 @@ public sealed record UploadRequest(
     System.Net.Http.Headers.ContentRangeHeaderValue? ContentRange,
     byte[] BodyBytes)
 {
+    /// <summary>
+    /// Gets the request's headers and content headers, one value of each.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
+
+    /// <summary>
+    /// Gets the JSON of the request's creation header, if it has one.
+    /// </summary>
+    public string? CreationJson { get; init; }
+
     public string? Body => BodyBytes.Length is 0 && ContentType is null ? null : Encoding.UTF8.GetString(BodyBytes);
 
     public string Query => Uri.Query;
+
+    private static string DecodeBase64Url(string value)
+    {
+        string base64 = value.Replace('-', '+').Replace('_', '/');
+        return Encoding.UTF8.GetString(Convert.FromBase64String(base64 + new string('=', (4 - (base64.Length % 4)) % 4)));
+    }
 
     public static async Task<UploadRequest> CaptureAsync(HttpRequestMessage request, string endpointPath, CancellationToken cancellationToken)
     {
@@ -231,6 +330,10 @@ public sealed record UploadRequest(
         if (path == uploadsPath && request.Method == HttpMethod.Post)
         {
             kind = UploadRequestKind.Create;
+        }
+        else if (path == uploadsPath + "/direct" && request.Method == HttpMethod.Post)
+        {
+            kind = UploadRequestKind.Direct;
         }
         else if (path.StartsWith(uploadsPath + "/", StringComparison.Ordinal))
         {
@@ -254,7 +357,11 @@ public sealed record UploadRequest(
             request.Headers.TryGetValues("Cookie", out var cookies) ? string.Join("; ", cookies) : null,
             request.Content?.Headers.ContentType?.MediaType,
             request.Content?.Headers.ContentRange,
-            body);
+            body) {
+            Headers = request.Headers.Concat(request.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>())
+                .ToDictionary(h => h.Key, h => string.Join(",", h.Value), StringComparer.OrdinalIgnoreCase),
+            CreationJson = request.Headers.TryGetValues("Upload-Creation", out var creation) ? DecodeBase64Url(creation.Single()) : null,
+        };
     }
 }
 

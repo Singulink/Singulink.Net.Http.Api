@@ -61,6 +61,7 @@ public sealed class SignInRegistrationTests
         using var provider = services.BuildServiceProvider();
 
         provider.GetRequiredService<IShortLivedStore>().ShouldBeSameAs(store);
-        services.Count(d => d.ServiceType == typeof(IShortLivedStore)).ShouldBe(1);
+        services.Count(d => d.ServiceType == typeof(IShortLivedStore) && !d.IsKeyedService).ShouldBe(1);
+        services.Count(d => d.ServiceType == typeof(IShortLivedStore) && d.IsKeyedService).ShouldBe(1);
     }
 }

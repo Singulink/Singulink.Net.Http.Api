@@ -1,3 +1,5 @@
+using Singulink.IO;
+
 namespace Singulink.Net.Http.Api.Client;
 
 [PrefixTestClass]
@@ -10,9 +12,9 @@ public sealed class FileSessionTokenStorageTests
     {
         string path = GetPath();
 
-        FileSessionTokenStorage.Write(path, "the-session-token");
+        FileSessionTokenStorage.Write(ToFile(path), "the-session-token");
 
-        FileSessionTokenStorage.Read(path).ShouldBe("the-session-token");
+        FileSessionTokenStorage.Read(ToFile(path)).ShouldBe("the-session-token");
         Encoding.UTF8.GetString(File.ReadAllBytes(path)).Contains("the-session-token").ShouldBe(!OperatingSystem.IsWindows());
         File.Exists(path + ".tmp").ShouldBeFalse();
     }
@@ -21,31 +23,31 @@ public sealed class FileSessionTokenStorageTests
     public void NewToken_ReplacesStoredToken()
     {
         string path = GetPath();
-        FileSessionTokenStorage.Write(path, "the-session-token");
+        FileSessionTokenStorage.Write(ToFile(path), "the-session-token");
 
-        FileSessionTokenStorage.Write(path, "the-new-token");
+        FileSessionTokenStorage.Write(ToFile(path), "the-new-token");
 
-        FileSessionTokenStorage.Read(path).ShouldBe("the-new-token");
+        FileSessionTokenStorage.Read(ToFile(path)).ShouldBe("the-new-token");
     }
 
     [TestMethod]
     public void MissingFileOrFolder_ReadsAsNull()
     {
-        FileSessionTokenStorage.Read(GetPath()).ShouldBeNull();
-        FileSessionTokenStorage.Read(Path.Combine(_folder, "Missing", "SessionToken.dat")).ShouldBeNull();
+        FileSessionTokenStorage.Read(ToFile(GetPath())).ShouldBeNull();
+        FileSessionTokenStorage.Read(ToFile(Path.Combine(_folder, "Missing", "SessionToken.dat"))).ShouldBeNull();
     }
 
     [TestMethod]
     public void NullToken_RemovesStoredToken()
     {
         string path = GetPath();
-        FileSessionTokenStorage.Write(path, "the-session-token");
+        FileSessionTokenStorage.Write(ToFile(path), "the-session-token");
 
-        FileSessionTokenStorage.Write(path, null);
-        FileSessionTokenStorage.Write(Path.Combine(_folder, "Missing", "SessionToken.dat"), null);
+        FileSessionTokenStorage.Write(ToFile(path), null);
+        FileSessionTokenStorage.Write(ToFile(Path.Combine(_folder, "Missing", "SessionToken.dat")), null);
 
         File.Exists(path).ShouldBeFalse();
-        FileSessionTokenStorage.Read(path).ShouldBeNull();
+        FileSessionTokenStorage.Read(ToFile(path)).ShouldBeNull();
     }
 
     [TestMethod]
@@ -55,7 +57,7 @@ public sealed class FileSessionTokenStorageTests
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllBytes(path, Encoding.UTF8.GetBytes("the-session-token"));
 
-        string? token = FileSessionTokenStorage.Read(path);
+        string? token = FileSessionTokenStorage.Read(ToFile(path));
 
         if (OperatingSystem.IsWindows())
         {
@@ -67,6 +69,8 @@ public sealed class FileSessionTokenStorageTests
             token.ShouldBe("the-session-token");
         }
     }
+
+    private static IAbsoluteFilePath ToFile(string path) => FilePath.ParseAbsolute(path, PathOptions.None);
 
     private string GetPath() => Path.Combine(_folder, "SessionToken.dat");
 

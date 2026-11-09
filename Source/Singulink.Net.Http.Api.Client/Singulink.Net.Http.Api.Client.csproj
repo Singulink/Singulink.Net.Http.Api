@@ -20,6 +20,10 @@
     <PackageReference Include="PolySharp" PrivateAssets="all" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <PackageReference Include="Singulink.IO.FileSystem" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <!-- Browser fetch options are only used on browser platforms, which always use the .NET build. -->
     <Compile Remove="Microsoft.AspNetCore.Components.WebAssembly.Http/**" />

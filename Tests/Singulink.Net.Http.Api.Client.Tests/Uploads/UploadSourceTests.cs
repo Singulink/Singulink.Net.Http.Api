@@ -61,6 +61,29 @@ public sealed class UploadSourceTests
         Should.Throw<FileNotFoundException>(() => UploadSource.FromFile(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.bin")));
     }
 
+#if NET
+    [TestMethod]
+    public async Task FromFile_WithAnAbsoluteFilePath_ReadsTheFileAndTakesItsName()
+    {
+        var file = Singulink.IO.FilePath.ParseAbsolute(CreateTempFile(Content), Singulink.IO.PathOptions.None);
+
+        try
+        {
+            var source = UploadSource.FromFile(file);
+
+            source.FileName.ShouldBe(file.Name);
+            source.Length.ShouldBe(100);
+            (await ReadAsync(source, 50, 30)).ShouldBe(Range(50, 30));
+        }
+        finally
+        {
+            file.Delete();
+        }
+
+        Should.Throw<FileNotFoundException>(() => UploadSource.FromFile(file));
+    }
+#endif
+
     [TestMethod]
     public async Task FromFile_FileWhoseLengthChanged_FailsRead()
     {

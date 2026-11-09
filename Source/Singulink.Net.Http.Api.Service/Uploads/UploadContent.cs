@@ -1,41 +1,46 @@
+using Singulink.IO;
+
 namespace Singulink.Net.Http.Api.Service.Uploads;
 
 /// <summary>
-/// Represents the complete file of an upload as an <see cref="IUploadStore"/> provides it: a stream that reads it, and the path of a file that has it, if
-/// the store keeps one in a file system.
+/// Represents the complete file of an upload as an <see cref="IUploadStore"/> provides it: a stream that reads it, and a file that has it, if the store
+/// keeps one in a file system.
 /// </summary>
 public abstract class UploadContent
 {
     /// <summary>
-    /// Gets the path of a file that has the content, or <see langword="null"/> if the store keeps none. Default is <see langword="null"/>.
+    /// Gets a file that has the content, or <see langword="null"/> if the store keeps none. Default is <see langword="null"/>.
     /// </summary>
-    public virtual string? FilePath => null;
+    public virtual IAbsoluteFilePath? File => null;
 
     /// <summary>
-    /// Opens a read-only stream of the content. A store that keeps the content in a file system returns a seekable stream.
+    /// Opens a read-only stream of the content.
     /// </summary>
+    /// <remarks>
+    /// A store that keeps the content in a file system returns a seekable stream.
+    /// </remarks>
     public abstract Stream OpenReadStream();
 
     /// <summary>
-    /// Moves the content to a new file at the specified path, so that the store no longer removes it. Default copies the content from
-    /// <see cref="OpenReadStream"/> to the new file.
+    /// Moves the content to a new file, so that the store no longer removes it. Default copies the content from <see cref="OpenReadStream"/> to the new
+    /// file.
     /// </summary>
-    /// <param name="destinationPath">The path of the new file, which must not exist.</param>
+    /// <param name="destination">The new file, which must not exist.</param>
     /// <param name="cancellationToken">A token that cancels the operation.</param>
-    /// <exception cref="IOException">The file at <paramref name="destinationPath"/> exists, or the content cannot be moved.</exception>
-    public virtual async Task MoveToAsync(string destinationPath, CancellationToken cancellationToken = default)
+    /// <exception cref="IOException"><paramref name="destination"/> exists, or the content cannot be moved.</exception>
+    public virtual async Task MoveToAsync(IAbsoluteFilePath destination, CancellationToken cancellationToken = default)
     {
         await using var source = OpenReadStream();
-        await using var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0, useAsync: true);
+        await using var stream = destination.OpenAsyncStream(FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0);
 
         try
         {
-            await source.CopyToAsync(destination, cancellationToken);
+            await source.CopyToAsync(stream, cancellationToken);
         }
         catch
         {
-            await destination.DisposeAsync();
-            File.Delete(destinationPath);
+            await stream.DisposeAsync();
+            destination.Delete();
             throw;
         }
     }

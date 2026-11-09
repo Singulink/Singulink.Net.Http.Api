@@ -34,8 +34,10 @@ public sealed class RateLimitRejectionContext
 
     /// <summary>
     /// Gets how long the client should wait before it tries again, or <see langword="null"/> if the limiter that rejected the request doesn't report it.
+    /// </summary>
+    /// <remarks>
     /// For the per-client limits, it is the time until their next window starts. The error carries it as <see cref="ApiException.RetryAfter"/>, and the
     /// response's <c>Retry-After</c> header in whole seconds, rounded up.
-    /// </summary>
+    /// </remarks>
     public TimeSpan? RetryAfter { get; }
 }

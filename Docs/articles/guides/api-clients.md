@@ -281,9 +281,9 @@ A few details depend on the runtime or the compiler:
 - `DateOnly` and `TimeOnly` values use the round-trip format. .NET Framework does not have these types.
 - A streaming response that ends without its terminal record throws <xref:System.Net.Http.HttpIOException> on .NET 10 and later, and <xref:System.IO.IOException> (its base class) on .NET Framework. Catch <xref:System.IO.IOException> to handle both.
 
-## Upgrading from 3.x
+## Upgrading to 4.0
 
-See [Upgrading from 3.x](upgrading.md#clients) for the changes to API clients.
+See [Upgrading to 4.0](../upgrading/upgrading-to-4.md#clients) for the changes to API clients.
 
 ## Next Steps
 

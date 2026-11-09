@@ -16,7 +16,7 @@ public sealed class CloudflareTestHost : IAsyncDisposable
     /// <summary>
     /// The saved ranges path that hosts use unless the options configuration changes it, relative to the content root.
     /// </summary>
-    public const string SavedRangesFile = "data/cloudflare-ip-ranges.txt";
+    public const string SavedRangesFileName = "data/cloudflare-ip-ranges.txt";
 
     private readonly CapturingLoggerProvider _logs;
 
@@ -32,7 +32,7 @@ public sealed class CloudflareTestHost : IAsyncDisposable
     public string ContentRoot { get; }
 
     /// <summary>
-    /// Gets the full path of <see cref="SavedRangesFile"/> in this host's content root.
+    /// Gets the full path of <see cref="SavedRangesFileName"/> in this host's content root.
     /// </summary>
     public string SavedRangesPath => GetSavedRangesPath(ContentRoot);
 
@@ -57,23 +57,25 @@ public sealed class CloudflareTestHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Gets the full path of <see cref="SavedRangesFile"/> in the specified content root.
+    /// Gets the full path of <see cref="SavedRangesFileName"/> in the specified content root.
     /// </summary>
-    public static string GetSavedRangesPath(string contentRoot) => Path.GetFullPath(SavedRangesFile, contentRoot);
+    public static string GetSavedRangesPath(string contentRoot) => Path.GetFullPath(SavedRangesFileName, contentRoot);
 
     /// <summary>
-    /// Starts a web application with Cloudflare forwarding. <see cref="CloudflareForwardingOptions.SavedRangesPath"/> is set to <see
-    /// cref="SavedRangesFile"/> before <paramref name="configure"/> runs.
+    /// Starts a web application with Cloudflare forwarding. <see cref="CloudflareForwardingOptions.SavedRangesFile"/> is set to <see
+    /// cref="SavedRangesFileName"/> before <paramref name="configure"/> runs, unless <paramref name="setsSavedRangesFile"/> is <see langword="false"/>.
     /// </summary>
     /// <param name="handler">Serves the range lists.</param>
     /// <param name="configure">Optional forwarding options configuration.</param>
     /// <param name="contentRoot">The content root to use (see <see cref="CreateContentRoot"/>), or <see langword="null"/> to create one.</param>
     /// <param name="configureServices">Optional additional service registrations, made before the Cloudflare forwarding services are registered.</param>
+    /// <param name="setsSavedRangesFile">Whether <see cref="CloudflareForwardingOptions.SavedRangesFile"/> is set to <see cref="SavedRangesFileName"/>.</param>
     public static async Task<CloudflareTestHost> StartAsync(
         FakeCloudflareHandler handler,
         Action<CloudflareForwardingOptions>? configure = null,
         string? contentRoot = null,
-        Action<IServiceCollection>? configureServices = null)
+        Action<IServiceCollection>? configureServices = null,
+        bool setsSavedRangesFile = true)
     {
         contentRoot ??= CreateContentRoot();
 
@@ -91,7 +93,9 @@ public sealed class CloudflareTestHost : IAsyncDisposable
         configureServices?.Invoke(builder.Services);
 
         builder.Services.AddCloudflareForwarding(o => {
-            o.SavedRangesPath = SavedRangesFile;
+            if (setsSavedRangesFile)
+                o.SavedRangesFile = FilePath.ParseAbsolute(GetSavedRangesPath(contentRoot), PathOptions.None);
+
             configure?.Invoke(o);
         });
 

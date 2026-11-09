@@ -43,8 +43,8 @@
 - name: Running Multiple Servers
   href: multiple-servers.md
 
+- name: Health Checks and Metrics
+  href: diagnostics.md
+
 - name: Trimming and Native AOT
   href: trimming-and-aot.md
-
-- name: Upgrading from 3.x
-  href: upgrading.md

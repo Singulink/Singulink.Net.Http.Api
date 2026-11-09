@@ -47,9 +47,11 @@ public sealed class PasskeyAuthenticatorException : Exception
 
     /// <summary>
     /// Gets a value indicating whether the person may have cancelled the operation: <see langword="true"/> if <see cref="Reason"/> is
-    /// <see cref="PasskeyErrorReason.Cancelled"/> or <see cref="PasskeyErrorReason.NotAllowed"/>. Browsers report a dismissed or timed out passkey prompt
-    /// as <see cref="PasskeyErrorReason.NotAllowed"/>, the same as an operation they refuse.
+    /// <see cref="PasskeyErrorReason.Cancelled"/> or <see cref="PasskeyErrorReason.NotAllowed"/>.
     /// </summary>
+    /// <remarks>
+    /// Browsers report a dismissed or timed out passkey prompt as <see cref="PasskeyErrorReason.NotAllowed"/>, the same as an operation they refuse.
+    /// </remarks>
     public bool IsCancellation => Reason is PasskeyErrorReason.Cancelled or PasskeyErrorReason.NotAllowed;
 
     private static string GetDefaultMessage(PasskeyErrorReason reason) => reason switch {

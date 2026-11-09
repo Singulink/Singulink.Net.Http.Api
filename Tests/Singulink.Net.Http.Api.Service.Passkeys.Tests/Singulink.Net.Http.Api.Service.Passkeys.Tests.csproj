@@ -17,6 +17,7 @@
   <!-- The short-lived store that stands in for shared storage and other helpers, shared with the service tests. -->
   <ItemGroup>
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\CapturingLoggerProvider.cs" Link="Infrastructure\CapturingLoggerProvider.cs" />
+    <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\OptionsAssertions.cs" Link="Infrastructure\OptionsAssertions.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\SharedShortLivedStore.cs" Link="Infrastructure\SharedShortLivedStore.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\StoreKind.cs" Link="Infrastructure\StoreKind.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\ToolkitKeys.cs" Link="Infrastructure\ToolkitKeys.cs" />

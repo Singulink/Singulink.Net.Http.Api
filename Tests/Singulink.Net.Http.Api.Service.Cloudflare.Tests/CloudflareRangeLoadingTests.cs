@@ -1,6 +1,10 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Microsoft.Extensions.Logging;
 
 namespace Singulink.Net.Http.Api.Service;
@@ -166,29 +170,6 @@ public sealed class CloudflareRangeLoadingTests
     }
 
     [TestMethod]
-    public async Task SavedRangesPath_IsResolvedAgainstContentRoot()
-    {
-        // The saved copy goes next to the app's folder, as the docs suggest.
-        string root = CloudflareTestHost.CreateContentRoot();
-        string appRoot = Directory.CreateDirectory(Path.Combine(root, "app")).FullName;
-
-        try
-        {
-            await using (var host = await CloudflareTestHost.StartAsync(
-                new FakeCloudflareHandler(),
-                o => o.SavedRangesPath = "../data/cloudflare-ip-ranges.txt",
-                appRoot))
-            {
-                File.ReadAllLines(Path.Combine(root, "data", "cloudflare-ip-ranges.txt")).ShouldBe(DefaultSavedLines);
-            }
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
-    }
-
-    [TestMethod]
     public async Task FailedDownload_UsesSavedCopyAndWarnsWithItsDate()
     {
         string contentRoot = CloudflareTestHost.CreateContentRoot();
@@ -233,6 +214,57 @@ public sealed class CloudflareRangeLoadingTests
         warnings[1].Message.ShouldContain("on 2026-01-02 03:04:05Z until a download succeeds.");
         warnings[2].Level.ShouldBe(LogLevel.Warning);
         warnings[2].Message.ShouldStartWith(OutOfDateMessage + "2026-01-02 03:04:05Z.");
+    }
+
+    [TestMethod]
+    public async Task HealthCheckAndMetrics_FailWithoutRanges_CountingRefusedRequests_AndAreHealthyOnceTheyAreLoaded()
+    {
+        var handler = new FakeCloudflareHandler { Fail = true };
+        await using var host = await CloudflareTestHost.StartAsync(
+            handler,
+            o => o.InitialRetryInterval = TimeSpan.FromMilliseconds(50),
+            configureServices: services => services.AddHealthChecks().AddCloudflareForwardingCheck());
+
+        var meterFactory = host.App.Services.GetRequiredService<IMeterFactory>();
+        using var refused = new MetricCollector<long>(meterFactory, "Singulink.Net.Http.Api.Service", "httpapi.cloudflare.refused_requests");
+        using var ranges = new MetricCollector<long>(meterFactory, "Singulink.Net.Http.Api.Service", "httpapi.cloudflare.range.count");
+
+        await ShouldBeRefusedAsync(await host.SendAsync(DirectAddress));
+        refused.GetMeasurementSnapshot().ShouldHaveSingleItem().Value.ShouldBe(1);
+
+        var health = host.App.Services.GetRequiredService<HealthCheckService>();
+        var failed = (await health.CheckHealthAsync()).Entries["httpapi-cloudflare"];
+        failed.Status.ShouldBe(HealthStatus.Unhealthy);
+        failed.Exception.ShouldNotBeNull();
+        failed.Data[CloudflareHealthCheckData.Ranges].ShouldBe(0L);
+        failed.Data[CloudflareHealthCheckData.RefusedRequests].ShouldBe(1L);
+        failed.Data[CloudflareHealthCheckData.LastRefreshSucceeded].ShouldBe(false);
+        failed.Data[HttpApiHealthCheckData.Error].ShouldBe(failed.Exception.Message);
+        failed.Data[CloudflareHealthCheckData.LastRefreshError].ShouldBe(failed.Exception.Message);
+
+        handler.Fail = false;
+        await host.WaitUntilTrustedAsync(DefaultRangeAddress);
+
+        var healthy = (await health.CheckHealthAsync()).Entries["httpapi-cloudflare"];
+        healthy.Status.ShouldBe(HealthStatus.Healthy);
+        ((long)healthy.Data[CloudflareHealthCheckData.Ranges]).ShouldBePositive();
+        healthy.Data[CloudflareHealthCheckData.DownloadRanges].ShouldBe(true);
+        healthy.Tags.ShouldBe(["httpapi", "cloudflare"], ignoreOrder: true);
+
+        ranges.RecordObservableInstruments();
+        ranges.LastMeasurement.ShouldNotBeNull().Value.ShouldBe((long)healthy.Data[CloudflareHealthCheckData.Ranges]);
+    }
+
+    [TestMethod]
+    public void AddHttpApiChecks_AddsTheCheckOfCloudflareForwarding_WhenItIsRegistered()
+    {
+        var services = new ServiceCollection();
+        services.AddCloudflareForwarding(o => o.SavedRangesFile = DirectoryPath.GetTemp().CombineFile("ranges.txt"));
+        services.AddHealthChecks().AddHttpApiChecks();
+
+        using var provider = services.BuildServiceProvider();
+        var registrations = provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<HealthCheckServiceOptions>>().Value.Registrations;
+        registrations.Select(r => r.Name).ShouldBe(["httpapi-cloudflare"]);
     }
 
     [TestMethod]
@@ -364,13 +396,15 @@ public sealed class CloudflareRangeLoadingTests
         // A file where the directory should be keeps the directory from being created.
         File.WriteAllText(Path.Combine(contentRoot, "blocked"), string.Empty);
 
-        await using var host = await CloudflareTestHost.StartAsync(new FakeCloudflareHandler(), o => o.SavedRangesPath = "blocked/ranges.txt", contentRoot);
+        string path = Path.Combine(contentRoot, "blocked", "ranges.txt");
+        await using var host = await CloudflareTestHost.StartAsync(
+            new FakeCloudflareHandler(), o => o.SavedRangesFile = FilePath.ParseAbsolute(path, PathOptions.None), contentRoot);
 
         await host.WaitUntilTrustedAsync(DefaultRangeAddress);
 
         var log = host.WarningLogs.ShouldHaveSingleItem();
         log.Level.ShouldBe(LogLevel.Warning);
-        log.Message.ShouldStartWith($"Could not save Cloudflare's IP ranges to {Path.GetFullPath("blocked/ranges.txt", contentRoot)}.");
+        log.Message.ShouldStartWith($"Could not save Cloudflare's IP ranges to {path}.");
         log.Exception.ShouldNotBeNull();
     }
 
@@ -465,14 +499,17 @@ public sealed class CloudflareRangeLoadingTests
     }
 
     [TestMethod]
-    public async Task FailedRefresh_KeepsCurrentRanges()
+    public async Task FailedRefresh_KeepsCurrentRanges_AndTheCheckReportsTheErrorUnderItsOwnKey()
     {
         var handler = new FakeCloudflareHandler();
 
-        await using var host = await CloudflareTestHost.StartAsync(handler, o => {
-            o.RefreshInterval = TimeSpan.FromMilliseconds(50);
-            o.RetryInterval = TimeSpan.FromMilliseconds(50);
-        });
+        await using var host = await CloudflareTestHost.StartAsync(
+            handler,
+            o => {
+                o.RefreshInterval = TimeSpan.FromMilliseconds(50);
+                o.RetryInterval = TimeSpan.FromMilliseconds(50);
+            },
+            configureServices: services => services.AddHealthChecks().AddCloudflareForwardingCheck());
 
         await host.WaitUntilTrustedAsync(DefaultRangeAddress);
 
@@ -488,6 +525,13 @@ public sealed class CloudflareRangeLoadingTests
         var warnings = host.WarningLogs;
         warnings.ShouldNotBeEmpty();
         warnings.ShouldAllBe(l => l.Level == LogLevel.Warning && l.Message == DownloadFailedMessage + " Retrying in 00:00:00.0500000.");
+
+        // The ranges in use serve requests, so the check is healthy, and the refresh's error is not the check's.
+        var result = (await host.App.Services.GetRequiredService<HealthCheckService>().CheckHealthAsync()).Entries["httpapi-cloudflare"];
+        result.Status.ShouldBe(HealthStatus.Healthy);
+        result.Data[CloudflareHealthCheckData.LastRefreshSucceeded].ShouldBe(false);
+        result.Data.ContainsKey(CloudflareHealthCheckData.LastRefreshError).ShouldBeTrue();
+        result.Data.ContainsKey(HttpApiHealthCheckData.Error).ShouldBeFalse();
     }
 
     [TestMethod]

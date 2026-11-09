@@ -100,4 +100,15 @@ public sealed class PasskeyAuthenticatorOptionsTests
         options.PageUri.ShouldBeNull();
         options.CallbackUri.ShouldBeNull();
     }
+
+    [TestMethod]
+    public void Options_AreFrozen_WhenTheAuthenticatorTakesThem()
+    {
+        var options = new PasskeyAuthenticatorOptions { PageUri = new Uri("https://example.com/passkey") };
+        options.IsFrozen.ShouldBeFalse();
+
+        _ = new PasskeyAuthenticator(options);
+
+        OptionsAssertions.ShouldBeFrozen(options);
+    }
 }

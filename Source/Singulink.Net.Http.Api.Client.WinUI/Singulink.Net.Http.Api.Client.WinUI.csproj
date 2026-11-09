@@ -41,6 +41,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Singulink.IO.FileSystem" />
     <ProjectReference Include="..\Singulink.Net.Http.Api.Client\Singulink.Net.Http.Api.Client.csproj" />
   </ItemGroup>
 

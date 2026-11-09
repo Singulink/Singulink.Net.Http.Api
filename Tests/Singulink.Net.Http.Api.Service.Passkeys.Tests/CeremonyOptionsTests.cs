@@ -168,8 +168,8 @@ public sealed class CeremonyOptionsTests
     public async Task Options_FollowConfiguredRequirementsAndTimeout()
     {
         using var fixture = new PasskeyFixture(o => {
-            o.RequireUserVerification = false;
-            o.RequireDiscoverableCredentials = false;
+            o.UserVerification = PasskeyRequirement.Preferred;
+            o.DiscoverableCredentials = PasskeyRequirement.Preferred;
             o.CeremonyTimeout = TimeSpan.FromMinutes(2);
         });
 
@@ -185,6 +185,26 @@ public sealed class CeremonyOptionsTests
         selection.GetProperty("residentKey").GetString().ShouldBe("preferred");
         selection.GetProperty("userVerification").GetString().ShouldBe("preferred");
         registrationOptions.RootElement.GetProperty("timeout").GetInt32().ShouldBe(120_000);
+    }
+
+    [TestMethod]
+    public async Task Options_FollowDiscouragedRequirements()
+    {
+        using var fixture = new PasskeyFixture(o => {
+            o.UserVerification = PasskeyRequirement.Discouraged;
+            o.DiscoverableCredentials = PasskeyRequirement.Discouraged;
+        });
+
+        var signIn = await fixture.CreateService().BeginSignInAsync(codeChallenge: fixture.Pkce.Challenge);
+        var registration = await fixture.CreateService().BeginRegistrationAsync(PasskeyFixture.User());
+
+        using var signInOptions = JsonDocument.Parse(signIn.OptionsJson);
+        signInOptions.RootElement.GetProperty("userVerification").GetString().ShouldBe("discouraged");
+
+        using var registrationOptions = JsonDocument.Parse(registration.OptionsJson);
+        var selection = registrationOptions.RootElement.GetProperty("authenticatorSelection");
+        selection.GetProperty("residentKey").GetString().ShouldBe("discouraged");
+        selection.GetProperty("userVerification").GetString().ShouldBe("discouraged");
     }
 
     [TestMethod]

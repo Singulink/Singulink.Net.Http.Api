@@ -13,15 +13,15 @@ public static class PasskeyServiceCollectionExtensions
 {
     /// <summary>
     /// Registers <see cref="PasskeyService"/> (scoped) with the app's passkey store, the <see cref="SignInCodes"/> that a passkey sign-in can continue with,
-    /// and the <see cref="IShortLivedStore"/> that keeps ceremonies between their begin and finish requests (see <see
-    /// cref="ServiceCollectionExtensions.AddSignInCodes(IServiceCollection, Action{SignInCodeOptions}?)"/>).
+    /// and the <see cref="IShortLivedStore"/> that keeps ceremonies between their begin and finish requests (see
+    /// <see cref="ServiceCollectionExtensions.AddSignInCodes(IServiceCollection, Action{SignInCodeOptions}?)"/>).
     /// </summary>
     /// <typeparam name="TStore">The app's passkey store, which is registered as a scoped <see cref="IPasskeyStore"/>.</typeparam>
     /// <param name="services">The service collection to add the passkey services to.</param>
     /// <param name="configure">An action that configures the options. Options can also be bound from configuration, for example with
     /// <c>services.AddPasskeys&lt;TStore&gt;(o =&gt; builder.Configuration.GetSection("Passkeys").Bind(o))</c>.</param>
     /// <remarks>
-    /// The options are validated when the app starts.
+    /// The options are validated when the application starts.
     /// </remarks>
     public static IServiceCollection AddPasskeys<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TStore>(
         this IServiceCollection services, Action<PasskeyOptions>? configure = null)
@@ -38,7 +38,7 @@ public static class PasskeyServiceCollectionExtensions
 
         services.TryAddScoped(sp => new PasskeyService(
             sp.GetRequiredService<IOptions<PasskeyOptions>>().Value,
-            sp.GetRequiredService<IShortLivedStore>(),
+            sp.GetRequiredKeyedService<IShortLivedStore>(ShortLivedStoreKeys.SignIn),
             sp.GetRequiredService<IPasskeyStore>(),
             sp.GetRequiredService<TimeProvider>(),
             sp.GetRequiredService<ILogger<PasskeyService>>()));

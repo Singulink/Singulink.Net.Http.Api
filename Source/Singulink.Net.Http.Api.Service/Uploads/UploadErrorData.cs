@@ -15,7 +15,8 @@ public static class UploadErrorData
     internal const string PropertyKey = "Property";
 
     /// <summary>
-    /// Gets the largest length of an upload, in bytes, of an error with <see cref="UploadErrorCodes.TooLarge"/>.
+    /// Gets the largest length of an upload, in bytes, of an error with <see cref="UploadErrorCodes.TooLarge"/>, or the largest length of a direct upload,
+    /// of an error with <see cref="UploadErrorCodes.DirectTooLarge"/>.
     /// </summary>
     /// <returns><see langword="true"/> if the exception has the value; otherwise, <see langword="false"/>.</returns>
     public static bool TryGetMaxSize(Exception exception, out long maxSize) => TryGet(exception, MaxSizeKey, out maxSize);

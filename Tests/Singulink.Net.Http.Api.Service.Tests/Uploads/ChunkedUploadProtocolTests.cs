@@ -30,7 +30,8 @@ public sealed class ChunkedUploadProtocolTests
         var session = (await created.Content.ReadFromJsonAsync<UploadSession>(UploadTestHost.JsonOptions)).ShouldNotBeNull();
         created.Headers.Location.ShouldBe(new Uri($"/folders/5/files/uploads/{session.Id}", UriKind.Relative));
 
-        ShortLivedId.IsWellFormed(session.Id).ShouldBeTrue();
+        Guid.TryParseExact(session.Id, "D", out var id).ShouldBeTrue();
+        id.Version.ShouldBe(4);
         session.ChunkSize.ShouldBe(5 * MiB);
         session.ExpiresUtc.ShouldBe(host.Clock.GetUtcNow().UtcDateTime.AddMinutes(15), TimeSpan.FromSeconds(5));
 
@@ -433,7 +434,10 @@ public sealed class ChunkedUploadProtocolTests
         await host.CreateUploadAsync("b", 10);
 
         using (var third = await host.SendCreateAsync(new { fileName = "c", length = 10 }))
+        {
             await UploadTestHost.ShouldBeErrorAsync(third, HttpStatusCode.TooManyRequests, UploadErrorCodes.LimitReached);
+            third.Headers.RetryAfter.ShouldNotBeNull().Delta.ShouldBe(TimeSpan.FromSeconds(1));
+        }
 
         // Other users have limits of their own, and an upload that finished is no longer open.
         await host.CreateUploadAsync("c", 10, userId: 2);
@@ -484,7 +488,7 @@ public sealed class ChunkedUploadProtocolTests
         using (var second = await host.SendCreateAsync(new { fileName = "b", length = 600 }))
         {
             await UploadTestHost.ShouldBeErrorAsync(second, HttpStatusCode.TooManyRequests, UploadErrorCodes.SizeLimitReached);
-            second.Headers.RetryAfter.ShouldBeNull();
+            second.Headers.RetryAfter.ShouldNotBeNull().Delta.ShouldBe(TimeSpan.FromSeconds(1));
         }
 
         // An upload that can never fit exceeds the limit, other users have limits of their own, and an upload that finished is no longer open.
@@ -605,7 +609,9 @@ public sealed class ChunkedUploadProtocolTests
         using var response = await host.SendCreateAsync(new { fileName = "a", length = 10 });
 
         await UploadTestHost.ShouldBeErrorAsync(response, HttpStatusCode.InternalServerError, null);
-        Directory.Exists(host.Directory).ShouldBeFalse();
+
+        // The directory has nothing but the lock file of the directory store, which only this host uses.
+        Directory.EnumerateFileSystemEntries(host.Directory, "*", SearchOption.AllDirectories).ShouldBe([Path.Combine(host.Directory, "uploads.lock")]);
     }
 
     [TestMethod]
@@ -621,7 +627,7 @@ public sealed class ChunkedUploadProtocolTests
 
         await UploadTestHost.ShouldBeErrorAsync(response, HttpStatusCode.ServiceUnavailable, UploadErrorCodes.StorageFull);
         response.Headers.RetryAfter.ShouldNotBeNull();
-        Directory.EnumerateFiles(host.Directory, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+        Directory.EnumerateFiles(host.Directory, "*", SearchOption.AllDirectories).ShouldBe([Path.Combine(host.Directory, "uploads.lock")]);
     }
 
     [TestMethod]
@@ -699,7 +705,7 @@ public sealed class ChunkedUploadProtocolTests
     }
 
     [TestMethod]
-    public async Task Create_IdempotencyKeyOfOtherUserOrAbortedUpload_CreatesUpload()
+    public async Task Create_IdempotencyKeyOfOtherUserOrAbortedUpload_CreatesTheUpload()
     {
         await using var host = await StartAsync();
         var body = new { fileName = "a.txt", length = 10, idempotencyKey = "key-1" };
@@ -712,9 +718,10 @@ public sealed class ChunkedUploadProtocolTests
 
         (await host.AbortAsync(session)).Dispose();
 
+        // The upload is created again, with the ID that the key gives it.
         using var afterAbort = await host.SendCreateAsync(body);
         afterAbort.StatusCode.ShouldBe(HttpStatusCode.Created);
-        (await afterAbort.Content.ReadFromJsonAsync<UploadSession>(UploadTestHost.JsonOptions))!.Id.ShouldNotBe(session.Id);
+        (await afterAbort.Content.ReadFromJsonAsync<UploadSession>(UploadTestHost.JsonOptions))!.Id.ShouldBe(session.Id);
     }
 
     [TestMethod]
@@ -778,20 +785,37 @@ public sealed class ChunkedUploadProtocolTests
 
         await UploadTestHost.ShouldBeErrorAsync(await host.GetStatusResponseAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
         await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
-        (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        // A cancellation of an ID that can be an upload's is written all the same, and one of an ID that can't is not found, as the other requests are.
+        if (id is "not-an-id")
+            await UploadTestHost.ShouldBeErrorAsync(await host.AbortAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
+        else
+            (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
     [TestMethod]
-    public async Task Requests_ForIdInOtherCase_AreNotFound()
+    public async Task Requests_ForIdInOtherCase_FindTheUpload_SinceIdsAreGuids()
     {
         await using var host = await StartAsync();
         var session = await host.CreateUploadAsync("a", 10);
-        string otherCase = session.Id.Any(char.IsLower) ? session.Id.ToUpperInvariant() : session.Id.ToLowerInvariant();
+        var otherCase = new UploadSession(session.Id.ToUpperInvariant(), session.ChunkSize, session.ExpiresUtc);
 
-        await UploadTestHost.ShouldBeErrorAsync(
-            await host.GetStatusResponseAsync(new UploadSession(otherCase, session.ChunkSize, session.ExpiresUtc)),
-            HttpStatusCode.NotFound,
-            UploadErrorCodes.NotFound);
+        using var response = await host.GetStatusResponseAsync(otherCase);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [TestMethod]
+    [DataRow("not-an-id")]
+    [DataRow("{00000000-0000-0000-0000-000000000001}")]
+    public async Task Requests_ForAnIdThatIsNotAnUploadId_AreNotFound(string id)
+    {
+        await using var host = await StartAsync();
+        await host.CreateUploadAsync("a", 10);
+        var session = new UploadSession(id, 5 * MiB, DateTime.UtcNow);
+
+        await UploadTestHost.ShouldBeErrorAsync(await host.GetStatusResponseAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
+        await UploadTestHost.ShouldBeErrorAsync(await host.AbortAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
     }
 
     [TestMethod]
@@ -809,14 +833,23 @@ public sealed class ChunkedUploadProtocolTests
     }
 
     [TestMethod]
-    public async Task Abort_AfterCompletion_RemovesOutcome()
+    public async Task Cancel_AfterTheUploadFinished_IsAConflict_AndKeepsItsOutcomeAndKey()
     {
         await using var host = await StartAsync();
-        var (session, _) = await host.UploadAsync(UploadTestHost.CreateFile(10));
+        byte[] file = UploadTestHost.CreateFile(10);
 
-        (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        using var created = await host.SendCreateAsync(new { fileName = "a", length = 10, idempotencyKey = "key-1" });
+        var session = (await created.Content.ReadFromJsonAsync<UploadSession>(UploadTestHost.JsonOptions)).ShouldNotBeNull();
+        await host.PutChunksAsync(session, file);
+        var lines = await host.CompleteAndReadAsync(session);
 
-        await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
+        await UploadTestHost.ShouldBeErrorAsync(await host.AbortAsync(session), HttpStatusCode.Conflict, UploadErrorCodes.Finished);
+
+        (await host.CompleteAndReadAsync(session)).ShouldBe(lines);
+
+        using var again = await host.SendCreateAsync(new { fileName = "a", length = 10, idempotencyKey = "key-1" });
+        again.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await again.Content.ReadFromJsonAsync<UploadSession>(UploadTestHost.JsonOptions)).ShouldNotBeNull().Id.ShouldBe(session.Id);
     }
 
     [TestMethod]
@@ -844,7 +877,7 @@ public sealed class ChunkedUploadProtocolTests
     [TestMethod]
     public async Task Upload_WithoutAChunkForUnstartedExpiry_IsRemoved()
     {
-        await using var host = await StartAsync();
+        await using var host = await StartAsync(options => options.IdleExpiry = TimeSpan.FromHours(1));
         byte[] file = UploadTestHost.CreateFile(10);
 
         // An upload that receives no chunk is kept for 15 minutes, and one that does for the idle expiry after its last chunk.
@@ -853,7 +886,7 @@ public sealed class ChunkedUploadProtocolTests
         unstarted.ExpiresUtc.ShouldBe(host.Clock.GetUtcNow().UtcDateTime.AddMinutes(15), TimeSpan.FromSeconds(5));
 
         (await host.PutChunkAsync(started, file, 0)).Dispose();
-        (await host.GetStatusAsync(started)).ExpiresUtc.ShouldBe(host.Clock.GetUtcNow().UtcDateTime.AddDays(1), TimeSpan.FromSeconds(5));
+        (await host.GetStatusAsync(started)).ExpiresUtc.ShouldBe(host.Clock.GetUtcNow().UtcDateTime.AddHours(1), TimeSpan.FromSeconds(5));
 
         host.Clock.Advance(TimeSpan.FromMinutes(15));
 
@@ -862,7 +895,7 @@ public sealed class ChunkedUploadProtocolTests
     }
 
     [TestMethod]
-    public async Task Upload_WithoutAChunkForUnstartedExpiry_StopsCountingTowardTheLimits()
+    public async Task Upload_WithoutAChunkForUnstartedExpiry_StopsCountingTowardTheLimits_OnceTheCleanupRemovesIt()
     {
         await using var host = await StartAsync(options => {
             options.MaxTotalSize = 1000;
@@ -872,8 +905,9 @@ public sealed class ChunkedUploadProtocolTests
 
         await host.CreateUploadAsync("a", 1000);
 
-        // The upload stops counting as it expires, before the next cleanup removes it.
         host.Clock.Advance(TimeSpan.FromMinutes(15));
+        await host.Services.GetRequiredService<ChunkedUploads>().CleanUpAsync(CancellationToken.None);
+
         await host.CreateUploadAsync("b", 1000);
     }
 

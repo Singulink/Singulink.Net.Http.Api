@@ -9,18 +9,24 @@ namespace Singulink.Net.Http.Api.Service.Testing;
 public static class UploadStoreContract
 {
     private const string UserId = "upload-store-contract";
+
+    // Another user, whose uploads have the same IDs as some of the first user's.
+    private const string OtherUserId = "upload-store-contract-other";
     private const int Concurrency = 8;
     private const int Rounds = 10;
 
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(1);
 
     /// <summary>
-    /// Checks the store with uploads of a user of its own, which it deletes once their checks pass: creations, reads and lists, chunk writes, claims of runs
-    /// and their exclusion of chunk writes, outcomes, deletions, and reservations of idempotency keys, each also at the same time from several callers.
+    /// Checks the store with uploads of two users of its own, which it deletes once their checks pass: creations, also of uploads with the same ID, reads and
+    /// lists, chunk writes, claims of runs and their exclusion of chunk writes, outcomes and deletions, each also at the same time from several callers, and
+    /// the store's usage.
     /// </summary>
     /// <remarks>
-    /// A check waits a moment for the lease of a claim to lapse by the store's clock, so a store whose time provider stands still doesn't pass it. A check
-    /// that fails leaves its uploads in the store, under the user ID <c>upload-store-contract</c>, until they expire.
+    /// The removal of outcomes, which removes those of all users, is checked by <see cref="CheckOutcomeRemovalAsync"/>. A check waits a moment for the lease
+    /// of a claim to lapse by the store's clock, so a store whose time provider stands still doesn't pass it. A check that fails leaves its uploads in the
+    /// store, under the user IDs <c>upload-store-contract</c> and <c>upload-store-contract-other</c>, until they expire. It doesn't check that a write that
+    /// takes long keeps the upload's last write time current, since it would have to wait for that.
     /// </remarks>
     /// <param name="store">The store to check.</param>
     /// <param name="cancellationToken">A token to cancel the checks.</param>
@@ -33,9 +39,48 @@ public static class UploadStoreContract
         await CheckClaimsExcludeChunkWritesAsync(store, cancellationToken);
         await CheckClaimsAndChunkWritesThatStartTogetherAsync(store, cancellationToken);
         await CheckOutcomesAsync(store, cancellationToken);
+        await CheckReadsWhileOutcomesAreStoredAsync(store, cancellationToken);
         await CheckClaimsAndOutcomesThatStartTogetherAsync(store, cancellationToken);
         await CheckDeletionAsync(store, cancellationToken);
-        await CheckKeyReservationsAsync(store, cancellationToken);
+        await CheckCreationsWithTheSameIdAsync(store, cancellationToken);
+        await CheckUsageAsync(store, cancellationToken);
+    }
+
+    /// <summary>
+    /// Checks the removal of outcomes (see <see cref="IUploadStore.RemoveOutcomesAsync"/>) with uploads of its own user: outcomes stored before the time are
+    /// removed, after which an upload with the ID can be created again, and later ones are kept.
+    /// </summary>
+    /// <remarks>
+    /// Run it only against a store that holds test data: it removes the outcomes of all users that were stored before one of its own. It stores outcomes a
+    /// moment apart, so a store whose time provider stands still doesn't pass it.
+    /// </remarks>
+    /// <param name="store">The store to check.</param>
+    /// <param name="cancellationToken">A token to cancel the check.</param>
+    /// <exception cref="InvalidOperationException">The store does not keep a guarantee, which the message describes.</exception>
+    public static async Task CheckOutcomeRemovalAsync(IUploadStore store, CancellationToken cancellationToken = default)
+    {
+        var older = await CreateCompleteAsync(store, cancellationToken);
+        var newer = await CreateCompleteAsync(store, cancellationToken);
+
+        Check(await store.TrySetOutcomeAsync(older, "older", cancellationToken), "An outcome is not stored.");
+        var olderUtc = (await GetAsync(store, older, cancellationToken)).OutcomeUtc!.Value;
+
+        await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+        Check(await store.TrySetOutcomeAsync(newer, "newer", cancellationToken), "An outcome is not stored.");
+        var newerUtc = (await GetAsync(store, newer, cancellationToken)).OutcomeUtc!.Value;
+        Check(newerUtc > olderUtc, "An outcome stored later has no later time.");
+
+        await store.RemoveOutcomesAsync(olderUtc.AddTicks(1), cancellationToken);
+
+        Check(await store.GetAsync(UserId, older.Id, cancellationToken) is null, "An outcome stored before the time is not removed.");
+        Check(await store.GetAsync(UserId, newer.Id, cancellationToken) is not null, "An outcome stored after the time is removed.");
+
+        Check(await store.TryCreateAsync(newer, cancellationToken) is UploadCreationResult.Exists, "An upload whose outcome is kept is created again.");
+        Check(await store.TryCreateAsync(older, cancellationToken) is UploadCreationResult.Created,
+            "An upload whose outcome was removed can't be created again.");
+
+        await store.DeleteAsync(older, cancellationToken);
+        await store.DeleteAsync(newer, cancellationToken);
     }
 
     private static async Task CheckCreationAsync(IUploadStore store, CancellationToken cancellationToken)
@@ -50,15 +95,8 @@ public static class UploadStoreContract
         Check(upload.LastWriteUtc == record.CreatedUtc, "The last write of an upload that has received no chunk is not its creation.");
         Check(upload.RunState is UploadRunState.None && upload.Outcome is null, "A new upload has a run or an outcome.");
 
-        var listed = await ListAsync(store, withoutOutcomes: false, cancellationToken);
+        var listed = await ListAsync(store, cancellationToken);
         Check(listed.Contains(record.Id), "A new upload is not listed.");
-
-        bool isListedForAll = false;
-
-        await foreach (var all in store.ListAsync(null, withoutOutcomes: false, cancellationToken))
-            isListedForAll |= all.Record.Id == record.Id;
-
-        Check(isListedForAll, "A new upload is not listed among the uploads of all users.");
 
         await store.DeleteAsync(record, cancellationToken);
     }
@@ -240,15 +278,68 @@ public static class UploadStoreContract
             var upload = await GetAsync(store, record, cancellationToken);
             Check(upload.Outcome == $"outcome {Array.IndexOf(stored, true)}", "An upload's outcome is not the one that was stored.");
             Check(upload.OutcomeUtc is not null && upload.RunState is UploadRunState.None, "An upload with an outcome has no outcome time, or a run.");
+
+            Check(
+                upload.Record.Length == record.Length && upload.Record.Metadata == record.Metadata,
+                "A finished upload is read with another record than it was created with.");
+
+            Check(!await store.TrySetOutcomeAsync(record, "again", cancellationToken), "A second outcome of an upload is stored.");
+            Check((await GetAsync(store, record, cancellationToken)).Outcome == upload.Outcome, "A second outcome of an upload replaced the first.");
             Check(await store.TryClaimRunAsync(record, LeaseDuration, cancellationToken) is null, "The run of an upload with an outcome is claimed.");
 
             var write = await WriteAsync(store, record, 0, CreateChunk(record, 0, seed: 1), cancellationToken);
             Check(write is ChunkWriteResult.Closed, "A write of a chunk of an upload with an outcome is not closed.");
+            Check(!(await ListAsync(store, cancellationToken)).Contains(record.Id), "An upload with an outcome is listed among the open uploads.");
 
-            var open = await ListAsync(store, withoutOutcomes: true, cancellationToken);
-            Check(!open.Contains(record.Id), "An upload with an outcome is listed among those without one.");
+            Check(await store.TryCreateAsync(record, cancellationToken) is UploadCreationResult.Exists, "A finished upload is created again.");
+
+            // Deleting a finished upload removes its outcome, after which an upload with its ID can be created again.
+            await store.DeleteAsync(record, cancellationToken);
+            Check(await store.GetAsync(UserId, record.Id, cancellationToken) is null, "A finished upload that was deleted is still read.");
+
+            Check(await store.TryCreateAsync(record, cancellationToken) is UploadCreationResult.Created,
+                "An upload with the ID of a finished upload that was deleted can't be created.");
 
             await store.DeleteAsync(record, cancellationToken);
+        }
+    }
+
+    private static async Task CheckReadsWhileOutcomesAreStoredAsync(IUploadStore store, CancellationToken cancellationToken)
+    {
+        for (int round = 0; round < Rounds; round++)
+        {
+            var record = await CreateCompleteAsync(store, cancellationToken);
+            var claim = await store.TryClaimRunAsync(record, LeaseDuration, cancellationToken);
+            Check(claim is not null, "The run of an upload that has all its chunks can't be claimed.");
+
+            // Reads of the upload and creations made again with its ID, as other servers make them while the run ends, find it, open or finished.
+            using var stop = new CancellationTokenSource();
+            var reads = Task.Run(() => ReadUntilStoppedAsync(store, record, stop.Token), cancellationToken);
+
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellationToken);
+            bool isStored = await store.TrySetOutcomeAsync(record, "outcome", cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(5), cancellationToken);
+            stop.Cancel();
+
+            string? failure = await reads;
+            Check(isStored, "The outcome of an upload whose run is claimed is not stored.");
+            Check(failure is null, failure ?? string.Empty);
+
+            await store.DeleteAsync(record, cancellationToken);
+        }
+
+        static async Task<string?> ReadUntilStoppedAsync(IUploadStore store, UploadRecord record, CancellationToken stop)
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                if (await store.GetAsync(UserId, record.Id, CancellationToken.None) is null)
+                    return "An upload read while its outcome is stored is not found.";
+
+                if (await store.TryCreateAsync(record, CancellationToken.None) is not UploadCreationResult.Exists)
+                    return "An upload whose outcome is being stored is created again.";
+            }
+
+            return null;
         }
     }
 
@@ -275,75 +366,129 @@ public static class UploadStoreContract
         }
     }
 
-    private static async Task CheckDeletionAsync(IUploadStore store, CancellationToken cancellationToken)
+    /// <summary>
+    /// Checks that the store reports its usage (see <see cref="IUploadStore.GetUsageAsync"/>) without throwing, with values that are not negative.
+    /// </summary>
+    private static async Task CheckUsageAsync(IUploadStore store, CancellationToken cancellationToken)
     {
-        var record = await CreateCompleteAsync(store, cancellationToken);
-        var claim = await store.TryClaimRunAsync(record, LeaseDuration, cancellationToken);
-        Check(claim is not null, "The run of an upload that has all its chunks can't be claimed.");
+        UploadStoreUsage usage;
 
-        // Deletions at the same time, such as an abort and the end of the upload's run, all succeed.
-        await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(_ => store.DeleteAsync(record, cancellationToken).AsTask()));
+        try
+        {
+            usage = await store.GetUsageAsync(cancellationToken);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException($"The upload store does not keep its guarantees: its usage can't be read ({ex.Message}).", ex);
+        }
 
-        Check(await store.GetAsync(UserId, record.Id, cancellationToken) is null, "A deleted upload is still read.");
-        Check(!await claim!.RenewAsync(cancellationToken), "The claim of the run of a deleted upload is renewed.");
-        Check(await WriteAsync(store, record, 0, CreateChunk(record, 0, seed: 1), cancellationToken) is ChunkWriteResult.NotFound,
-            "A chunk of a deleted upload is not reported as not found.");
-        Check(!(await ListAsync(store, withoutOutcomes: false, cancellationToken)).Contains(record.Id), "A deleted upload is listed.");
+        Check(usage.AvailableBytes is not < 0 && usage.TotalBytes is not < 0, "it reports a negative space.");
     }
 
-    private static async Task CheckKeyReservationsAsync(IUploadStore store, CancellationToken cancellationToken)
+    private static async Task CheckDeletionAsync(IUploadStore store, CancellationToken cancellationToken)
     {
         for (int round = 0; round < Rounds; round++)
         {
-            string key = "key-" + ShortLivedId.Create();
+            var record = await CreateCompleteAsync(store, cancellationToken);
+            var claim = await store.TryClaimRunAsync(record, LeaseDuration, cancellationToken);
+            Check(claim is not null, "The run of an upload that has all its chunks can't be claimed.");
 
-            // Reservations of a key at the same time all get the same reservation.
-            var reservations = await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(
-                _ => store.ReserveKeyAsync(UserId, key, ShortLivedId.Create(), cancellationToken).AsTask()));
+            // Deletions at the same time, such as an abort and the end of the upload's run, all succeed, and one of them deleted the open upload.
+            var deleted = await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(_ => store.DeleteAsync(record, cancellationToken).AsTask()));
+            int count = deleted.Count(d => d);
+            Check(count is 1, $"{count} deletions of an open upload made at the same time report that they deleted it, rather than one.");
 
-            int count = reservations.Select(r => r.UploadId).Distinct(StringComparer.Ordinal).Count();
-            Check(count is 1, $"{count} reservations of a key made at the same time succeeded, rather than one.");
-
-            // Takeovers of the reservation at the same time, which each release it and reserve the key again, all get the same new reservation.
-            string reserved = reservations[0].UploadId;
-
-            var takeovers = await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(async _ => {
-                await store.ReleaseKeyAsync(UserId, key, reserved, cancellationToken);
-                return await store.ReserveKeyAsync(UserId, key, ShortLivedId.Create(), cancellationToken);
-            }));
-
-            count = takeovers.Select(r => r.UploadId).Distinct(StringComparer.Ordinal).Count();
-            Check(count is 1, $"{count} takeovers of a reservation made at the same time succeeded, rather than one.");
-            Check(takeovers[0].UploadId != reserved, "A released reservation is still reserved.");
-
-            // Releasing the reservation for another upload leaves it.
-            await store.ReleaseKeyAsync(UserId, key, ShortLivedId.Create(), cancellationToken);
-            var kept = await store.ReserveKeyAsync(UserId, key, ShortLivedId.Create(), cancellationToken);
-            Check(kept.UploadId == takeovers[0].UploadId, "A reservation is released for an upload that it is not reserved for.");
-
-            await store.ReleaseKeyAsync(UserId, key, kept.UploadId, cancellationToken);
+            Check(await store.GetAsync(UserId, record.Id, cancellationToken) is null, "A deleted upload is still read.");
+            Check(!await claim!.RenewAsync(cancellationToken), "The claim of the run of a deleted upload is renewed.");
+            Check(await WriteAsync(store, record, 0, CreateChunk(record, 0, seed: 1), cancellationToken) is ChunkWriteResult.NotFound,
+                "A chunk of a deleted upload is not reported as not found.");
+            Check(!(await ListAsync(store, cancellationToken)).Contains(record.Id), "A deleted upload is listed.");
+            Check(!await store.DeleteAsync(record, cancellationToken), "A deletion of an upload that no longer exists reports that it deleted it.");
         }
 
-        // Deleting an upload releases the key of its record.
-        string uploadKey = "key-" + ShortLivedId.Create();
-        string uploadId = ShortLivedId.Create();
-        await store.ReserveKeyAsync(UserId, uploadKey, uploadId, cancellationToken);
+        var finished = await CreateCompleteAsync(store, cancellationToken);
+        Check(await store.TrySetOutcomeAsync(finished, "outcome", cancellationToken), "An outcome is not stored.");
+        Check(!await store.DeleteAsync(finished, cancellationToken), "A deletion of a finished upload reports that it deleted an open upload.");
+        Check(await store.GetAsync(UserId, finished.Id, cancellationToken) is null, "A deleted finished upload is still read.");
 
-        var record = await CreateAsync(store, cancellationToken, uploadId, uploadKey);
+        // Deletions while the outcome of the upload is stored, such as an abort while the handler finishes, and the storing don't report more than once
+        // that they ended the open upload. The deletions start roughly apart, from at once to a few dozen milliseconds later (Windows timers step about
+        // 15 ms), so that they come at various steps of the storing.
+        for (int round = 0; round < Rounds; round++)
+        {
+            var record = await CreateCompleteAsync(store, cancellationToken);
+            var storing = Task.Run(() => store.TrySetOutcomeAsync(record, "outcome", cancellationToken).AsTask(), cancellationToken);
 
-        // A cleanup leaves the uploads that are open, and the reservations of their keys.
-        await store.CleanUpAsync(cancellationToken);
-        Check(await store.GetAsync(UserId, record.Id, cancellationToken) is not null, "A cleanup removed an upload that is open.");
+            var deletions = Enumerable.Range(0, Concurrency - 1).Select(i => Task.Run(
+                async () => {
+                    await Task.Delay(TimeSpan.FromMilliseconds(i * round), cancellationToken);
+                    return await store.DeleteAsync(record, cancellationToken);
+                },
+                cancellationToken));
 
-        var afterCleanup = await store.ReserveKeyAsync(UserId, uploadKey, ShortLivedId.Create(), cancellationToken);
-        Check(afterCleanup.UploadId == uploadId, "A cleanup released the reservation of the key of an upload that is open.");
+            bool[] ended = await Task.WhenAll(deletions.Prepend(storing));
+            int count = ended.Count(e => e);
 
-        await store.DeleteAsync(record, cancellationToken);
+            Check(count <= 1, $"{count} deletions and a storing of the outcome of an open upload at the same time report that they ended it, rather than one.");
+            Check(!(await ListAsync(store, cancellationToken)).Contains(record.Id), "An upload that was deleted while its outcome was stored is listed.");
 
-        var after = await store.ReserveKeyAsync(UserId, uploadKey, ShortLivedId.Create(), cancellationToken);
-        Check(after.UploadId != uploadId, "Deleting an upload does not release its key.");
+            // An outcome whose storing ended the upload is removed.
+            await store.DeleteAsync(record, cancellationToken);
+        }
+    }
 
-        await store.ReleaseKeyAsync(UserId, uploadKey, after.UploadId, cancellationToken);
+    private static async Task CheckCreationsWithTheSameIdAsync(IUploadStore store, CancellationToken cancellationToken)
+    {
+        for (int round = 0; round < Rounds; round++)
+        {
+            // Creations of an upload at the same time, such as a creation made again while the first still runs, create it once.
+            var record = NewRecord(store, UserId);
+            var results = await Task.WhenAll(Enumerable.Range(0, Concurrency).Select(
+                _ => Task.Run(() => store.TryCreateAsync(record, cancellationToken).AsTask(), cancellationToken)));
+
+            int count = results.Count(r => r is UploadCreationResult.Created);
+            Check(count is 1, $"{count} creations of an upload made at the same time created it, rather than one.");
+            Check(results.All(r => r is UploadCreationResult.Created or UploadCreationResult.Exists), "A creation of an upload that exists reports no room.");
+
+            var upload = await GetAsync(store, record, cancellationToken);
+            Check(upload.Outcome is null && upload.Record.Length == record.Length, "An upload created at the same time as others is not read as created.");
+            Check(await store.TryCreateAsync(record, cancellationToken) is UploadCreationResult.Exists, "An open upload is created again.");
+
+            // Another user's upload with the same ID is another upload.
+            var other = NewRecord(store, OtherUserId, record.Id);
+            Check(await store.TryCreateAsync(other, cancellationToken) is UploadCreationResult.Created,
+                "An upload can't be created with the ID of another user's upload.");
+
+            Check(await WriteAsync(store, other, 0, CreateChunk(other, 0, seed: 5), cancellationToken) is ChunkWriteResult.Written, "A chunk is not written.");
+            Check((await store.GetReceivedChunksAsync(record, cancellationToken)).Count is 0, "A chunk of another user's upload with the ID is received.");
+
+            Check(await store.DeleteAsync(other, cancellationToken), "An open upload that was deleted is not reported as deleted.");
+            Check(await store.GetAsync(UserId, record.Id, cancellationToken) is not null, "Deleting another user's upload with the ID deleted the upload.");
+            Check(await store.GetAsync(OtherUserId, record.Id, cancellationToken) is null, "A deleted upload is still read.");
+
+            // A deleted upload can be created again.
+            await store.DeleteAsync(record, cancellationToken);
+            Check(await store.TryCreateAsync(record, cancellationToken) is UploadCreationResult.Created, "A deleted upload can't be created again.");
+
+            // A cleanup leaves the uploads that are open.
+            await store.CleanUpAsync(cancellationToken);
+            Check(await store.GetAsync(UserId, record.Id, cancellationToken) is not null, "A cleanup removed an upload that is open.");
+
+            await store.DeleteAsync(record, cancellationToken);
+        }
+
+        // A finished upload of a user doesn't keep another user from creating an upload with its ID.
+        var finished = await CreateCompleteAsync(store, cancellationToken);
+        Check(await store.TrySetOutcomeAsync(finished, "outcome", cancellationToken), "An outcome is not stored.");
+
+        var otherOfFinished = NewRecord(store, OtherUserId, finished.Id);
+        Check(await store.TryCreateAsync(otherOfFinished, cancellationToken) is UploadCreationResult.Created,
+            "An upload can't be created with the ID of another user's finished upload.");
+
+        Check((await GetAsync(store, finished, cancellationToken)).Outcome == "outcome", "Another user's upload with the ID changed a finished upload.");
+
+        await store.DeleteAsync(otherOfFinished, cancellationToken);
+        await store.DeleteAsync(finished, cancellationToken);
     }
 
     /// <summary>
@@ -360,16 +505,27 @@ public static class UploadStoreContract
         return await write;
     }
 
-    private static async Task<UploadRecord> CreateAsync(IUploadStore store, CancellationToken cancellationToken, string? uploadId = null, string? key = null)
+    /// <summary>
+    /// Makes the record of a new upload of two chunks of the smallest size that both the service and the store allow, with a new ID, as clients choose them,
+    /// unless one is specified.
+    /// </summary>
+    private static UploadRecord NewRecord(IUploadStore store, string userId, string? uploadId = null)
     {
-        // Two chunks of the smallest size that both the service and the store allow.
         int chunkSize = Math.Max(store.MinChunkSize, ChunkedUploadOptions.ChunkSizeFloor);
-        var record = new UploadRecord(uploadId ?? ShortLivedId.Create(), UserId, chunkSize + 10, chunkSize, DateTime.UtcNow, "{}", key);
+        return new UploadRecord(uploadId ?? Guid.NewGuid().ToString("D"), userId, chunkSize + 10, chunkSize, DateTime.UtcNow, "{}");
+    }
 
-        Check(await store.TryCreateAsync(record, cancellationToken), "An upload can't be created.");
+    private static async Task<UploadRecord> CreateAsync(IUploadStore store, CancellationToken cancellationToken)
+    {
+        var record = NewRecord(store, UserId);
+
+        Check(await store.TryCreateAsync(record, cancellationToken) is UploadCreationResult.Created, "An upload can't be created.");
         return record;
     }
 
+    /// <summary>
+    /// Creates an upload with all its chunks.
+    /// </summary>
     private static async Task<UploadRecord> CreateCompleteAsync(IUploadStore store, CancellationToken cancellationToken)
     {
         var record = await CreateAsync(store, cancellationToken);
@@ -391,11 +547,11 @@ public static class UploadStoreContract
         return upload!;
     }
 
-    private static async Task<HashSet<string>> ListAsync(IUploadStore store, bool withoutOutcomes, CancellationToken cancellationToken)
+    private static async Task<HashSet<string>> ListAsync(IUploadStore store, CancellationToken cancellationToken)
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
 
-        await foreach (var upload in store.ListAsync(UserId, withoutOutcomes, cancellationToken))
+        await foreach (var upload in store.ListAsync(cancellationToken))
             ids.Add(upload.Record.Id);
 
         return ids;

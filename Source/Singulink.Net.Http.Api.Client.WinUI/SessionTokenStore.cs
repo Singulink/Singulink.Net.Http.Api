@@ -1,4 +1,5 @@
 using System.Buffers;
+using Singulink.IO;
 #if WINDOWS
 using System.Reflection;
 #elif !__WASM__
@@ -105,24 +106,16 @@ public sealed class SessionTokenStore
 
     /// <summary>
     /// Gets the folder that Windows App SDK apps keep the token's file in, or <see langword="null"/> for a folder named after the app's entry assembly in
-    /// the user's local application data folder. Default is <see langword="null"/>. Other platforms don't use it.
+    /// the user's local application data folder. Other platforms don't use it. Default is <see langword="null"/>.
     /// </summary>
-    /// <exception cref="ArgumentException">In a Windows App SDK app, the value is not a fully qualified path.</exception>
-    public string? FolderPath
-    {
-        get;
-        init {
-#if WINDOWS
-            if (value is not null && !Path.IsPathFullyQualified(value))
-                throw new ArgumentException($"The folder path '{value}' is not fully qualified.", nameof(value));
-#endif
-            field = value;
-        }
-    }
+    public IAbsoluteDirectoryPath? FolderPath { get; init; }
 
     /// <summary>
-    /// Reads the stored token. Returns <see langword="null"/> if there is none, or if it can't be read, which is reported to the error handler.
+    /// Reads the stored token.
     /// </summary>
+    /// <remarks>
+    /// Returns <see langword="null"/> if there is none, or if it can't be read, which is reported to the error handler.
+    /// </remarks>
     public string? Read()
     {
         try
@@ -137,9 +130,11 @@ public sealed class SessionTokenStore
     }
 
     /// <summary>
-    /// Stores the token, or removes the stored one if it is <see langword="null"/>. A failure is reported to the error handler. Matches the session token
-    /// changed callback of an API client.
+    /// Stores the token, or removes the stored one if it is <see langword="null"/>.
     /// </summary>
+    /// <remarks>
+    /// A failure is reported to the error handler. Matches the session token changed callback of an API client.
+    /// </remarks>
     /// <param name="token">The token to store, or <see langword="null"/> to remove the stored token.</param>
     public void Write(string? token)
     {
@@ -172,17 +167,16 @@ public sealed class SessionTokenStore
     {
     }
 #elif WINDOWS
-    private string? ReadCore() => FileSessionTokenStorage.Read(GetFilePath());
+    private string? ReadCore() => FileSessionTokenStorage.Read(GetFile());
 
-    private void WriteCore(string? token) => FileSessionTokenStorage.Write(GetFilePath(), token);
+    private void WriteCore(string? token) => FileSessionTokenStorage.Write(GetFile(), token);
 
-    private string GetFilePath()
+    private IAbsoluteFilePath GetFile()
     {
-        string folderPath = FolderPath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            Assembly.GetEntryAssembly()?.GetName().Name ?? AppDomain.CurrentDomain.FriendlyName);
+        var folder = FolderPath ?? DirectoryPath.GetSpecialFolder(Environment.SpecialFolder.LocalApplicationData).CombineDirectory(
+            Assembly.GetEntryAssembly()?.GetName().Name ?? AppDomain.CurrentDomain.FriendlyName, PathOptions.None);
 
-        return Path.Combine(folderPath, Name + ".dat");
+        return folder.CombineFile(Name + ".dat", PathOptions.None);
     }
 #else
     private string? ReadCore()

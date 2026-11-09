@@ -15,13 +15,16 @@ public sealed class PasskeyOptionsTests
     [TestMethod]
     public void Defaults()
     {
-        var options = new PasskeyOptions();
+        // As the options are created when they are bound from a configuration, without their required values.
+        var options = Activator.CreateInstance<PasskeyOptions>();
 
+        options.RelyingPartyId.ShouldBeNull();
+        options.RelyingPartyName.ShouldBeNull();
         options.AllowLocalhostOrigins.ShouldBeFalse();
         options.CeremonyTimeout.ShouldBe(TimeSpan.FromSeconds(180));
         options.CeremonyLifetime.ShouldBe(TimeSpan.FromMinutes(5));
-        options.RequireUserVerification.ShouldBeTrue();
-        options.RequireDiscoverableCredentials.ShouldBeTrue();
+        options.UserVerification.ShouldBe(PasskeyRequirement.Required);
+        options.DiscoverableCredentials.ShouldBe(PasskeyRequirement.Required);
         options.RequireCodeChallenge.ShouldBeTrue();
     }
 
@@ -37,8 +40,8 @@ public sealed class PasskeyOptionsTests
                 ["Passkeys:AllowLocalhostOrigins"] = "true",
                 ["Passkeys:CeremonyTimeout"] = "00:02:00",
                 ["Passkeys:CeremonyLifetime"] = "00:10:00",
-                ["Passkeys:RequireUserVerification"] = "false",
-                ["Passkeys:RequireDiscoverableCredentials"] = "false",
+                ["Passkeys:UserVerification"] = "Preferred",
+                ["Passkeys:DiscoverableCredentials"] = "Discouraged",
             })
             .Build();
 
@@ -54,8 +57,8 @@ public sealed class PasskeyOptionsTests
         options.AllowLocalhostOrigins.ShouldBeTrue();
         options.CeremonyTimeout.ShouldBe(TimeSpan.FromMinutes(2));
         options.CeremonyLifetime.ShouldBe(TimeSpan.FromMinutes(10));
-        options.RequireUserVerification.ShouldBeFalse();
-        options.RequireDiscoverableCredentials.ShouldBeFalse();
+        options.UserVerification.ShouldBe(PasskeyRequirement.Preferred);
+        options.DiscoverableCredentials.ShouldBe(PasskeyRequirement.Discouraged);
     }
 
     [TestMethod]
@@ -72,7 +75,8 @@ public sealed class PasskeyOptionsTests
         foreach (var services in new[] { afterServices, beforeServices })
         {
             services.Count(d => d.ServiceType == typeof(SignInCodes)).ShouldBe(1);
-            services.Count(d => d.ServiceType == typeof(IShortLivedStore)).ShouldBe(1);
+            services.Count(d => d.ServiceType == typeof(IShortLivedStore) && !d.IsKeyedService).ShouldBe(1);
+            services.Count(d => d.ServiceType == typeof(IShortLivedStore) && d.IsKeyedService).ShouldBe(1);
 
             using var provider = services.BuildServiceProvider();
 
@@ -107,12 +111,27 @@ public sealed class PasskeyOptionsTests
     }
 
     [TestMethod]
+    public void EmptyRelyingParty_Throws()
+    {
+        var options = new PasskeyOptions("example.com", "Example");
+
+        Should.Throw<ArgumentException>(() => options.RelyingPartyId = string.Empty).ParamName.ShouldBe("value");
+        Should.Throw<ArgumentException>(() => options.RelyingPartyName = " ").ParamName.ShouldBe("value");
+        (options.RelyingPartyId, options.RelyingPartyName).ShouldBe(("example.com", "Example"));
+    }
+
+    [TestMethod]
+    public void EmptyRelyingParty_InTheConstructor_ThrowsNamingTheParameter()
+    {
+        Should.Throw<ArgumentException>(() => new PasskeyOptions(string.Empty, "Example")).ParamName.ShouldBe("relyingPartyId");
+        Should.Throw<ArgumentException>(() => new PasskeyOptions("example.com", " ")).ParamName.ShouldBe("relyingPartyName");
+    }
+
+    [TestMethod]
     public void InvalidOptions_FailValidation()
     {
-        Validate(o => o.RelyingPartyId = string.Empty).ShouldHaveSingleItem().ShouldContain(nameof(PasskeyOptions.RelyingPartyId));
         Validate(o => o.RelyingPartyId = "https://example.com").ShouldHaveSingleItem().ShouldContain(nameof(PasskeyOptions.RelyingPartyId));
         Validate(o => o.RelyingPartyId = "127.0.0.1").ShouldHaveSingleItem().ShouldContain(nameof(PasskeyOptions.RelyingPartyId));
-        Validate(o => o.RelyingPartyName = " ").ShouldHaveSingleItem().ShouldContain(nameof(PasskeyOptions.RelyingPartyName));
         Validate(o => SetOrigins(o)).ShouldHaveSingleItem().ShouldContain(nameof(PasskeyOptions.AllowedOrigins));
         Validate(o => SetOrigins(o, "https://app.example.com/path")).ShouldHaveSingleItem().ShouldContain("https://app.example.com/path");
         Validate(o => SetOrigins(o, "app.example.com")).ShouldHaveSingleItem().ShouldContain("app.example.com");
@@ -156,7 +175,7 @@ public sealed class PasskeyOptionsTests
     [TestMethod]
     public void CeremonyTimes_OutOfRange_Throw()
     {
-        var options = new PasskeyOptions();
+        var options = new PasskeyOptions("example.com", "Example");
 
         Should.Throw<ArgumentOutOfRangeException>(() => options.CeremonyTimeout = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.CeremonyTimeout = TimeSpan.FromMilliseconds(uint.MaxValue + 1.0));
@@ -197,6 +216,72 @@ public sealed class PasskeyOptionsTests
 
         foreach (string origin in origins)
             options.AllowedOrigins.Add(origin);
+    }
+
+    [TestMethod]
+    public void Options_AreFrozen_WhenTheServiceTakesThem()
+    {
+        PasskeyOptions? options = null;
+        using var fixture = new PasskeyFixture(o => options = o);
+
+        _ = fixture.CreateService();
+
+        OptionsAssertions.ShouldBeFrozen(options.ShouldNotBeNull());
+        options.AllowedOrigins.ShouldBe([PasskeyFixture.Origin]);
+    }
+
+    [TestMethod]
+    public async Task PageOptions_AreFrozen_WhenThePageIsMapped()
+    {
+        PasskeyPageOptions? options = null;
+        await using var host = await PageHost.StartAsync(o => {
+            PageHost.ConfigureDefault(o);
+            options = o;
+        });
+
+        OptionsAssertions.ShouldBeFrozen(options.ShouldNotBeNull());
+        options.RedirectSchemes.ShouldBe(["myapp"]);
+    }
+
+    [TestMethod]
+    public void Validate_ListsEveryProblem_WithoutFreezing()
+    {
+        // As the options are created when they are bound from a configuration, without their required values.
+        var options = Activator.CreateInstance<PasskeyOptions>();
+        options.CeremonyLifetime = TimeSpan.FromMinutes(1);
+
+        var ex = Should.Throw<InvalidOperationException>(options.Validate);
+        ex.Message.ShouldBe(
+            "PasskeyOptions.RelyingPartyId is not set. It is required, and has no default. " +
+            "PasskeyOptions.RelyingPartyName is not set. It is required, and has no default. " +
+            "At least one origin is required in PasskeyOptions.AllowedOrigins. " +
+            "PasskeyOptions.CeremonyLifetime must be at least CeremonyTimeout.");
+        options.IsFrozen.ShouldBeFalse();
+
+        // The options can still be set, and Validate and IsFrozen tell the compiler that the required values are not null afterwards: the nullable warnings
+        // of these reads fail the build otherwise.
+        options.RelyingPartyId = "example.com";
+        options.RelyingPartyName = "Example";
+        options.AllowedOrigins.Add("https://app.example.com");
+        options.CeremonyLifetime = TimeSpan.FromMinutes(5);
+        options.Validate();
+        (options.RelyingPartyId.Length + options.RelyingPartyName.Length).ShouldBe(18);
+        options.IsFrozen.ShouldBeFalse();
+    }
+
+    [TestMethod]
+    public void IsFrozen_TellsTheCompilerThatTheRequiredValuesAreSet()
+    {
+        PasskeyOptions? options = null;
+        using var fixture = new PasskeyFixture(o => options = o);
+        _ = fixture.CreateService();
+
+        var frozen = options.ShouldNotBeNull();
+        frozen.IsFrozen.ShouldBeTrue();
+
+        // The nullable warnings of these reads fail the build unless IsFrozen tells the compiler that the values are not null when it is true.
+        if (frozen.IsFrozen)
+            (frozen.RelyingPartyId.Length + frozen.RelyingPartyName.Length).ShouldBe(18);
     }
 
     private static List<string> Validate(Action<PasskeyOptions> configure)

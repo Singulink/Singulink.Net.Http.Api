@@ -13,9 +13,11 @@ namespace Singulink.Net.Http.Api.Service;
 public class SignInInfo : SessionRecord
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="SignInInfo"/> class. The session is created and refreshed at <paramref name="createdUtc"/>, with
-    /// generation 0.
+    /// Initializes a new instance of the <see cref="SignInInfo"/> class.
     /// </summary>
+    /// <remarks>
+    /// The session is created and refreshed at <paramref name="createdUtc"/>, with generation 0.
+    /// </remarks>
     /// <param name="device">The device making the sign-in request.</param>
     /// <param name="ipAddress">The IP address of the device making the sign-in request, or <see langword="null"/> if it is not known.</param>
     /// <param name="createdUtc">The date and time when the session is created (in UTC).</param>

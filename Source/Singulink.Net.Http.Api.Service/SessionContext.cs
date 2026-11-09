@@ -25,10 +25,11 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     public abstract IPAddress? IpAddress { get; }
 
     /// <summary>
-    /// Gets the session token from the current request. If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
+    /// Gets the session token from the current request.
     /// </summary>
     /// <param name="sessionOptions">Option flags for retrieving the session token.</param>
     /// <remarks>
+    /// If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
     /// <inheritdoc cref="GetTokenAsync(SessionAccessOptions)" path="/remarks"/>
     /// </remarks>
     public abstract ValueTask<TSessionToken> GetRequiredTokenAsync(SessionAccessOptions sessionOptions = default);
@@ -46,18 +47,22 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     public abstract ValueTask<TSessionToken?> GetTokenAsync(SessionAccessOptions sessionOptions = default);
 
     /// <summary>
-    /// Replaces the session token of the current request's session and issues the session cookie with it. Subsequent token retrievals in the current
-    /// request return the specified token, and any pending deferred session refresh is cancelled.
+    /// Replaces the session token of the current request's session and issues the session cookie with it.
     /// </summary>
+    /// <remarks>
+    /// Subsequent token retrievals in the current request return the specified token, and any pending deferred session refresh is cancelled.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">The request has no session.</exception>
     public abstract void SetToken(TSessionToken sessionToken);
 
     /// <summary>
     /// Signs in a user by creating a new session with the provided function and issuing the session cookie with the session token that the function returns.
+    /// </summary>
+    /// <remarks>
     /// The request's previous session, if it has one, is then ended with <see cref="ISessionStore{TSessionToken}.InvalidateSessionAsync"/>, unless the
     /// function returned its token (compared with <see cref="object.Equals(object?, object?)"/>). The response is marked with a
     /// <c>Session-Change: sign-in</c> header, so that the toolkit's clients take its cookie whatever session the device has by then.
-    /// </summary>
+    /// </remarks>
     /// <param name="persistent">If set to <see langword="true"/>, the session will persist across browser or application restarts.</param>
     /// <param name="createSessionFunc">A function that creates the session record with the values of the provided <see cref="SignInInfo"/> and returns the
     /// session token. Other values that creating the session needs, e.g. the user's ID, are captured by the function.</param>
@@ -80,21 +85,23 @@ public abstract class SessionContext<TSessionToken> : IBindableFromHttpContext<S
     }
 
     /// <summary>
-    /// Signs out: ends the request's session with <see cref="ISessionStore{TSessionToken}.InvalidateSessionAsync"/> and clears the session cookie. The
-    /// response is marked with a <c>Session-Change: sign-out</c> header, so that the toolkit's clients take its deletion whatever session the device has by
-    /// then, unless the response has started, as in a hub connection, where the cookie can't be cleared either.
+    /// Signs out: ends the request's session with <see cref="ISessionStore{TSessionToken}.InvalidateSessionAsync"/> and clears the session cookie.
     /// </summary>
     /// <remarks>
-    /// The user ID precondition is only checked if the request has one.
+    /// The response is marked with a <c>Session-Change: sign-out</c> header, so that the toolkit's clients take its deletion whatever session the device has
+    /// by then, unless the response has started, as in a hub connection, where the cookie can't be cleared either. The user ID precondition is only checked
+    /// if the request has one.
     /// </remarks>
     /// <exception cref="UserChangedApiException">The request's user ID precondition does not match the session's user.</exception>
     /// <exception cref="ForbiddenApiException">The request's origin is not allowed (<see cref="ApiErrorCodes.OriginBlocked"/>).</exception>
     public abstract Task SignOutAsync();
 
     /// <summary>
-    /// Clears the session cookie of the current request. Subsequent token retrievals in the current request return <see langword="null"/>, and any pending
-    /// deferred session refresh is cancelled.
+    /// Clears the session cookie of the current request.
     /// </summary>
+    /// <remarks>
+    /// Subsequent token retrievals in the current request return <see langword="null"/>, and any pending deferred session refresh is cancelled.
+    /// </remarks>
     public abstract void ClearToken();
 
     /// <summary>

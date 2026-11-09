@@ -60,9 +60,11 @@ public sealed class SoftwareAuthenticator : IDisposable
     public Guid AaGuid { get; init; }
 
     /// <summary>
-    /// Gets or sets the signature counter that the passkey reports. If <see cref="CountsSignatures"/> is <see langword="true"/>, it is incremented before
-    /// each use of the passkey. Default is 0.
+    /// Gets or sets the signature counter that the passkey reports. Default is 0.
     /// </summary>
+    /// <remarks>
+    /// If <see cref="CountsSignatures"/> is <see langword="true"/>, it is incremented before each use of the passkey.
+    /// </remarks>
     public uint SignCount { get; set; }
 
     /// <summary>
@@ -98,9 +100,11 @@ public sealed class SoftwareAuthenticator : IDisposable
     public PasskeyAttachment Attachment { get; init; } = PasskeyAttachment.Platform;
 
     /// <summary>
-    /// Gets or sets the user handle that the passkey returns when it is used, or <see langword="null"/> for none. <see cref="Create"/> sets it to the
-    /// user ID in the creation options.
+    /// Gets or sets the user handle that the passkey returns when it is used, or <see langword="null"/> for none. Default is <see langword="null"/>.
     /// </summary>
+    /// <remarks>
+    /// <see cref="Create"/> sets it to the user ID in the creation options.
+    /// </remarks>
     public byte[]? UserHandle { get; set; }
 
     /// <summary>

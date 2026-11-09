@@ -59,11 +59,16 @@ public sealed class DeviceLinks
     /// Initializes a new instance of the <see cref="DeviceLinks"/> class.
     /// </summary>
     public DeviceLinks(
-        IShortLivedStore store, SignInCodes signInCodes, IOptions<DeviceLinkOptions> options, TimeProvider timeProvider, ILogger<DeviceLinks> logger)
+        [FromKeyedServices(ShortLivedStoreKeys.SignIn)] IShortLivedStore store,
+        SignInCodes signInCodes,
+        IOptions<DeviceLinkOptions> options,
+        TimeProvider timeProvider,
+        ILogger<DeviceLinks> logger)
     {
         _store = store;
         _signInCodes = signInCodes;
         _timeProvider = timeProvider;
+        options.Value.Freeze();
         _lifetime = options.Value.Lifetime;
         _logger = logger;
     }
@@ -158,8 +163,11 @@ public sealed class DeviceLinks
 
     /// <summary>
     /// Approves the device waiting with a code typed by a signed-in user, so that the device is signed in to that user's account, and returns the outcome
-    /// with the details of the device that was approved. A link can only be approved once.
+    /// with the details of the device that was approved.
     /// </summary>
+    /// <remarks>
+    /// A link can only be approved once.
+    /// </remarks>
     /// <param name="code">The code as typed by the user (see <see cref="ShortCode.Normalize(string)"/>).</param>
     /// <param name="approverUserId">The ID of the signed-in user who typed the code and whom the new device will be signed in as.</param>
     /// <param name="appData">An optional value of the app's that the sign-in code issued for the link carries (see <see cref="RedeemedSignInCode.AppData"/>).
@@ -187,8 +195,11 @@ public sealed class DeviceLinks
 
     /// <summary>
     /// Approves the device waiting with a code typed by a signed-in user, so that the device is signed in to that user's account, and returns the outcome
-    /// with the details of the device that was approved. A link can only be approved once.
+    /// with the details of the device that was approved.
     /// </summary>
+    /// <remarks>
+    /// A link can only be approved once.
+    /// </remarks>
     /// <param name="code">The code as typed by the user (see <see cref="ShortCode.Normalize(string)"/>).</param>
     /// <param name="approver">The session token of the signed-in user who typed the code and whom the new device will be signed in as, whose
     /// <see cref="ISessionToken.UserId"/> identifies them.</param>
@@ -204,16 +215,16 @@ public sealed class DeviceLinks
     }
 
     /// <summary>
-    /// Gets the status of a link for the new device, or returns <see langword="null"/> if the link is unknown or expired, or the poll secret is wrong. Once
-    /// the link is approved, the status contains a one-time sign-in code bound to the link's code challenge.
+    /// Gets the status of a link for the new device, or returns <see langword="null"/> if the link is unknown or expired, or the poll secret is wrong.
     /// </summary>
     /// <param name="id">The link ID from <see cref="DeviceLinkStart.Id"/>.</param>
     /// <param name="pollSecret">The poll secret from <see cref="DeviceLinkStart.PollSecret"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <remarks>
-    /// Every poll after approval gets the same sign-in code, so the new device can poll again if a response does not reach it. The code can be redeemed
-    /// once, and only with the new device's code verifier. It is valid for as long as the link can be polled, and for at least the lifetime of sign-in
-    /// codes (see <see cref="SignInCodeOptions.Lifetime"/>).
+    /// Once the link is approved, the status contains a one-time sign-in code bound to the link's code challenge. Every poll after approval gets the same
+    /// sign-in code, so the new device can poll again if a response does not reach it. The code can be redeemed once, and only with the new device's code
+    /// verifier. It is valid for as long as the link can be polled, and for at least the lifetime of sign-in codes (see
+    /// <see cref="SignInCodeOptions.Lifetime"/>).
     /// </remarks>
     public async Task<DeviceLinkPollResult?> PollAsync(string id, string pollSecret, CancellationToken cancellationToken = default)
     {
@@ -260,8 +271,7 @@ public sealed class DeviceLinks
     }
 
     /// <summary>
-    /// Gets the status of a link for the new device, which the app returns to it as-is. Once the link is approved, the status contains a one-time sign-in
-    /// code bound to the link's code challenge.
+    /// Gets the status of a link for the new device, which the app returns to it as-is.
     /// </summary>
     /// <param name="id">The link ID from <see cref="DeviceLinkStart.Id"/>.</param>
     /// <param name="pollSecret">The poll secret from <see cref="DeviceLinkStart.PollSecret"/>.</param>

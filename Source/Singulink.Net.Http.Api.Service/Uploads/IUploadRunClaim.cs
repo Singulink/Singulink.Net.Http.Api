@@ -14,9 +14,11 @@ public interface IUploadRunClaim
     ValueTask<bool> RenewAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gives up the claim without an outcome, so that the upload is back to having all its chunks and its run can be claimed again. Releasing a claim that
-    /// was lost does nothing.
+    /// Gives up the claim without an outcome, so that the upload is back to having all its chunks and its run can be claimed again.
     /// </summary>
+    /// <remarks>
+    /// Releasing a claim that was lost does nothing.
+    /// </remarks>
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     ValueTask ReleaseAsync(CancellationToken cancellationToken = default);
 }

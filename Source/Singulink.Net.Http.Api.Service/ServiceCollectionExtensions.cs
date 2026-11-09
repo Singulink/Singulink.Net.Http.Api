@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -35,14 +37,18 @@ public static partial class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers the services of <see cref="WebApplicationExtensions.UseApiResponseHandling{TBuilder}(TBuilder)"/>, including the startup filter that
-    /// attaches the streaming response conversion to the endpoints when the host builds the middleware pipeline. The app fails to start if it does not call
-    /// <see cref="WebApplicationExtensions.UseApiResponseHandling{TBuilder}(TBuilder)"/>.
+    /// attaches the streaming response conversion to the endpoints when the host builds the middleware pipeline.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// The app fails to start if it does not call <see cref="WebApplicationExtensions.UseApiResponseHandling{TBuilder}(TBuilder)"/>.
+    /// </para>
+    /// <para>
     /// In an app that registers SignalR, it also adds the hub filter that confirms to the toolkit's client that a hub accepted its connection, once the
     /// hub's <c>OnConnectedAsync</c> succeeded (see the remarks of <c>ApiHubConnection</c> in the SignalR client library), as
     /// <see cref="AddHttpSessionHandling{TSessionToken, TSessionStore}(IServiceCollection, JsonTypeInfo{TSessionToken}, Action{SessionHandlingOptions}?)"/>
     /// does.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddApiResponseHandling(this IServiceCollection services)
     {
@@ -55,20 +61,26 @@ public static partial class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers the default <see cref="ApiExceptionHandler"/>, which reports API exceptions as-is and logs unexpected exceptions with a reference ID that is
-    /// reported to the client (or propagates them in development environments). Minimal API endpoints are also set to throw for requests they cannot read,
-    /// so that those are reported as API errors too (see <see cref="AddApiExceptionHandler{THandler}(IServiceCollection)"/>).
+    /// reported to the client (or propagates them in development environments).
     /// </summary>
+    /// <remarks>
+    /// Minimal API endpoints are also set to throw for requests they cannot read, so that those are reported as API errors too (see
+    /// <see cref="AddApiExceptionHandler{THandler}(IServiceCollection)"/>).
+    /// </remarks>
     public static IServiceCollection AddApiExceptionHandler(this IServiceCollection services)
     {
         return services.AddApiExceptionHandler<DefaultApiExceptionHandler>();
     }
 
     /// <summary>
-    /// Registers an <see cref="IApiExceptionHandler"/> that maps exceptions thrown during request processing to the errors reported to clients. Derive from
-    /// <see cref="ApiExceptionHandler"/> to customize the default behavior with application-specific exception mappings.
+    /// Registers an <see cref="IApiExceptionHandler"/> that maps exceptions thrown during request processing to the errors reported to clients.
     /// </summary>
     /// <typeparam name="THandler">The handler type.</typeparam>
     /// <remarks>
+    /// <para>
+    /// Derive from <see cref="ApiExceptionHandler"/> to customize the default behavior with application-specific exception mappings.
+    /// </para>
+    /// <para>
     /// This also configures <see cref="RouteHandlerOptions.ThrowOnBadRequest"/> to be <see langword="true"/> in every environment, so that minimal API
     /// endpoints throw a <see cref="BadHttpRequestException"/> for a request they cannot read (such as a malformed JSON body, a value of the wrong type or
     /// an unsupported content type) instead of answering with an empty response. <see cref="ApiExceptionMiddleware"/> reports it to the client with its
@@ -77,6 +89,7 @@ public static partial class ServiceCollectionExtensions
     /// and which can be null, is up to the app's JSON options. Options configurations run in the order they are registered, so a configuration of the
     /// option that the app registers after this call applies, and one that it registers before is overridden. Calling this again does not configure the
     /// option again.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddApiExceptionHandler<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] THandler>(
         this IServiceCollection services)
@@ -91,8 +104,8 @@ public static partial class ServiceCollectionExtensions
     /// <summary>
     /// Configures the JSON serializer options of minimal API requests and responses (<see cref="Microsoft.AspNetCore.Http.Json.JsonOptions"/>) and of
     /// SignalR hub payloads (<see cref="JsonHubProtocolOptions.PayloadSerializerOptions"/>): inserts <paramref name="resolver"/> at the front of their type
-    /// info resolvers, runs <paramref name="configure"/>, then applies the API null handling (see <see
-    /// cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).
+    /// info resolvers, runs <paramref name="configure"/>, then applies the API null handling (see
+    /// <see cref="ApiNullHandlingExtensions.ConfigureApiNullHandling(JsonSerializerOptions)"/>).
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="resolver">The type info resolver of the app's API types, such as a source-generated <see cref="JsonSerializerContext"/>.</param>
@@ -126,19 +139,19 @@ public static partial class ServiceCollectionExtensions
     /// <typeparam name="TSessionToken">The session token type.</typeparam>
     /// <typeparam name="TSessionStore">The session store type, which is registered as a scoped service.</typeparam>
     /// <param name="services">The service collection to add session handling services to.</param>
-    /// <param name="configure">An optional action to configure options, which are validated when the app starts.</param>
+    /// <param name="configure">An optional action to configure options, which are validated when the application starts.</param>
     /// <remarks>
     /// <para>
-    /// Session cookies are protected with ASP.NET Core data protection, and can only be read with the keys they were protected with. If no <see
-    /// cref="IDataProtectionProvider"/> is registered yet, this registers data protection with <see
-    /// cref="DataProtectionServiceCollectionExtensions.AddDataProtection(IServiceCollection)"/>, whose keys are kept in ASP.NET Core's default location
+    /// Session cookies are protected with ASP.NET Core data protection, and can only be read with the keys they were protected with. If no
+    /// <see cref="IDataProtectionProvider"/> is registered yet, this registers data protection with
+    /// <see cref="DataProtectionServiceCollectionExtensions.AddDataProtection(IServiceCollection)"/>, whose keys are kept in ASP.NET Core's default location
     /// unless the app configures where they are kept. A provider that is already registered is used as it is. Requests are checked against the allowed
     /// origins (see <see cref="AddAllowedOrigins(IServiceCollection, string[])"/>). The app fails to start if they are not registered.
     /// </para>
     /// <para>
-    /// Reflection-based serialization is not compatible with trimming or Native AOT. The <see cref="AddHttpSessionHandling{TSessionToken,
-    /// TSessionStore}(IServiceCollection, JsonTypeInfo{TSessionToken}, Action{SessionHandlingOptions}?)"/> overload serializes session tokens with the
-    /// specified JSON type info instead.
+    /// Reflection-based serialization is not compatible with trimming or Native AOT. The
+    /// <see cref="AddHttpSessionHandling{TSessionToken, TSessionStore}(IServiceCollection, JsonTypeInfo{TSessionToken}, Action{SessionHandlingOptions}?)"/>
+    /// overload serializes session tokens with the specified JSON type info instead.
     /// </para>
     /// </remarks>
     [RequiresUnreferencedCode(SessionTokenSerializationMessage)]
@@ -163,12 +176,12 @@ public static partial class ServiceCollectionExtensions
     /// <param name="services">The service collection to add session handling services to.</param>
     /// <param name="tokenTypeInfo">The JSON type info for the session token type, for example from a source-generated
     /// <see cref="JsonSerializerContext"/>.</param>
-    /// <param name="configure">An optional action to configure options, which are validated when the app starts.</param>
+    /// <param name="configure">An optional action to configure options, which are validated when the application starts.</param>
     /// <remarks>
     /// <para>
-    /// Session cookies are protected with ASP.NET Core data protection, and can only be read with the keys they were protected with. If no <see
-    /// cref="IDataProtectionProvider"/> is registered yet, this registers data protection with <see
-    /// cref="DataProtectionServiceCollectionExtensions.AddDataProtection(IServiceCollection)"/>, whose keys are kept in ASP.NET Core's default location
+    /// Session cookies are protected with ASP.NET Core data protection, and can only be read with the keys they were protected with. If no
+    /// <see cref="IDataProtectionProvider"/> is registered yet, this registers data protection with
+    /// <see cref="DataProtectionServiceCollectionExtensions.AddDataProtection(IServiceCollection)"/>, whose keys are kept in ASP.NET Core's default location
     /// unless the app configures where they are kept. A provider that is already registered is used as it is. Requests are checked against the allowed
     /// origins (see <see cref="AddAllowedOrigins(IServiceCollection, string[])"/>). The app fails to start if they are not registered.
     /// </para>
@@ -201,7 +214,10 @@ public static partial class ServiceCollectionExtensions
 
         services.TryAddSingleton(TimeProvider.System);
         services.AddOptions<SessionHandlingOptions>().ValidateOnStart();
-        services.Configure<SessionHandlingOptions>(options => configure?.Invoke(options));
+
+        if (configure is not null)
+            services.Configure(configure);
+
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IValidateOptions<SessionHandlingOptions>, SessionHandlingOptionsValidator>());
         services.AddSingleton(new SessionCookieSerializer<TSessionToken>(tokenTypeInfo));
         services.AddScoped<ISessionStore<TSessionToken>, TSessionStore>();
@@ -209,6 +225,8 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton<ISessionContextFactory<TSessionToken>, HttpSessionContextFactory<TSessionToken>>();
         services.AddSingleton<SessionConnectionTracker<TSessionToken>>();
         services.AddSingleton<ISessionConnectionTracker>(sp => sp.GetRequiredService<SessionConnectionTracker<TSessionToken>>());
+        services.AddMetrics();
+        HttpApiHealthCheckSource.Register(services, "hub-sessions", b => b.AddHubSessionsCheck());
 
         // Only used by an app that registers SignalR.
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IConfigureOptions<HubOptions>, SessionRevalidationHubFilter.Setup>());

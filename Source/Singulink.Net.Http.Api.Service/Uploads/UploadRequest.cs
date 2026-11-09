@@ -29,8 +29,11 @@ public class UploadRequest : IBindableFromHttpContext<UploadRequest>
     public string FileName { get; }
 
     /// <summary>
-    /// Gets the length of the file in bytes. The upload has exactly this many bytes.
+    /// Gets the length of the file in bytes.
     /// </summary>
+    /// <remarks>
+    /// The upload has exactly this many bytes.
+    /// </remarks>
     public long Length { get; }
 
     /// <summary>

@@ -17,8 +17,6 @@ public sealed class ChunkWriteTests
 
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(20);
 
-    public sealed record Note(string Text);
-
     [TestMethod]
     [DataRow(StatusCodes.Status400BadRequest)]
     [DataRow(StatusCodes.Status408RequestTimeout)]
@@ -66,6 +64,50 @@ public sealed class ChunkWriteTests
         (await rewrite.WaitAsync(WaitTimeout)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         (await host.CompleteAndReadAsync(session)).ShouldBe([$$$"""{"item":{"text":"{{{UploadTestHost.Hash(rewritten)}}}"}}""", """{"end":true}"""]);
+    }
+
+    [TestMethod]
+    public async Task ChunkThatArrivesForLongerThanTheIdleExpiry_KeepsItsUploadFromExpiring()
+    {
+        var clock = new ManualClock(manualTimestamps: true);
+        byte[] file = UploadTestHost.CreateFile(10);
+
+        await using var host = await UploadTestHost.StartAsync(
+            app => app.MapChunkedUpload(Pattern, HashAsync), options => options.IdleExpiry = TimeSpan.FromMinutes(1), timeProvider: clock);
+
+        var session = await host.CreateUploadAsync("a", file.Length);
+        string dataPath = Path.Combine(host.GetUploadDirectory(session), "data");
+
+        var body = new SteppedContent(file);
+        var write = SendChunkAsync(host, session, body);
+        await body.SendAsync(1);
+        await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(15)));
+
+        // The write shows every 15 seconds that it is alive, for two minutes, and a byte arrives each time, which keeps the upload's last write time with it.
+        // A beat that comes before its byte arrives leaves the time for the next beat.
+        for (int i = 0; i < 8; i++)
+        {
+            var lastWriteUtc = File.GetLastWriteTimeUtc(dataPath);
+            await body.SendAsync(1);
+            clock.Advance(TimeSpan.FromSeconds(15));
+
+            await WaitUntilAsync(async () => {
+                if (File.GetLastWriteTimeUtc(dataPath) > lastWriteUtc)
+                    return true;
+
+                await Task.Delay(TimeSpan.FromMilliseconds(200));
+                clock.Advance(TimeSpan.FromSeconds(15));
+
+                return false;
+            });
+        }
+
+        await host.Services.GetRequiredService<ChunkedUploads>().CleanUpAsync(CancellationToken.None);
+        (await host.GetStatusAsync(session)).State.ShouldBe(UploadState.Receiving);
+
+        await body.SendRestAsync();
+        (await write.WaitAsync(WaitTimeout)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await host.CompleteAndReadAsync(session)).ShouldBe([$$$"""{"item":{"text":"{{{UploadTestHost.Hash(file)}}}"}}""", """{"end":true}"""]);
     }
 
     [TestMethod]
@@ -145,6 +187,40 @@ public sealed class ChunkWriteTests
     }
 
     [TestMethod]
+    public async Task WriteThatStalls_DoesNotKeepItsUpload()
+    {
+        var clock = new ManualClock();
+        byte[] file = UploadTestHost.CreateFile(10);
+
+        await using var host = await UploadTestHost.StartAsync(
+            app => app.MapChunkedUpload(Pattern, HashAsync), options => options.IdleExpiry = TimeSpan.FromMinutes(1), timeProvider: clock);
+
+        var session = await host.CreateUploadAsync("a", file.Length);
+        var body = new SteppedContent(file);
+        var write = SendChunkAsync(host, session, body);
+        await body.SendAsync(4);
+        await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(15)));
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        // The write shows that it is alive for two minutes, while nothing arrives after its first bytes.
+        for (int i = 0; i < 8; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(15));
+            await Task.Delay(TimeSpan.FromMilliseconds(50));
+        }
+
+        await host.Services.GetRequiredService<ChunkedUploads>().CleanUpAsync(CancellationToken.None);
+
+        using (var status = await host.GetStatusResponseAsync(session))
+            await UploadTestHost.ShouldBeErrorAsync(status, HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
+
+        await body.SendRestAsync();
+
+        using var response = await write.WaitAsync(WaitTimeout);
+        await UploadTestHost.ShouldBeErrorAsync(response, HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
+    }
+
+    [TestMethod]
     public async Task WriteWhoseMarkerCannotBeRenewedOnce_RenewsItAtTheNextInterval()
     {
         var clock = new ManualClock(manualTimestamps: true);
@@ -164,7 +240,7 @@ public sealed class ChunkWriteTests
         using (AccessDenial.DenyCreatingFiles(chunksDirectory))
         {
             clock.Advance(TimeSpan.FromSeconds(15));
-            await WaitUntilAsync(() => host.Web.Logs.Any(l => l.Message.Contains("could not be renewed", StringComparison.Ordinal)));
+            await WaitUntilAsync(() => host.Web.Logs.Any(l => l.Message.Contains("could not show that it is alive", StringComparison.Ordinal)));
         }
 
         await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(15)));
@@ -198,7 +274,6 @@ public sealed class ChunkWriteTests
 
         await using var host = await UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, HandleAsync),
-            options => options.Directory = null,
             configureServices: services => services.AddSingleton<IUploadStore>(store));
 
         var session = await host.CreateUploadAsync("a", file.Length);
@@ -268,8 +343,8 @@ public sealed class ChunkWriteTests
         var store = host.Services.GetRequiredService<IUploadStore>();
         var record = (await store.GetAsync("1", session.Id)).ShouldNotBeNull().Record;
 
-        // The outcome removed the chunks, as it does while a write of a chunk that started before it goes on.
-        Directory.Exists(Path.Combine(host.GetUploadDirectory(session), "chunks")).ShouldBeFalse();
+        // The finished upload left its directory, as it does while a write of a chunk that started before it goes on.
+        Directory.GetDirectories(host.Directory, session.Id, SearchOption.AllDirectories).ShouldBeEmpty();
         (await store.WriteChunkAsync(record, 0, new MemoryStream(new byte[10]))).ShouldBe(ChunkWriteResult.Closed);
     }
 
@@ -297,6 +372,56 @@ public sealed class ChunkWriteTests
 
         while (!condition())
             await Task.Delay(10, timeout.Token);
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        using var timeout = new CancellationTokenSource(WaitTimeout);
+
+        while (!await condition())
+            await Task.Delay(10, timeout.Token);
+    }
+
+    /// <summary>
+    /// A body that sends the bytes that a test tells it to send.
+    /// </summary>
+    private sealed class SteppedContent(byte[] bytes) : HttpContent
+    {
+        private readonly System.Threading.Channels.Channel<int> _steps = System.Threading.Channels.Channel.CreateUnbounded<int>();
+        private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _position;
+
+        public async Task SendAsync(int count)
+        {
+            await _started.Task.WaitAsync(WaitTimeout);
+            await _steps.Writer.WriteAsync(count);
+        }
+
+        public async Task SendRestAsync()
+        {
+            await _started.Task.WaitAsync(WaitTimeout);
+            await _steps.Writer.WriteAsync(int.MaxValue);
+            _steps.Writer.Complete();
+        }
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            _started.SetResult();
+
+            await foreach (int count in _steps.Reader.ReadAllAsync())
+            {
+                int length = Math.Min(count, bytes.Length - _position);
+                await stream.WriteAsync(bytes.AsMemory(_position, length));
+                await stream.FlushAsync();
+                _position += length;
+            }
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 using System.Reflection;
+using Singulink.IO;
 
 namespace Singulink.Net.Http.Api.Service.Uploads;
 
@@ -12,7 +13,7 @@ namespace Singulink.Net.Http.Api.Service.Uploads;
 /// file for the next run of the handler. A handler that moves the file and then fails with a <c>503</c> leaves no file for the next run, which then fails,
 /// or, past <see cref="ChunkedUploadOptions.UnstartedExpiry"/> after the upload's creation, finds the upload expired, since without its file the upload
 /// counts as one that received no chunk.
-/// A handler that reads it with <see cref="OpenReadStream"/> works with any <see cref="IUploadStore"/>, while <see cref="FilePath"/> is only available from
+/// A handler that reads it with <see cref="OpenReadStream"/> works with any <see cref="IUploadStore"/>, while <see cref="File"/> is only available from
 /// stores that keep the file in a file system, such as the directory store.
 /// </remarks>
 public class UploadedFile : IBindableFromHttpContext<UploadedFile>
@@ -57,25 +58,31 @@ public class UploadedFile : IBindableFromHttpContext<UploadedFile>
     public string? ContentType { get; }
 
     /// <summary>
-    /// Gets the path of a file that has the complete file, or <see langword="null"/> if the upload store keeps none, as for stores that keep uploads in an
-    /// object store. With the directory store, the file is in the upload's directory.
+    /// Gets a file that has the complete file, or <see langword="null"/> if the upload store keeps none, as for stores that keep uploads in an object store.
     /// </summary>
-    public string? FilePath => _content.FilePath;
+    /// <remarks>
+    /// With the directory store, the file is in the upload's directory.
+    /// </remarks>
+    public IAbsoluteFilePath? File => _content.File;
 
     /// <summary>
-    /// Opens a read-only stream of the file. The stream of the directory store is seekable.
+    /// Opens a read-only stream of the file.
     /// </summary>
+    /// <remarks>
+    /// The stream of the directory store is seekable.
+    /// </remarks>
     public Stream OpenReadStream() => _content.OpenReadStream();
 
     /// <summary>
-    /// Moves the file to a new file at the specified path, so that it is kept after the handler finishes. A store that keeps the file in a file system
-    /// moves it, which copies nothing on the same volume, and other stores copy it there.
+    /// Moves the file to a new file, so that it is kept after the handler finishes.
     /// </summary>
-    /// <param name="destinationPath">The path of the new file, which must not exist.</param>
+    /// <remarks>
+    /// A store that keeps the file in a file system moves it, which copies nothing on the same volume, and other stores copy it there.
+    /// </remarks>
+    /// <param name="destination">The new file, which must not exist.</param>
     /// <param name="cancellationToken">A token that cancels the operation.</param>
-    /// <exception cref="IOException">The file at <paramref name="destinationPath"/> exists, or the file cannot be moved, such as while a stream of it is
-    /// open.</exception>
-    public Task MoveToAsync(string destinationPath, CancellationToken cancellationToken = default) => _content.MoveToAsync(destinationPath, cancellationToken);
+    /// <exception cref="IOException"><paramref name="destination"/> exists, or the file cannot be moved, such as while a stream of it is open.</exception>
+    public Task MoveToAsync(IAbsoluteFilePath destination, CancellationToken cancellationToken = default) => _content.MoveToAsync(destination, cancellationToken);
 
     /// <summary>
     /// Binds the uploaded file parameter of the handler of a chunked upload.

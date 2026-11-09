@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Singulink.Net.Http.Api.Client.Utilities;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -36,8 +37,8 @@ public sealed class Pkce
     /// </summary>
     public static Pkce Create()
     {
-        string verifier = ToBase64Url(GetRandomBytes(VerifierByteCount));
-        string challenge = ToBase64Url(ComputeSha256(Encoding.ASCII.GetBytes(verifier)));
+        string verifier = Base64UrlEncoder.Encode(GetRandomBytes(VerifierByteCount));
+        string challenge = Base64UrlEncoder.Encode(ComputeSha256(Encoding.ASCII.GetBytes(verifier)));
 
         return new Pkce(verifier, challenge);
     }
@@ -62,15 +63,6 @@ public sealed class Pkce
 #else
         using var sha256 = SHA256.Create();
         return sha256.ComputeHash(data);
-#endif
-    }
-
-    private static string ToBase64Url(byte[] bytes)
-    {
-#if NET9_0_OR_GREATER
-        return System.Buffers.Text.Base64Url.EncodeToString(bytes);
-#else
-        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 #endif
     }
 }

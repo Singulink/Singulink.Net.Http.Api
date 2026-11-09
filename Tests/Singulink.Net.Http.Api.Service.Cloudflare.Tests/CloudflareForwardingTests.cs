@@ -286,26 +286,126 @@ public sealed class CloudflareForwardingTests
     [TestMethod]
     public void Options_RejectInvalidValues()
     {
-        var options = new CloudflareForwardingOptions();
+        var file = DirectoryPath.GetTemp().CombineFile("ranges.txt", PathOptions.None);
+        var options = new CloudflareForwardingOptions(file);
 
         Should.Throw<ArgumentOutOfRangeException>(() => options.RefreshInterval = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.RetryInterval = TimeSpan.FromSeconds(-1));
         Should.Throw<ArgumentOutOfRangeException>(() => options.InitialRetryInterval = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.DownloadTimeout = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.StaleWarningAge = TimeSpan.FromDays(-1));
-        Should.Throw<ArgumentException>(() => options.SavedRangesPath = " ");
+        Should.Throw<ArgumentNullException>(() => options.SavedRangesFile = null!);
 
-        options.SavedRangesPath = "ranges.txt";
-        options.SavedRangesPath = null;
-        options.SavedRangesPath.ShouldBeNull();
+        options.SavedRangesFile.ShouldBeSameAs(file);
+    }
+
+    [TestMethod]
+    [DataRow(null, "ranges.txt ", "Entry name ends with a space.")]
+    [DataRow(null, "ranges.txt.", "Entry name ends with a dot.")]
+    [DataRow(null, " ranges.txt", "Entry name starts with a space.")]
+    [DataRow("data.", "ranges.txt", "Entry name ends with a dot.")]
+    public void SavedRangesFile_WithAnUnfriendlyName_IsRejected(string? directoryName, string fileName, string error)
+    {
+        var directory = directoryName is null ? DirectoryPath.GetTemp() : DirectoryPath.GetTemp().CombineDirectory(directoryName, PathOptions.None);
+        var unfriendly = directory.CombineFile(fileName, PathOptions.None);
+        string message =
+            $"CloudflareForwardingOptions.SavedRangesFile '{unfriendly.PathDisplay}' must be a path with friendly names: {error} (Parameter 'value')";
+
+        var friendly = DirectoryPath.GetTemp().CombineFile("ranges.txt", PathOptions.None);
+        var options = new CloudflareForwardingOptions(friendly);
+
+        var ex = Should.Throw<ArgumentException>(() => options.SavedRangesFile = unfriendly);
+        (ex.ParamName, ex.Message).ShouldBe(("value", message));
+        options.SavedRangesFile.ShouldBeSameAs(friendly);
+
+        // The constructor names its own parameter.
+        ex = Should.Throw<ArgumentException>(() => new CloudflareForwardingOptions(unfriendly));
+        ex.ParamName.ShouldBe("savedRangesFile");
+        ex.Message.ShouldBe(
+            $"CloudflareForwardingOptions.SavedRangesFile '{unfriendly.PathDisplay}' must be a path with friendly names: {error} " +
+            "(Parameter 'savedRangesFile')");
+
+        // A value that was rejected leaves the options without one, so they still fail validation as not set.
+        var bound = Activator.CreateInstance<CloudflareForwardingOptions>();
+        Should.Throw<ArgumentException>(() => bound.SavedRangesFile = unfriendly);
+        bound.SavedRangesFile.ShouldBeNull();
+        Should.Throw<InvalidOperationException>(bound.Validate).Message.ShouldStartWith("CloudflareForwardingOptions.SavedRangesFile is not set.");
+    }
+
+    [TestMethod]
+    public void SavedRangesFile_WithAReservedDeviceName_IsRejectedOnWindows_AndAcceptedElsewhere()
+    {
+        var file = DirectoryPath.GetTemp().CombineFile("con.txt", PathOptions.None);
+
+        if (OperatingSystem.IsWindows())
+        {
+            Should.Throw<ArgumentException>(() => new CloudflareForwardingOptions(file)).Message.ShouldBe(
+                $"CloudflareForwardingOptions.SavedRangesFile '{file.PathDisplay}' must be a path with friendly names: Invalid reserved device name in " +
+                "entry name 'con'. (Parameter 'savedRangesFile')");
+        }
+        else
+        {
+            new CloudflareForwardingOptions(file).SavedRangesFile.ShouldBeSameAs(file);
+        }
+    }
+
+    [TestMethod]
+    public void SavedRangesFile_WithFriendlyNames_IsAccepted()
+    {
+        var file = DirectoryPath.GetTemp().CombineDirectory("cloudflare data", PathOptions.None).CombineFile("ranges.v2.txt", PathOptions.None);
+        var options = Activator.CreateInstance<CloudflareForwardingOptions>();
+
+        options.SavedRangesFile = file;
+
+        options.SavedRangesFile.ShouldBeSameAs(file);
+        options.Validate();
+    }
+
+    [TestMethod]
+    public async Task Options_AreFrozen_WhenForwardingTakesThem()
+    {
+        await using var host = await CloudflareTestHost.StartAsync(new FakeCloudflareHandler(), o => o.TrustedProxyNetworks.Add("10.0.0.0/8"));
+        var options = host.App.Services.GetRequiredService<IOptions<CloudflareForwardingOptions>>().Value;
+
+        OptionsAssertions.ShouldBeFrozen(options);
+        options.TrustedProxyNetworks.ShouldBe(["10.0.0.0/8"]);
+
+        // Frozen options refuse a path with unfriendly names as they refuse any other value.
+        Should.Throw<InvalidOperationException>(() => options.SavedRangesFile = DirectoryPath.GetTemp().CombineFile("ranges.txt ", PathOptions.None))
+            .Message.ShouldBe("The CloudflareForwardingOptions are in use, so they can no longer be changed.");
+
+        // The nullable warning of this read fails the build unless IsFrozen tells the compiler that the value is not null when it is true.
+        if (options.IsFrozen)
+            options.SavedRangesFile.PathDisplay.ShouldBe(host.SavedRangesPath);
+    }
+
+    [TestMethod]
+    public void Validate_ListsEveryProblem_WithoutFreezing()
+    {
+        // As the options are created when they are bound from a configuration, without their required values.
+        var options = Activator.CreateInstance<CloudflareForwardingOptions>();
+        options.TrustedProxyNetworks.Add("not-a-network");
+
+        var ex = Should.Throw<InvalidOperationException>(options.Validate);
+        ex.Message.ShouldStartWith(
+            "'not-a-network' in CloudflareForwardingOptions.TrustedProxyNetworks is not a valid IP address or network in CIDR notation (for example " +
+            "127.0.0.1 or 10.0.0.0/8). CloudflareForwardingOptions.SavedRangesFile is not set.");
+        options.IsFrozen.ShouldBeFalse();
+
+        // The nullable warning of this read fails the build unless Validate tells the compiler that the value is not null afterwards.
+        options.TrustedProxyNetworks.Clear();
+        options.SavedRangesFile = DirectoryPath.GetTemp().CombineFile("ranges.txt", PathOptions.None);
+        options.Validate();
+        options.SavedRangesFile.Name.ShouldBe("ranges.txt");
     }
 
     [TestMethod]
     public void Options_Defaults()
     {
-        var options = new CloudflareForwardingOptions();
+        // As the options are created when they are bound from a configuration, without their required values.
+        var options = Activator.CreateInstance<CloudflareForwardingOptions>();
 
-        options.SavedRangesPath.ShouldBeNull();
+        options.SavedRangesFile.ShouldBeNull();
         options.DownloadRanges.ShouldBeTrue();
         options.TrustedProxyNetworks.ShouldBeEmpty();
         options.RefreshInterval.ShouldBe(TimeSpan.FromDays(1));
@@ -328,38 +428,31 @@ public sealed class CloudflareForwardingTests
     }
 
     [TestMethod]
-    public async Task MissingSavedRangesPath_FailsStartup()
+    [DataRow(true)]
+    [DataRow(false)]
+    public async Task MissingSavedRangesFile_FailsStartup(bool downloadRanges)
     {
         var handler = new FakeCloudflareHandler();
 
-        var ex = await Should.ThrowAsync<OptionsValidationException>(() => CloudflareTestHost.StartAsync(handler, o => o.SavedRangesPath = null));
+        var ex = await Should.ThrowAsync<OptionsValidationException>(
+            () => CloudflareTestHost.StartAsync(handler, o => o.DownloadRanges = downloadRanges, setsSavedRangesFile: false));
 
-        ex.Failures.ShouldHaveSingleItem().ShouldStartWith("Cloudflare forwarding requires CloudflareForwardingOptions.SavedRangesPath to be set.");
+        ex.Failures.ShouldHaveSingleItem().ShouldStartWith(
+            "CloudflareForwardingOptions.SavedRangesFile is not set. It is required, and has no default: Cloudflare's IP ranges are saved to this file");
         handler.RequestCount.ShouldBe(0);
     }
 
     [TestMethod]
-    public async Task MissingSavedRangesPath_WithDownloadsTurnedOff_FailsStartup()
-    {
-        var ex = await Should.ThrowAsync<OptionsValidationException>(() => CloudflareTestHost.StartAsync(new FakeCloudflareHandler(), o => {
-            o.SavedRangesPath = null;
-            o.DownloadRanges = false;
-        }));
-
-        ex.Failures.ShouldHaveSingleItem().ShouldBe(
-            "Cloudflare forwarding requires CloudflareForwardingOptions.SavedRangesPath to be set. Downloads are turned off, so Cloudflare's IP ranges are " +
-            "read from this file.");
-    }
-
-    [TestMethod]
-    public async Task SavedRangesPath_CanBeSetThroughConfiguration()
+    public async Task SavedRangesFile_IsBoundFromAConfiguration()
     {
         string contentRoot = CloudflareTestHost.CreateContentRoot();
+        string path = Path.Combine(contentRoot, "configured", "ranges.txt");
 
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = contentRoot });
         builder.WebHost.UseTestServer();
-        builder.Configuration.AddInMemoryCollection([new("Cloudflare:SavedRangesPath", "configured/ranges.txt")]);
+        builder.Configuration.AddInMemoryCollection([new("Cloudflare:SavedRangesFile", path), new("Cloudflare:DownloadTimeout", "00:00:07")]);
 
+        // The reflection-based binder creates the path from the string with the type converter of Singulink.IO.FileSystem.
         builder.Services.AddCloudflareForwarding();
         builder.Services.Configure<CloudflareForwardingOptions>(builder.Configuration.GetSection("Cloudflare"));
         builder.Services.AddHttpClient(CloudflareForwardingOptions.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => new FakeCloudflareHandler());
@@ -367,9 +460,28 @@ public sealed class CloudflareForwardingTests
         await using (var app = builder.Build())
         {
             await app.StartAsync();
-            File.Exists(Path.Combine(contentRoot, "configured", "ranges.txt")).ShouldBeTrue();
+
+            var options = app.Services.GetRequiredService<IOptions<CloudflareForwardingOptions>>().Value;
+            options.DownloadTimeout.ShouldBe(TimeSpan.FromSeconds(7));
+            options.SavedRangesFile.ShouldBe(FilePath.ParseAbsolute(path, PathOptions.None));
+            File.Exists(path).ShouldBeTrue();
         }
 
         Directory.Delete(contentRoot, recursive: true);
+    }
+
+    [TestMethod]
+    public void SavedRangesFile_BoundFromAConfiguration_WithAnUnfriendlyName_FailsWithTheMessageOfTheSetter()
+    {
+        var file = DirectoryPath.GetTemp().CombineFile("ranges.txt ", PathOptions.None);
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["SavedRangesFile"] = file.PathDisplay })
+            .Build();
+
+        // The binder sets the property with reflection, which wraps the exception of the setter.
+        var ex = Should.Throw<System.Reflection.TargetInvocationException>(() => configuration.Get<CloudflareForwardingOptions>());
+        ex.InnerException.ShouldBeOfType<ArgumentException>().Message.ShouldBe(
+            $"CloudflareForwardingOptions.SavedRangesFile '{file.PathDisplay}' must be a path with friendly names: Entry name ends with a space. " +
+            "(Parameter 'value')");
     }
 }

@@ -1,3 +1,4 @@
+using Singulink.IO;
 using Singulink.Net.Http.Api.Service.Uploads;
 
 namespace Singulink.Net.Http.Api.Service.Testing;
@@ -19,7 +20,7 @@ public sealed class TestUploadedFile : UploadedFile, IDisposable
     }
 
     /// <summary>
-    /// Creates an uploaded file with the specified content in a temporary file, which <see cref="UploadedFile.FilePath"/> has.
+    /// Creates an uploaded file with the specified content in a temporary file, which <see cref="UploadedFile.File"/> is.
     /// </summary>
     /// <param name="content">The content of the file.</param>
     /// <param name="fileName">The name of the file.</param>
@@ -30,7 +31,7 @@ public sealed class TestUploadedFile : UploadedFile, IDisposable
     }
 
     /// <summary>
-    /// Creates an uploaded file with the specified content in a temporary file, which <see cref="UploadedFile.FilePath"/> has, and the specified command.
+    /// Creates an uploaded file with the specified content in a temporary file, which <see cref="UploadedFile.File"/> is, and the specified command.
     /// </summary>
     /// <typeparam name="TCommand">The type of the command.</typeparam>
     /// <param name="content">The content of the file.</param>
@@ -76,53 +77,54 @@ public sealed class TestUploadedFile<TCommand> : UploadedFile<TCommand>, IDispos
 internal sealed class TemporaryFileContent : UploadContent
 {
     private readonly Lock _lock = new();
-    private string _path;
+    private IAbsoluteFilePath _file;
     private bool _isMoved;
 
-    private TemporaryFileContent(string path, long length)
+    private TemporaryFileContent(IAbsoluteFilePath file, long length)
     {
-        _path = path;
+        _file = file;
         Length = length;
     }
 
     public long Length { get; }
 
-    public override string? FilePath
+    public override IAbsoluteFilePath? File
     {
         get {
             lock (_lock)
-                return _path;
+                return _file;
         }
     }
 
     public static TemporaryFileContent Create(byte[] content)
     {
-        string path = Path.Combine(Path.GetTempPath(), $"upload-{Guid.NewGuid():N}.tmp");
-        File.WriteAllBytes(path, content);
+        var file = DirectoryPath.GetTemp().CombineFile($"upload-{Guid.NewGuid():N}.tmp", PathOptions.None);
 
-        return new TemporaryFileContent(path, content.Length);
+        using (var stream = file.OpenStream(FileMode.CreateNew, FileAccess.Write))
+            stream.Write(content);
+
+        return new TemporaryFileContent(file, content.Length);
     }
 
     public override Stream OpenReadStream()
     {
         // As with the directory store, whose file can be written to and removed while it is open.
-        return new FileStream(FilePath!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
+        return File!.OpenAsyncStream(FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
     }
 
-    public override async Task MoveToAsync(string destinationPath, CancellationToken cancellationToken = default)
+    public override async Task MoveToAsync(IAbsoluteFilePath destination, CancellationToken cancellationToken = default)
     {
-        string fullPath = Path.GetFullPath(destinationPath);
         cancellationToken.ThrowIfCancellationRequested();
 
         // As with the directory store: a file on the same file system is renamed, and one on another is copied, which can be cancelled.
-        if (!DirectoryUploadStore.IsOnSameFileSystem(fullPath, FilePath!))
+        if (!DirectoryUploadStore.IsOnSameFileSystem(destination, File!))
         {
-            await base.MoveToAsync(fullPath, cancellationToken);
+            await base.MoveToAsync(destination, cancellationToken);
 
             lock (_lock)
             {
-                File.Delete(_path);
-                _path = fullPath;
+                _file.Delete();
+                _file = destination;
                 _isMoved = true;
             }
 
@@ -131,8 +133,8 @@ internal sealed class TemporaryFileContent : UploadContent
 
         lock (_lock)
         {
-            File.Move(_path, fullPath, overwrite: false);
-            _path = fullPath;
+            _file.MoveTo(destination, overwrite: false);
+            _file = destination;
             _isMoved = true;
         }
     }
@@ -142,7 +144,7 @@ internal sealed class TemporaryFileContent : UploadContent
         lock (_lock)
         {
             if (!_isMoved)
-                File.Delete(_path);
+                _file.Delete();
         }
     }
 }

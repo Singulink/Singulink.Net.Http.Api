@@ -54,6 +54,21 @@ internal sealed class InactivityTimeout : IDisposable
         }
     }
 
+    /// <summary>
+    /// Stops the timeout, after which its token is only cancelled with the token that it was created with. Does nothing once the timeout is disposed.
+    /// </summary>
+    public void Stop()
+    {
+        try
+        {
+            _timer?.Change(System.Threading.Timeout.InfiniteTimeSpan, System.Threading.Timeout.InfiniteTimeSpan);
+        }
+        catch (ObjectDisposedException)
+        {
+            // The request has ended.
+        }
+    }
+
     public void Dispose()
     {
         _timer?.Dispose();

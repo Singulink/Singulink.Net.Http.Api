@@ -39,17 +39,19 @@ public static class StreamingResponse
     public const string ContentType = MediaType + "; charset=utf-8";
 
     /// <summary>
-    /// Reads the items from a streaming response body. Ping records are skipped, error records are thrown as the corresponding <see cref="ApiException"/>, and
-    /// the enumeration completes when the end record is received. Null items are yielded as <see langword="null"/>, whether or not the item type is
-    /// nullable.
+    /// Reads the items from a streaming response body.
     /// </summary>
+    /// <remarks>
+    /// Ping records are skipped, error records are thrown as the corresponding <see cref="ApiException"/>, and the enumeration completes when the end record
+    /// is received. Null items are yielded as <see langword="null"/>, whether or not the item type is nullable.
+    /// </remarks>
     /// <typeparam name="TItem">The item type.</typeparam>
     /// <param name="stream">The response body stream.</param>
     /// <param name="itemTypeInfo">The JSON type info used to deserialize items.</param>
     /// <param name="cancellationToken">A token that cancels the read.</param>
     /// <exception cref="ApiException">The stream contained an error record.</exception>
-    /// <exception cref="IOException">The stream ended before an end or error record was received. On .NET 10 and later, this is an <see
-    /// cref="T:System.Net.Http.HttpIOException"/>.</exception>
+    /// <exception cref="IOException">The stream ended before an end or error record was received. On .NET 10 and later, this is an
+    /// <see cref="T:System.Net.Http.HttpIOException"/>.</exception>
     /// <exception cref="FormatException">The stream contained an unrecognized record.</exception>
     public static IAsyncEnumerable<TItem> ReadItemsAsync<TItem>(Stream stream, JsonTypeInfo<TItem> itemTypeInfo, CancellationToken cancellationToken = default)
     {

@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Options;
 using Singulink.Net.Http.Api.DataContracts;
@@ -40,6 +41,7 @@ public static class PasskeyPageEndpointRouteBuilderExtensions
     {
         var options = new PasskeyPageOptions();
         configure?.Invoke(options);
+        options.Freeze();
 
         string? appName = options.AppName;
 

@@ -15,8 +15,8 @@ namespace Singulink.Net.Http.Api.Service.SignIn;
 /// </para>
 /// <para>
 /// Short codes can be guessed far more easily than random keys: whatever a code unlocks is exposed for as long as the code is valid, to as many wrong
-/// attempts as are allowed. There are few enough codes that a plain hash of one can be reversed by hashing every code, while a keyed hash (see <see
-/// cref="ComputeHash(string, ReadOnlySpan{byte})"/>) cannot be without its key.
+/// attempts as are allowed. There are few enough codes that a plain hash of one can be reversed by hashing every code, while a keyed hash (see
+/// <see cref="ComputeHash(string, ReadOnlySpan{byte})"/>) cannot be without its key.
 /// </para>
 /// </remarks>
 public static class ShortCode
@@ -39,9 +39,11 @@ public static class ShortCode
     public static string Generate() => RandomNumberGenerator.GetString(Alphabet, Length);
 
     /// <summary>
-    /// Normalizes a code typed by a user, or returns <see langword="null"/> if the input cannot be a code. The input is case-insensitive, O is read as 0, I
-    /// and L are read as 1, and spaces and dashes are ignored.
+    /// Normalizes a code typed by a user, or returns <see langword="null"/> if the input cannot be a code.
     /// </summary>
+    /// <remarks>
+    /// The input is case-insensitive, O is read as 0, I and L are read as 1, and spaces and dashes are ignored.
+    /// </remarks>
     public static string? Normalize(string input)
     {
         Span<char> code = stackalloc char[Length];
@@ -68,8 +70,11 @@ public static class ShortCode
     }
 
     /// <summary>
-    /// Formats a code for display, for example <c>K7PX-M3QR</c>. The code is normalized first, so typed input is accepted too.
+    /// Formats a code for display, for example <c>K7PX-M3QR</c>.
     /// </summary>
+    /// <remarks>
+    /// The code is normalized first, so typed input is accepted too.
+    /// </remarks>
     /// <exception cref="ArgumentException">The value is not a valid code.</exception>
     public static string Format(string code)
     {
@@ -78,9 +83,11 @@ public static class ShortCode
     }
 
     /// <summary>
-    /// Computes the keyed hash (HMAC-SHA256) of a code, as 43 base64url characters. The code is normalized first, so typed input gives the same hash as the
-    /// generated code.
+    /// Computes the keyed hash (HMAC-SHA256) of a code, as 43 base64url characters.
     /// </summary>
+    /// <remarks>
+    /// The code is normalized first, so typed input gives the same hash as the generated code.
+    /// </remarks>
     /// <param name="code">The code.</param>
     /// <param name="key">The secret key of the hash, at least <see cref="MinHashKeyLength"/> bytes long. Only someone who has the key can tell which code a
     /// hash belongs to.</param>

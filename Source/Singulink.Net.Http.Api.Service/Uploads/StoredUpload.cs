@@ -2,7 +2,7 @@ namespace Singulink.Net.Http.Api.Service.Uploads;
 
 /// <summary>
 /// Represents an upload in an <see cref="IUploadStore"/> with its current state: its record, when its last chunk was written, the state of its handler's
-/// run and its outcome.
+/// run and, once it has finished, its outcome.
 /// </summary>
 public sealed class StoredUpload
 {
@@ -48,11 +48,13 @@ public sealed class StoredUpload
     public UploadRecord Record { get; }
 
     /// <summary>
-    /// Gets the time a write of the upload's chunks last started or ended, which is later than its creation, or the time it was created
-    /// (<see cref="UploadRecord.CreatedUtc"/>) if no chunk was written, in UTC. The service keeps an upload that has received no chunk for
-    /// <see cref="ChunkedUploadOptions.UnstartedExpiry"/>, and moves an upload's expiry with this time, so a chunk whose write takes long keeps its upload
-    /// while it arrives.
+    /// Gets the time a write of the upload's chunks last started or ended, or showed that it is still running while bytes of its chunk arrive, in UTC. It is
+    /// later than the upload's creation, or the time of its creation (<see cref="UploadRecord.CreatedUtc"/>) if no chunk was written.
     /// </summary>
+    /// <remarks>
+    /// The service keeps an upload that has received no chunk for <see cref="ChunkedUploadOptions.UnstartedExpiry"/>, and moves an upload's expiry with this
+    /// time, so a chunk whose write takes long keeps its upload while its bytes arrive.
+    /// </remarks>
     public DateTime LastWriteUtc { get; }
 
     /// <summary>
@@ -66,7 +68,7 @@ public sealed class StoredUpload
     public DateTime? RunStartedUtc { get; }
 
     /// <summary>
-    /// Gets the upload's outcome, as <see cref="IUploadStore.TrySetOutcomeAsync"/> stored it, or <see langword="null"/> if it has none.
+    /// Gets the upload's outcome, as <see cref="IUploadStore.TrySetOutcomeAsync"/> stored it, or <see langword="null"/> for an open upload.
     /// </summary>
     public string? Outcome { get; }
 

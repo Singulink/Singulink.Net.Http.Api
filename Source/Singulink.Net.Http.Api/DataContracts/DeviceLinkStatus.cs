@@ -16,8 +16,10 @@ public sealed class DeviceLinkStatus
 
     /// <summary>
     /// Gets the one-time sign-in code for the new device if the link was approved, or <see langword="null"/> if the link is still waiting for approval.
+    /// </summary>
+    /// <remarks>
     /// The code is bound to the code challenge that the link was started with, so only the new device can redeem it. Every check after the approval gets
     /// the same code.
-    /// </summary>
+    /// </remarks>
     public string? SignInCode { get; }
 }

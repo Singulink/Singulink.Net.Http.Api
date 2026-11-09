@@ -18,17 +18,16 @@ public sealed class ChunkedUploadServerTests
 
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(20);
 
-    public sealed record Note(string Text);
-
     [TestMethod]
     public async Task TwoServers_ChunksAndCompletionOnEither_MakeTheWholeFile()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
 
         try
         {
-            await using var first = await StartAsync(directory, HashAsync);
-            await using var second = await StartAsync(directory, HashAsync);
+            await using var first = await StartAsync(directory, HashAsync, shortLivedStore: shortLivedStore);
+            await using var second = await StartAsync(directory, HashAsync, shortLivedStore: shortLivedStore);
 
             byte[] file = UploadTestHost.CreateFile((10 * MiB) + 1);
             var session = await first.CreateUploadAsync("file.bin", file.Length);
@@ -51,20 +50,21 @@ public sealed class ChunkedUploadServerTests
     public async Task TwoServers_CompletionOnOtherServerWhileRunning_WaitsForOutcome()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int runs = 0;
 
         try
         {
-            await using var first = await StartAsync(directory, StreamAsync);
-            await using var second = await StartAsync(directory, StreamAsync);
+            await using var first = await StartAsync(directory, StreamAsync, shortLivedStore: shortLivedStore);
+            await using var second = await StartAsync(directory, StreamAsync, shortLivedStore: shortLivedStore);
 
             var session = await first.CreateUploadAsync("a", 10);
             await first.PutChunksAsync(session, UploadTestHost.CreateFile(10));
 
             using var running = await first.CompleteAsync(session);
             using var runningReader = new StreamReader(await running.Content.ReadAsStreamAsync());
-            (await runningReader.ReadLineAsync()).ShouldBe("""{"item":{"text":"working"}}""");
+            (await ReadLineWithoutPingsAsync(runningReader)).ShouldBe("""{"item":{"text":"working"}}""");
 
             (await second.GetStatusAsync(session)).State.ShouldBe(UploadState.Processing);
 
@@ -141,9 +141,10 @@ public sealed class ChunkedUploadServerTests
     }
 
     [TestMethod]
-    public async Task AbortOnAnotherServer_StopsTheHandlerWhenItsClaimIsRenewed()
+    public async Task CancelOnAnotherServer_StopsTheHandlerAtItsNextCheck()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         var clock = new ManualClock(manualTimestamps: true);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -151,24 +152,27 @@ public sealed class ChunkedUploadServerTests
         try
         {
             await using var first = await UploadTestHost.StartAsync(
-                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, timeProvider: clock);
+                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, timeProvider: clock, shortLivedStore: shortLivedStore);
 
-            await using var second = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory);
+            await using var second = await UploadTestHost.StartAsync(
+                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, shortLivedStore: shortLivedStore);
 
             var session = await first.CreateUploadAsync("a", 10);
             await first.PutChunksAsync(session, UploadTestHost.CreateFile(10));
 
-            var completion = first.CompleteAndReadAsync(session);
+            var completion = first.CompleteAsync(session);
             await started.Task.WaitAsync(WaitTimeout);
 
-            (await second.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            (await second.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
 
-            // The first server finds the upload gone when it renews the claim of the run, every 15 seconds.
-            await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(15)));
-            clock.Advance(TimeSpan.FromSeconds(15));
+            // The first server finds the cancellation at its next check, 1 second after the last.
+            await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromSeconds(1)));
+            cancelled.Task.IsCompleted.ShouldBeFalse();
+            clock.Advance(TimeSpan.FromSeconds(1));
 
+            // The first server's clock sent no ping, so the cancellation is the completion's error response.
             await cancelled.Task.WaitAsync(WaitTimeout);
-            (await completion)[^1].ShouldStartWith("""{"error":{"status":404,"code":"upload-not-found",""");
+            await UploadTestHost.ShouldBeErrorAsync(await completion, HttpStatusCode.Conflict, UploadErrorCodes.Cancelled);
             Directory.EnumerateFiles(directory, "upload.json", SearchOption.AllDirectories).ShouldBeEmpty();
         }
         finally
@@ -197,16 +201,18 @@ public sealed class ChunkedUploadServerTests
     public async Task ServerThatStopsWhileWaitingForTheRunOnAnotherServer_IsServiceUnavailable()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var clock = new ManualClock(manualTimestamps: true);
 
         try
         {
-            await using var first = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory);
+            await using var first = await UploadTestHost.StartAsync(
+                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, shortLivedStore: shortLivedStore);
 
             await using var second = await UploadTestHost.StartAsync(
-                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, timeProvider: clock);
+                app => app.MapChunkedUpload(Pattern, HandleAsync), directory: directory, timeProvider: clock, shortLivedStore: shortLivedStore);
 
             var session = await first.CreateUploadAsync("a", 10);
             await first.PutChunksAsync(session, UploadTestHost.CreateFile(10));
@@ -269,15 +275,17 @@ public sealed class ChunkedUploadServerTests
     public async Task OtherServer_FindsClaimLapsed_EndsUploadAsInterrupted()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         try
         {
-            await using var first = await StartAsync(directory, HandleAsync);
+            await using var first = await StartAsync(directory, HandleAsync, shortLivedStore: shortLivedStore);
 
             // The second server's clock is past the first claim's lease, as if the first server had stopped renewing it.
-            await using var second = await StartAsync(directory, HandleAsync, new TestClock(DateTimeOffset.UtcNow.AddMinutes(2)));
+            await using var second = await StartAsync(
+                directory, HandleAsync, new TestClock(DateTimeOffset.UtcNow.AddMinutes(2)), shortLivedStore: shortLivedStore);
 
             var session = await first.CreateUploadAsync("a", 10);
             await first.PutChunksAsync(session, UploadTestHost.CreateFile(10));
@@ -333,8 +341,9 @@ public sealed class ChunkedUploadServerTests
             await File.WriteAllTextAsync(
                 claimPath, $$"""{"claimId":"crashed","leaseDuration":"00:01:00","startedUtc":"{{startedUtc}}","renewedUtc":"{{renewedUtc}}"}""");
 
-            await using var second = await StartAsync(directory, HandleAsync);
-            await WaitUntilAsync(() => File.Exists(Path.Combine(uploadDirectory, "outcome.json")));
+            // The startup's cleanup ends the upload, which leaves its directory.
+            await using var second = await StartAsync(directory, HandleAsync, backgroundCleanup: true);
+            await WaitUntilAsync(() => !Directory.Exists(uploadDirectory));
 
             await UploadTestHost.ShouldBeErrorAsync(await second.CompleteAsync(session), HttpStatusCode.InternalServerError, UploadErrorCodes.Interrupted);
             runs.ShouldBe(0);
@@ -464,7 +473,7 @@ public sealed class ChunkedUploadServerTests
 
         // The new claim can't be read for a while after it is written, as when another process has opened it without sharing it.
         using (AccessDenial.DenyReadingNewFiles(directory))
-            await Should.ThrowAsync<UnauthorizedAccessException>(async () => await store.TryClaimRunAsync(record, TimeSpan.FromMinutes(1)));
+            await Should.ThrowAsync<UnauthorizedIOAccessException>(async () => await store.TryClaimRunAsync(record, TimeSpan.FromMinutes(1)));
 
         // It is removed in the background rather than left to lapse, which would end the upload as interrupted.
         await WaitUntilAsync(() => !File.Exists(Path.Combine(directory, "claim")));
@@ -484,7 +493,7 @@ public sealed class ChunkedUploadServerTests
 
         // The claim looks for writes of chunks that are alive by listing the chunks.
         using (AccessDenial.DenyListing(Path.Combine(directory, "chunks")))
-            await Should.ThrowAsync<UnauthorizedAccessException>(async () => await store.TryClaimRunAsync(record, TimeSpan.FromMinutes(1)));
+            await Should.ThrowAsync<UnauthorizedIOAccessException>(async () => await store.TryClaimRunAsync(record, TimeSpan.FromMinutes(1)));
 
         File.Exists(Path.Combine(directory, "claim")).ShouldBeFalse();
     }
@@ -517,31 +526,38 @@ public sealed class ChunkedUploadServerTests
     }
 
     [TestMethod]
-    public async Task OutcomeFileThatCannotBeRead_IsCompletedWithServerError()
+    public async Task OutcomeFileThatCannotBeRead_IsCompletedWithServerError_AlsoOnceItIsMovedOn()
     {
         await using var host = await StartAsync(null, HashAsync);
         var session = await host.CreateUploadAsync("a", 10);
         await host.PutChunksAsync(session, UploadTestHost.CreateFile(10));
-        await host.CompleteAndReadAsync(session);
+        string uploadDirectory = host.GetUploadDirectory(session);
 
-        string outcomePath = Path.Combine(host.GetUploadDirectory(session), "outcome.json");
-        await File.WriteAllTextAsync(outcomePath, "{");
-        File.SetLastWriteTimeUtc(outcomePath, DateTime.UtcNow.AddMinutes(-2));
+        // A server stopped while it wrote the outcome of the upload's run, a minute ago or more.
+        string finishedPath = Path.Combine(uploadDirectory, "finished.json");
+        await File.WriteAllTextAsync(finishedPath, "{");
+        File.SetLastWriteTimeUtc(finishedPath, DateTime.UtcNow.AddMinutes(-2));
 
         (await host.GetStatusAsync(session)).State.ShouldBe(UploadState.Completed);
+        await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.InternalServerError, UploadErrorCodes.OutcomeUnreadable);
+
+        // The cleanup moves the upload on to its outcome, which stays one that can't be read.
+        await host.Services.GetRequiredService<IUploadStore>().CleanUpAsync();
+
+        Directory.Exists(uploadDirectory).ShouldBeFalse();
         await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.InternalServerError, UploadErrorCodes.OutcomeUnreadable);
     }
 
     [TestMethod]
-    public async Task List_WithoutOutcomes_LeavesOutTheUploadsThatHaveOne()
+    public async Task List_LeavesOutFinishedUploads()
     {
         await using var host = await StartAsync(null, HashAsync);
         var (completed, _) = await host.UploadAsync(UploadTestHost.CreateFile(10));
         var open = await host.CreateUploadAsync("a", 10);
         var store = host.Services.GetRequiredService<IUploadStore>();
 
-        (await store.ListAsync("1").Select(u => u.Record.Id).ToListAsync()).Order().ShouldBe(new[] { completed.Id, open.Id }.Order());
-        (await store.ListAsync("1", withoutOutcomes: true).Select(u => u.Record.Id).ToListAsync()).ShouldBe([open.Id]);
+        (await store.ListAsync().Select(u => u.Record.Id).ToListAsync()).ShouldBe([open.Id]);
+        (await store.GetAsync("1", completed.Id)).ShouldNotBeNull().Outcome.ShouldNotBeNull();
     }
 
     [TestMethod]
@@ -570,7 +586,7 @@ public sealed class ChunkedUploadServerTests
             await File.WriteAllBytesAsync(Path.Combine(unfinishedDeletion, "deleted"), []);
 
             // The second server starts after the first upload's idle expiry.
-            await using var second = await StartAsync(directory, HashAsync, new TestClock(DateTimeOffset.UtcNow.AddDays(2)));
+            await using var second = await StartAsync(directory, HashAsync, new TestClock(DateTimeOffset.UtcNow.AddDays(2)), backgroundCleanup: true);
 
             await WaitUntilAsync(() => !Directory.Exists(failedCreation) && !Directory.Exists(unfinishedDeletion) && !Directory.Exists(expiredDirectory));
         }
@@ -608,15 +624,18 @@ public sealed class ChunkedUploadServerTests
         string userDirectory = Path.GetDirectoryName(uploadDirectory)!;
 
         // What writes in progress have just created: the temporary file of an outcome, the marker of a write of a chunk and the temporary file of its
-        // renewal, the temporary file of a key's reservation, the directory of an upload whose record is not written yet, and the directory of a user.
+        // renewal, the directory that a creation makes an upload in, the directory of an upload whose record is not written yet, and the directory of a user.
         string[] files = [
-            Path.Combine(uploadDirectory, "outcome.json.1.tmp"),
+            Path.Combine(uploadDirectory, "finished.json.1.tmp"),
             Path.Combine(uploadDirectory, "chunks", "0.1.writing"),
             Path.Combine(uploadDirectory, "chunks", "0.1.writing.2.tmp"),
-            Path.Combine(userDirectory, "keys", "key.1.tmp"),
         ];
 
-        string[] directories = [Path.Combine(userDirectory, new string('B', 43)), Path.Combine(host.Directory, "user")];
+        string[] directories = [
+            Path.Combine(userDirectory, $"{Guid.NewGuid():D}.{Guid.NewGuid():N}.new"),
+            Path.Combine(userDirectory, new string('B', 43)),
+            Path.Combine(host.Directory, "user"),
+        ];
 
         foreach (string file in files)
         {
@@ -632,13 +651,16 @@ public sealed class ChunkedUploadServerTests
         files.Where(f => !File.Exists(f)).Concat(directories.Where(d => !Directory.Exists(d))).ShouldBeEmpty();
     }
 
-    private static Task<UploadTestHost> StartAsync(string? directory, Delegate handler, TestClock? clock = null)
+    private static Task<UploadTestHost> StartAsync(
+        string? directory, Delegate handler, TestClock? clock = null, bool backgroundCleanup = false, IShortLivedStore? shortLivedStore = null)
     {
         return UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, handler),
             options => options.CompletionPingInterval = TimeSpan.FromMilliseconds(50),
             directory,
-            clock: clock);
+            clock: clock,
+            backgroundCleanup: backgroundCleanup,
+            shortLivedStore: shortLivedStore);
     }
 
     private static async Task<Note> HashAsync(UploadedFile file, CancellationToken cancellationToken)
@@ -647,6 +669,22 @@ public sealed class ChunkedUploadServerTests
     }
 
     private static List<string> WithoutPings(List<string> lines) => [.. lines.Where(l => l != """{"ping":true}""")];
+
+    /// <summary>
+    /// Reads the next line of a completion's stream that isn't a ping, since a ping can come first.
+    /// </summary>
+    private static async Task<string?> ReadLineWithoutPingsAsync(StreamReader reader)
+    {
+        string? line;
+
+        do
+        {
+            line = await reader.ReadLineAsync();
+        }
+        while (line == """{"ping":true}""");
+
+        return line;
+    }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

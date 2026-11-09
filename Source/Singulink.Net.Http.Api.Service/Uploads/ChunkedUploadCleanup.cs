@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Hosting;
+
 namespace Singulink.Net.Http.Api.Service.Uploads;
 
 /// <summary>

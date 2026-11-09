@@ -1,3 +1,6 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Net.Http.Headers;
 
 namespace Singulink.Net.Http.Api.Service;
@@ -12,12 +15,12 @@ public static class WebApplicationExtensions
     private static readonly TimeSpan PreflightMaxAge = TimeSpan.FromHours(2);
 
     /// <summary>
-    /// Configures the application to use CORS with the allowed origins registered in the service collection. Responses expose their <c>Retry-After</c>,
-    /// <c>Reference-Id</c> and <c>Location</c> headers to those origins, and browsers may cache the answers to preflight requests for 2 hours
-    /// (<c>Access-Control-Max-Age: 7200</c>).
+    /// Configures the application to use CORS with the allowed origins registered in the service collection.
     /// </summary>
     /// <remarks>
-    /// Outside the Development environment, allowed origins that match a loopback host, such as <c>localhost</c>, are logged as a warning.
+    /// Responses expose their <c>Retry-After</c>, <c>Reference-Id</c> and <c>Location</c> headers to those origins, and browsers may cache the answers to
+    /// preflight requests for 2 hours (<c>Access-Control-Max-Age: 7200</c>). Outside the Development environment, allowed origins that match a loopback
+    /// host, such as <c>localhost</c>, are logged as a warning.
     /// </remarks>
     public static IApplicationBuilder UseAllowedOrigins(this IApplicationBuilder app)
     {
@@ -46,11 +49,14 @@ public static class WebApplicationExtensions
 
     /// <summary>
     /// Configures the application to use <see cref="ApiExceptionMiddleware"/> for handling exceptions and to convert endpoint results of type
-    /// <see cref="IAsyncEnumerable{T}"/> into <see cref="StreamingResponse"/> streams. <c>T</c> must be a reference type (value type items fail when the
-    /// endpoints are built). Requires <see cref="ServiceCollectionExtensions.AddApiResponseHandling(IServiceCollection)"/>.
+    /// <see cref="IAsyncEnumerable{T}"/> into <see cref="StreamingResponse"/> streams.
     /// </summary>
     /// <param name="app">The application.</param>
     /// <remarks>
+    /// <para>
+    /// <c>T</c> must be a reference type (value type items fail when the endpoints are built). Requires
+    /// <see cref="ServiceCollectionExtensions.AddApiResponseHandling(IServiceCollection)"/>.
+    /// </para>
     /// <para>
     /// The middleware handles the exceptions of the endpoints and of the middleware that comes after it in the pipeline. The streaming conversion applies
     /// to the minimal API route handlers of the application's own route builder, including the ones in route groups, whether they are mapped before or

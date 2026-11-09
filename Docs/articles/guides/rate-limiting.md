@@ -8,7 +8,7 @@ This guide covers limiting how often each client can call a service: adding per-
 
 The service package adds helpers on top of ASP.NET Core rate limiting (`Microsoft.AspNetCore.RateLimiting`). Each limit applies to every client address separately, so one client that makes too many requests does not affect others. Clients can be exempted by address (see [Exempting Clients](#exempting-clients)). Rejected requests receive a `429 Too Many Requests` error that clients built with the toolkit report like any other API error.
 
-Requests are counted in the registered short-lived store, which is the same store the sign-in features use, or in one memory store that all the limits share if the service registers none. With a store that all of a service's servers share, a client's limit holds across all of them (see [Several Servers](#several-servers)).
+Requests are counted in the store of <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys.RateLimiting>: the app's registered short-lived store, a memory store of its own while that is the default memory store, or one memory store that all the limits share if the service registers no short-lived store, which the options without a name size, as they size the app's memory store (256 MiB by default). With a store that all of a service's servers share, a client's limit holds across all of them (see [Several Servers](#several-servers)).
 
 > [!IMPORTANT]
 > The client address is <xref:Microsoft.AspNetCore.Http.ConnectionInfo.RemoteIpAddress?displayProperty=nameWithType>, the address the connection comes from. Behind a proxy, such as a reverse proxy, a load balancer or Cloudflare, every request comes from the proxy, so all clients share one limit and quickly lock each other out. The forwarded client address must be applied before rate limiting runs: behind Cloudflare with the `Singulink.Net.Http.Api.Service.Cloudflare` package (see [Cloudflare](cloudflare.md)), and behind other proxies with ASP.NET Core's forwarded headers middleware, trusting only the proxies' addresses:
@@ -181,7 +181,7 @@ The per-client limits count requests by client address. <xref:Singulink.Net.Http
 
 ## Several Servers
 
-Services that run on several servers register a short-lived store that all of them share, such as a Redis store (see [Running Multiple Servers](multiple-servers.md)). The limits then count each client's requests in that store, so a client gets the same number of requests per window however the load balancer spreads them. Windows start at fixed times on each server's clock (a one-minute window starts at every full minute), so servers whose clocks differ start them at different times. <xref:Singulink.Net.Http.Api.Service.ClientRateLimitOptions.QueueLimit> applies on each server separately.
+Services that run on several servers register a short-lived store that all of them share, such as a Redis store, for every feature or for <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys.RateLimiting> (see [Running Multiple Servers](multiple-servers.md)). With a process-local store, each server counts on its own. The limits then count each client's requests in that store, so a client gets the same number of requests per window however the load balancer spreads them. Windows start at fixed times on each server's clock (a one-minute window starts at every full minute), so servers whose clocks differ start them at different times. <xref:Singulink.Net.Http.Api.Service.ClientRateLimitOptions.QueueLimit> applies on each server separately.
 
 With a shared store, combine these policies only with <xref:Singulink.Net.Http.Api.Service.RateLimiterOptionsExtensions.SetClientFixedWindowGlobalLimiter*> or a concurrency limiter as the global limiter. ASP.NET Core would count each request twice against a global fixed window, sliding window or token bucket limiter of its own. The memory store has no such limitation.
 
@@ -193,6 +193,7 @@ Continue with these related articles:
 
 - [Cloudflare](cloudflare.md) - Restoring the client's address for services behind Cloudflare.
 - [Running Multiple Servers](multiple-servers.md) - Sharing rate limit counts between servers.
+- [Health Checks and Metrics](diagnostics.md) - The health check and metrics of the limits, and their statistics.
 - [Error Response Format](../concepts/error-format.md) - How errors are encoded on the wire.
 - [Rate limiting middleware in ASP.NET Core](https://learn.microsoft.com/aspnet/core/performance/rate-limit) - The underlying framework feature.
 

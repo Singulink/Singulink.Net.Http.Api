@@ -8,8 +8,11 @@ namespace Singulink.Net.Http.Api.Service;
 public interface ISessionToken
 {
     /// <summary>
-    /// Gets the ID of the user the session belongs to, as a string. The user ID precondition of requests is compared with it.
+    /// Gets the ID of the user the session belongs to, as a string.
     /// </summary>
+    /// <remarks>
+    /// The user ID precondition of requests is compared with it.
+    /// </remarks>
     string UserId { get; }
 }
 
@@ -23,8 +26,8 @@ public interface ISessionToken<TSelf> : ISessionToken, IBindableFromHttpContext<
     where TSelf : class, ISessionToken<TSelf>
 {
     /// <summary>
-    /// Binds the session token parameter of an endpoint with <see cref="HttpContextExtensions.BindSessionTokenAsync{TSessionToken}(HttpContext,
-    /// ParameterInfo)"/>.
+    /// Binds the session token parameter of an endpoint with
+    /// <see cref="HttpContextExtensions.BindSessionTokenAsync{TSessionToken}(HttpContext, ParameterInfo)"/>.
     /// </summary>
     static ValueTask<TSelf?> IBindableFromHttpContext<TSelf>.BindAsync(HttpContext context, ParameterInfo parameter)
     {

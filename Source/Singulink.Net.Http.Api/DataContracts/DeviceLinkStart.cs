@@ -37,8 +37,11 @@ public sealed class DeviceLinkStart
     public string PollSecret { get; }
 
     /// <summary>
-    /// Gets how long the link waits for approval after the service started it. Counted from when the client receives the link, it ends later than on the
-    /// service by the time the response took to arrive, and does not depend on the client's clock.
+    /// Gets how long the link waits for approval after the service started it.
     /// </summary>
+    /// <remarks>
+    /// Counted from when the client receives the link, it ends later than on the service by the time the response took to arrive, and does not depend on
+    /// the client's clock.
+    /// </remarks>
     public TimeSpan Lifetime { get; }
 }

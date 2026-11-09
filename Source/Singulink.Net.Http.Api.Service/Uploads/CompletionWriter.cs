@@ -14,10 +14,11 @@ internal sealed class CompletionWriter : IDisposable
     private readonly TimeProvider _timeProvider;
     private bool _isClientGone;
 
-    public CompletionWriter(HttpContext context, JavaScriptEncoder? encoder, CancellationToken clientAborted, TimeSpan pingInterval, TimeProvider timeProvider)
+    public CompletionWriter(
+        HttpContext context, JavaScriptEncoder? encoder, CancellationToken clientAborted, TimeSpan pingInterval, TimeProvider timeProvider, int statusCode)
     {
         _context = context;
-        _records = new StreamRecordWriter(context, encoder, clientAborted);
+        _records = new StreamRecordWriter(context, encoder, clientAborted, statusCode);
         _timeProvider = timeProvider;
         ClientAborted = clientAborted;
         PingInterval = pingInterval;

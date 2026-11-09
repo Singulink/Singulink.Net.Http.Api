@@ -44,8 +44,15 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
     private readonly Lock _timerLock = new();
     private readonly Lock _checkLock = new();
 
+    private readonly HttpApiMetrics? _metrics;
+
     private ITimer? _timer;
     private Task _checkTask = Task.CompletedTask;
+    private long _connectionsEnded;
+    private int _roundFailures;
+
+    // The last round of rechecks, written once it ends.
+    private LastCheck? _lastCheck;
     private bool _checking;
     private bool _checkPending;
 
@@ -55,6 +62,16 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
         _handler = handler;
         _options = handler.Options;
         _logger = loggerFactory.CreateLogger("Singulink.Net.Http.Api.Service.SessionHandling");
+        _metrics = HttpApiMetrics.Get(services);
+        _metrics?.AddTracker(this);
+    }
+
+    public string TokenTypeName { get; } = typeof(TSessionToken).Name;
+
+    public HubSessionTrackerStatus GetStatus()
+    {
+        var lastCheck = Volatile.Read(ref _lastCheck);
+        return new(_connections.Count, Interlocked.Read(ref _connectionsEnded), lastCheck?.Utc, lastCheck?.Due ?? 0, lastCheck?.Failures ?? 0);
     }
 
     public ValueTask ValidateIfDueAsync(HubCallerContext connection)
@@ -164,9 +181,12 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
         {
             var utcNow = _handler.UtcNow;
             var dueConnections = _connections.Values.Where(c => utcNow - c.CheckedUtc >= _options.RefreshAfter).ToList();
+            Volatile.Write(ref _roundFailures, 0);
 
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentChecks, CancellationToken = _disposed.Token };
             await Parallel.ForEachAsync(dueConnections, parallelOptions, CheckConnectionAsync);
+
+            Volatile.Write(ref _lastCheck, new LastCheck(_handler.TimeProvider.GetUtcNow(), dueConnections.Count, Volatile.Read(ref _roundFailures)));
         }
         catch (OperationCanceledException) when (_disposed.IsCancellationRequested)
         {
@@ -205,6 +225,7 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
+            Interlocked.Increment(ref _roundFailures);
             _logger.LogWarning(ex, "The session of hub connection {ConnectionId} could not be checked.", connection.Context.ConnectionId);
         }
     }
@@ -222,6 +243,9 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
         // The connection closed, or another check ended it.
         if (!_connections.TryRemove(context.ConnectionId, out _))
             return;
+
+        Interlocked.Increment(ref _connectionsEnded);
+        _metrics?.HubConnectionEnded(TokenTypeName);
 
         if (GetHubClients(connection.HubType) is not { } clients)
         {
@@ -380,4 +404,6 @@ internal sealed class SessionConnectionTracker<TSessionToken> : ISessionConnecti
 
         public DateTime CheckedUtc { get; set; } = checkedUtc;
     }
+
+    private sealed record LastCheck(DateTimeOffset Utc, int Due, int Failures);
 }

@@ -22,4 +22,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Client.WinUI\Singulink.Net.Http.Api.Client.WinUI.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\OptionsAssertions.cs" Link="Infrastructure\OptionsAssertions.cs" />
+  </ItemGroup>
 </Project>

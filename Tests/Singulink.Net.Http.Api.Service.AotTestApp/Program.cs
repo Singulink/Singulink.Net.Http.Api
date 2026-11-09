@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.AspNetCore.DataProtection;
+using Singulink.IO;
 using Singulink.Net.Http.Api.Service;
 using Singulink.Net.Http.Api.Service.AotTestApp;
 using Singulink.Net.Http.Api.Service.Passkeys;
@@ -50,7 +51,7 @@ builder.Services.AddSignalR(options => options.AddApiExceptionFilter());
 
 builder.Services.AddCloudflareForwarding(options => {
     options.DownloadRanges = false;
-    options.SavedRangesPath = Path.Combine(AppContext.BaseDirectory, "cloudflare-ranges.txt");
+    options.SavedRangesFile = DirectoryPath.GetAppBase().CombineFile("cloudflare-ranges.txt", PathOptions.None);
 });
 
 var app = builder.Build();

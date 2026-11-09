@@ -3,3 +3,6 @@
 
 - name: Concepts
   href: concepts/toc.yml
+
+- name: Upgrading
+  href: upgrading/toc.yml

@@ -43,6 +43,7 @@ public sealed class PasskeyService
     internal PasskeyService(
         PasskeyOptions options, IShortLivedStore ceremonies, IPasskeyStore store, TimeProvider timeProvider, ILogger<PasskeyService> logger)
     {
+        options.Freeze();
         _options = options;
         _ceremonies = ceremonies;
         _store = store;
@@ -89,9 +90,11 @@ public sealed class PasskeyService
 
     /// <summary>
     /// Finishes a sign-in: verifies the credential, saves the values the passkey reported through <see cref="IPasskeyStore.UpdateAsync"/>, and returns
-    /// the passkey and its user. The app then signs the user in, or creates a sign-in code bound to <see cref="VerifiedPasskey.CodeChallenge"/> for the
-    /// client to redeem.
+    /// the passkey and its user.
     /// </summary>
+    /// <remarks>
+    /// The app then signs the user in, or creates a sign-in code bound to <see cref="VerifiedPasskey.CodeChallenge"/> for the client to redeem.
+    /// </remarks>
     /// <param name="ceremonyId">The ID of the ceremony started with <see cref="BeginSignInAsync"/>.</param>
     /// <param name="credentialJson">The credential the browser returned, as WebAuthn JSON (the <c>PublicKeyCredential.toJSON()</c> form).</param>
     /// <param name="codeVerifier">The PKCE code verifier, required if the sign-in was started with a code challenge and not allowed otherwise.</param>
@@ -218,7 +221,11 @@ public sealed class PasskeyService
 
             // The authenticator attachment is deliberately left open so that phones and security keys can hold passkeys too.
             AuthenticatorSelection = new AuthenticatorSelection {
-                ResidentKey = _options.RequireDiscoverableCredentials ? ResidentKeyRequirement.Required : ResidentKeyRequirement.Preferred,
+                ResidentKey = _options.DiscoverableCredentials switch {
+                    PasskeyRequirement.Required => ResidentKeyRequirement.Required,
+                    PasskeyRequirement.Preferred => ResidentKeyRequirement.Preferred,
+                    _ => ResidentKeyRequirement.Discouraged,
+                },
                 UserVerification = GetUserVerification(),
             },
             AttestationPreference = AttestationConveyancePreference.None,
@@ -232,9 +239,11 @@ public sealed class PasskeyService
     }
 
     /// <summary>
-    /// Finishes creating a passkey: verifies the new credential and returns its data, which the app then stores. The passkey is not stored by this
-    /// method.
+    /// Finishes creating a passkey: verifies the new credential and returns its data, which the app then stores.
     /// </summary>
+    /// <remarks>
+    /// The passkey is not stored by this method.
+    /// </remarks>
     /// <param name="userId">The user the passkey is being created for, who must be the user the registration was started for.</param>
     /// <param name="ceremonyId">The ID of the ceremony started with <see cref="BeginRegistrationAsync"/>.</param>
     /// <param name="credentialJson">The credential the browser returned, as WebAuthn JSON (the <c>PublicKeyCredential.toJSON()</c> form).</param>
@@ -289,9 +298,11 @@ public sealed class PasskeyService
     }
 
     /// <summary>
-    /// Finishes creating a passkey for the signed-in user: verifies the new credential and returns its data, which the app then stores. The passkey is not
-    /// stored by this method.
+    /// Finishes creating a passkey for the signed-in user: verifies the new credential and returns its data, which the app then stores.
     /// </summary>
+    /// <remarks>
+    /// The passkey is not stored by this method.
+    /// </remarks>
     /// <param name="user">The session token of the signed-in user, who must be the user the registration was started for, and whose
     /// <see cref="ISessionToken.UserId"/> identifies them.</param>
     /// <param name="ceremonyId">The ID of the ceremony started with <see cref="BeginRegistrationAsync"/>.</param>
@@ -436,7 +447,11 @@ public sealed class PasskeyService
 
     private UserVerificationRequirement GetUserVerification()
     {
-        return _options.RequireUserVerification ? UserVerificationRequirement.Required : UserVerificationRequirement.Preferred;
+        return _options.UserVerification switch {
+            PasskeyRequirement.Required => UserVerificationRequirement.Required,
+            PasskeyRequirement.Preferred => UserVerificationRequirement.Preferred,
+            _ => UserVerificationRequirement.Discouraged,
+        };
     }
 
     private Fido2 CreateFido2(string? clientOrigin)

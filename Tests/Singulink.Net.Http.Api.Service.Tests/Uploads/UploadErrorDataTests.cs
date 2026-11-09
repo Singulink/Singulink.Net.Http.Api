@@ -14,10 +14,13 @@ public sealed class UploadErrorDataTests
         UploadErrorData.TryGetMaxSize(UploadErrors.TooLarge(100), out long maxSize).ShouldBeTrue();
         maxSize.ShouldBe(100);
 
-        UploadErrorData.TryGetMaxUploadsPerUser(UploadErrors.LimitReached(3), out int maxUploadsPerUser).ShouldBeTrue();
+        UploadErrorData.TryGetMaxSize(UploadErrors.DirectTooLarge(5 << 20), out long maxDirectSize).ShouldBeTrue();
+        maxDirectSize.ShouldBe(5 << 20);
+
+        UploadErrorData.TryGetMaxUploadsPerUser(UploadErrors.LimitReached(3, TimeSpan.FromSeconds(1)), out int maxUploadsPerUser).ShouldBeTrue();
         maxUploadsPerUser.ShouldBe(3);
 
-        UploadErrorData.TryGetMaxTotalSizePerUser(UploadErrors.SizeLimitReached(1000), out long reached).ShouldBeTrue();
+        UploadErrorData.TryGetMaxTotalSizePerUser(UploadErrors.SizeLimitReached(1000, TimeSpan.FromSeconds(1)), out long reached).ShouldBeTrue();
         reached.ShouldBe(1000);
 
         UploadErrorData.TryGetMaxTotalSizePerUser(UploadErrors.ExceedsSizeLimit(2000), out long exceeded).ShouldBeTrue();

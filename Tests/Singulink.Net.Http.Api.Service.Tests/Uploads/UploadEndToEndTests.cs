@@ -16,15 +16,13 @@ namespace Singulink.Net.Http.Api.Service;
 /// servers that share a directory.
 /// </summary>
 [PrefixTestClass]
-public sealed class UploadEndToEndTests
+public sealed partial class UploadEndToEndTests
 {
     private const string Pattern = "/folders/{folderId}/files";
     private const string EndpointPath = "folders/5/files";
     private const int ChunkSize = 5 << 20;
 
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(20);
-
-    public sealed record Note(string Text);
 
     public sealed record FolderCommand(string Title);
 
@@ -130,12 +128,11 @@ public sealed class UploadEndToEndTests
 
         await using var host = await UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, HashAsync),
-            options => options.Directory = null,
             configureServices: services => services.AddSingleton<IUploadStore>(store));
 
         var faults = CreateFaults(host);
         var upload = UploadClient.Create(host, faults).UploadFileAsync<Note>(Source(file), options: Options(time));
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(2));
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(3));
 
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note($"file.bin {file.Length} {UploadTestHost.Hash(file)}"));
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "PUT 0", "POST complete"]);
@@ -241,16 +238,15 @@ public sealed class UploadEndToEndTests
     }
 
     [TestMethod]
-    public async Task CreationWhileAnEarlierOneWithTheKeyIsStillCreating_IsMadeAgainAfterItsRetryAfter()
+    public async Task CreationMadeAgainWhileTheFirstIsStillCreating_GetsTheSameUpload()
     {
         byte[] file = UploadTestHost.CreateFile(100);
-        var serverClock = new ManualClock(manualTimestamps: true);
         var time = new ManualTimeProvider(manualTimers: true);
-        var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bothValidating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var validated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int validations = 0;
 
-        await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, ValidateAsync, HashAsync), timeProvider: serverClock);
+        await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, ValidateAsync, HashAsync));
         var faults = CreateFaults(host);
 
         // The connection of the first creation drops while the service is still creating its upload.
@@ -258,29 +254,22 @@ public sealed class UploadEndToEndTests
         var client = UploadClient.Create(host, dropping);
 
         var upload = client.UploadFileAsync<Note>(Source(file), options: Options(time));
-        await validating.Task.WaitAsync(WaitTimeout);
 
-        // The creation made again waits for the first one's upload for 5 seconds, and then fails with a retry time of a second.
+        // The creation made again after a wait runs while the first one still does, and only one of them creates the upload.
         await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1));
-        await WaitUntilAsync(() => serverClock.HasTimerDueIn(TimeSpan.FromMilliseconds(100)));
-        serverClock.Advance(TimeSpan.FromSeconds(5));
-
-        await WaitUntilAsync(() => time.PendingTimerCount > 0);
+        await bothValidating.Task.WaitAsync(WaitTimeout);
         validated.SetResult();
-        (await dropping.DroppedResponse!.WaitAsync(WaitTimeout)).ShouldBe(HttpStatusCode.Created);
-
-        // The creation made after the retry time gets the upload that the first one created.
-        time.Advance(TimeSpan.FromSeconds(1));
 
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note($"file.bin {file.Length} {UploadTestHost.Hash(file)}"));
-        validations.ShouldBe(1);
+        validations.ShouldBe(2);
         CountUploads(host).ShouldBe(1);
-        Describe(faults).ShouldBe(["POST uploads", "POST uploads", "POST uploads", "PUT 0", "POST complete"]);
+        Describe(faults).ShouldBe(["POST uploads", "POST uploads", "PUT 0", "POST complete"]);
 
         async Task ValidateAsync(UploadRequest upload)
         {
-            Interlocked.Increment(ref validations);
-            validating.SetResult();
+            if (Interlocked.Increment(ref validations) is 2)
+                bothValidating.SetResult();
+
             await validated.Task.WaitAsync(WaitTimeout);
         }
     }
@@ -297,7 +286,7 @@ public sealed class UploadEndToEndTests
         var client = UploadClient.Create(host, faults);
 
         var upload = client.UploadFileAsync<Note>(Source(file), options: Options(time));
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(3));
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(4.5));
 
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note($"2 {UploadTestHost.Hash(file)}"));
         runs.ShouldBe(2);
@@ -316,14 +305,15 @@ public sealed class UploadEndToEndTests
     public async Task HandlerInterruptedByAShutdown_FailsTheUploadForGood()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         var dataProtection = new EphemeralDataProtectionProvider();
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int runs = 0;
 
         try
         {
-            await using var first = await StartAsync(directory, dataProtection, HandleAsync);
-            await using var second = await StartAsync(directory, dataProtection, HandleAsync);
+            await using var first = await StartAsync(directory, dataProtection, shortLivedStore, HandleAsync);
+            await using var second = await StartAsync(directory, dataProtection, shortLivedStore, HandleAsync);
 
             using var router = new RoutingHandler(first, second);
             var faults = new FaultInjectionHandler(router);
@@ -341,7 +331,9 @@ public sealed class UploadEndToEndTests
             ex.ErrorCode.ShouldBe(UploadErrorCodes.Interrupted);
             runs.ShouldBe(1);
             Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload"]);
-            CountUploads(second).ShouldBe(0);
+
+            // The abort finds the upload finished, and leaves its outcome.
+            CountUploads(second).ShouldBe(1);
         }
         finally
         {
@@ -378,7 +370,7 @@ public sealed class UploadEndToEndTests
     }
 
     [TestMethod]
-    public async Task HandlersError_IsThrownByTheUpload_AndTheUploadIsAborted()
+    public async Task HandlersError_IsThrownByTheUpload_AndTheAbortKeepsItsOutcome()
     {
         await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HandleAsync));
         var faults = CreateFaults(host);
@@ -389,7 +381,7 @@ public sealed class UploadEndToEndTests
 
         ex.Message.ShouldBe("The folder is read-only.");
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload"]);
-        CountUploads(host).ShouldBe(0);
+        CountUploads(host).ShouldBe(1);
 
         static Task<Note> HandleAsync(UploadedFile file) => throw new ForbiddenApiException("The folder is read-only.");
     }
@@ -437,7 +429,68 @@ public sealed class UploadEndToEndTests
     }
 
     [TestMethod]
-    public async Task Cancellation_AbortsTheUpload_WhichStopsTheHandler()
+    public async Task CancellationBeforeTheCompletion_ThrowsAtOnce_AndRemovesTheUpload()
+    {
+        using var cancellation = new CancellationTokenSource();
+        int runs = 0;
+
+        await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, (UploadedFile file) => {
+            Interlocked.Increment(ref runs);
+            return new Note("done");
+        }));
+
+        var faults = CreateFaults(host);
+        var client = UploadClient.Create(host, faults);
+        var progress = new CancellingProgress(p => p.BytesUploaded >= ChunkSize, cancellation);
+        byte[] file = UploadTestHost.CreateFile((2 * ChunkSize) + 100);
+
+        var upload = client.UploadFileAsync<Note>(Source(file), options: Options(progress: progress), cancellationToken: cancellation.Token);
+        await Should.ThrowAsync<OperationCanceledException>(() => upload.WaitAsync(WaitTimeout));
+
+        await WaitUntilAsync(() => CountUploads(host) is 0);
+        Describe(faults).ShouldNotContain("POST complete");
+        Describe(faults)[^1].ShouldBe("DELETE upload");
+        runs.ShouldBe(0);
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_OfAHandlerThatFinishesAnyway_ReturnsItsResult_AndItsOutcomeStays()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HandleAsync));
+        var faults = CreateFaults(host);
+        var client = UploadClient.Create(host, new PromptCancellationHandler(faults));
+
+        var upload = client.UploadFileAsync<Note>(Source(UploadTestHost.CreateFile(100)), cancellationToken: cancellation.Token);
+        await started.Task.WaitAsync(WaitTimeout);
+        await cancellation.CancelAsync();
+
+        // The cancellation stops the completion, and the completion made again once the service accepted the cancellation gets the handler's result.
+        (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note("saved"));
+        Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload", "POST complete"]);
+        CountUploads(host).ShouldBe(1);
+
+        // The handler is past its last check of its token when the upload is cancelled, and finishes all the same.
+        async Task<Note> HandleAsync(UploadedFile file, CancellationToken cancellationToken)
+        {
+            started.SetResult();
+
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            return new Note("saved");
+        }
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_CancelsTheUpload_WhichStopsTheHandler_AndThrowsOnceTheCompletionMadeAgainEnds()
     {
         using var cancellation = new CancellationTokenSource();
         var handlerCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -452,8 +505,8 @@ public sealed class UploadEndToEndTests
         });
 
         await handlerCancelled.Task.WaitAsync(WaitTimeout);
-        await WaitUntilAsync(() => CountUploads(host) is 0);
-        Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload"]);
+        CountUploads(host).ShouldBe(0);
+        Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload", "POST complete"]);
 
         async IAsyncEnumerable<Note> StreamAsync(UploadedFile file, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
@@ -476,6 +529,7 @@ public sealed class UploadEndToEndTests
     public async Task TwoServersSharingADirectory_TakeTheChunksAndTheCompletionsOfAnUpload()
     {
         string directory = UploadTestHost.CreateDirectoryPath();
+        var shortLivedStore = new DeclaredSharedShortLivedStore(new MemoryShortLivedStore(TimeProvider.System));
         byte[] file = UploadTestHost.CreateFile((2 * ChunkSize) + 100);
         var dataProtection = new EphemeralDataProtectionProvider();
         var time = new ManualTimeProvider(manualTimers: true);
@@ -485,8 +539,8 @@ public sealed class UploadEndToEndTests
 
         try
         {
-            await using var first = await StartAsync(directory, dataProtection, StreamAsync);
-            await using var second = await StartAsync(directory, dataProtection, StreamAsync);
+            await using var first = await StartAsync(directory, dataProtection, shortLivedStore, StreamAsync);
+            await using var second = await StartAsync(directory, dataProtection, shortLivedStore, StreamAsync);
 
             // The chunks go to the servers in turn. The first completion runs the handler on the first server and is cut off after the first item, and
             // the completion made again reaches the second server, which waits for the run's outcome.
@@ -543,11 +597,35 @@ public sealed class UploadEndToEndTests
     }
 
     /// <summary>
-    /// Starts a host whose uploads are in the specified directory, which another host shares, with the same data protection of session cookies.
+    /// Starts a host whose uploads are in the specified directory, which another host shares, with the same data protection of session cookies and the
+    /// same short-lived store.
     /// </summary>
-    private static Task<UploadTestHost> StartAsync(string directory, IDataProtectionProvider dataProtection, Delegate handler)
+    private static Task<UploadTestHost> StartAsync(
+        string directory, IDataProtectionProvider dataProtection, IShortLivedStore shortLivedStore, Delegate handler)
     {
-        return UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, handler), directory: directory, dataProtection: dataProtection);
+        return UploadTestHost.StartAsync(
+            app => app.MapChunkedUpload(Pattern, handler), directory: directory, dataProtection: dataProtection, shortLivedStore: shortLivedStore);
+    }
+
+    [TestMethod]
+    public async Task UploadOfAUserAtTheLimitOfOpenUploads_WaitsForTheRetryTime_UntilAnotherUploadEnds()
+    {
+        var time = new ManualTimeProvider(manualTimers: true);
+
+        await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, HashAsync), options => options.MaxUploadsPerUser = 1);
+        var open = await host.CreateUploadAsync("open.bin", 10);
+        var faults = CreateFaults(host);
+        var client = UploadClient.Create(host, faults);
+
+        var upload = client.UploadFileAsync<Note>(Source(UploadTestHost.CreateFile(100)), options: Options(time));
+
+        // The upload waits for the retry time of the service, a second raised by up to half, and the user's other upload ends meanwhile.
+        await WaitUntilAsync(() => time.PendingTimerCount > 0);
+        (await host.AbortAsync(open)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        time.Advance(TimeSpan.FromSeconds(1.5));
+
+        (await upload.WaitAsync(WaitTimeout)).Text.ShouldStartWith("file.bin 100 ");
+        Describe(faults).ShouldBe(["POST uploads", "POST uploads", "PUT 0", "POST complete"]);
     }
 
     private static FaultInjectionHandler CreateFaults(UploadTestHost host) => new(host.Web.App.GetTestServer().CreateHandler());
@@ -555,8 +633,12 @@ public sealed class UploadEndToEndTests
     private static UploadSource Source(byte[] file, string fileName = "file.bin", string? contentType = null) =>
         UploadSource.FromStream(new MemoryStream(file), fileName, contentType);
 
-    private static UploadOptions Options(ManualTimeProvider? time = null, IProgress<UploadProgress>? progress = null) =>
-        new() { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan };
+    /// <summary>
+    /// Gets the options of the uploads of the tests, without the timeouts that wait in real time.
+    /// </summary>
+    private static UploadOptions Options(ManualTimeProvider? time = null, IProgress<UploadProgress>? progress = null) => new() {
+        TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan,
+    };
 
     private static bool IsCreation(HttpRequestMessage request) =>
         request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/uploads", StringComparison.Ordinal);
@@ -569,7 +651,7 @@ public sealed class UploadEndToEndTests
 
     /// <summary>
     /// Describes the requests of an upload that a fault injection handler received: <c>POST uploads</c>, <c>PUT {chunk index}</c>, <c>GET upload</c>,
-    /// <c>POST complete</c> and <c>DELETE upload</c>, with their query strings without the user ID precondition.
+    /// <c>POST complete</c>, <c>DELETE upload</c> and <c>POST direct</c>, with their query strings without the user ID precondition.
     /// </summary>
     private static List<string> Describe(FaultInjectionHandler faults) => [.. faults.Requests.Select(Describe)];
 
@@ -580,6 +662,7 @@ public sealed class UploadEndToEndTests
 
         string what = request.Method == HttpMethod.Put ? $"PUT {request.ContentRange!.From / ChunkSize}" :
             uri.AbsolutePath.EndsWith("/uploads", StringComparison.Ordinal) ? $"{request.Method} uploads" :
+            uri.AbsolutePath.EndsWith("/uploads/direct", StringComparison.Ordinal) ? $"{request.Method} direct" :
             uri.AbsolutePath.EndsWith("/complete", StringComparison.Ordinal) ? $"{request.Method} complete" :
             $"{request.Method} upload";
 
@@ -587,13 +670,19 @@ public sealed class UploadEndToEndTests
     }
 
     /// <summary>
-    /// Counts the uploads in the directory of a host's store, including those that have an outcome.
+    /// Counts the uploads in the directory store: the open ones, by their records, and the finished ones, by their outcomes.
     /// </summary>
     private static int CountUploads(UploadTestHost host)
     {
+        if (!Directory.Exists(host.Directory))
+            return 0;
+
         // On Windows, a directory that is being removed cannot be listed for a moment.
         var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        return Directory.Exists(host.Directory) ? Directory.GetFiles(host.Directory, "upload.json", options).Length : 0;
+        int open = Directory.GetFiles(host.Directory, "upload.json", options).Length;
+        int finished = Directory.GetDirectories(host.Directory, "outcomes", options).Sum(d => Directory.GetFiles(d, "*.json").Length);
+
+        return open + finished;
     }
 
     private static async Task<List<T>> ReadAllAsync<T>(IAsyncEnumerable<T> items, List<T>? received = null)
@@ -625,6 +714,7 @@ public sealed class UploadEndToEndTests
 
     /// <summary>
     /// A client of the upload endpoint at <see cref="EndpointPath"/>, which sends its requests through a handler as user 1, with the user ID precondition.
+    /// A client of <see cref="Create"/> uploads in chunks, also small files: the service it sees has no direct uploads, as a 4.x service.
     /// </summary>
     private sealed class UploadClient : ApiClientBase
     {
@@ -643,9 +733,15 @@ public sealed class UploadEndToEndTests
         protected override string UserAgent => "TestClient/1.0";
 
         /// <summary>
+        /// Creates a client of the user's session on the host, whose direct uploads are answered with an empty <c>405</c>, as a 4.x service answers them,
+        /// before they reach the handler, so that it uploads in chunks after the direct upload, which the handler doesn't see.
+        /// </summary>
+        public static UploadClient Create(UploadTestHost host, HttpMessageHandler handler) => CreateWithDirectUploads(host, new NoDirectUploadsHandler(handler));
+
+        /// <summary>
         /// Creates a client of the user's session on the host.
         /// </summary>
-        public static UploadClient Create(UploadTestHost host, HttpMessageHandler handler)
+        public static UploadClient CreateWithDirectUploads(UploadTestHost host, HttpMessageHandler handler)
         {
             var cookie = new TestSessionCookie(new TestSessionToken(1, 1, 1), host.Clock.GetUtcNow().UtcDateTime, TimeSpan.FromDays(30), 0, true);
             var parent = new UploadClient(host.Web.App.GetTestServer().BaseAddress, handler, TestSessionCookies.Protect(host.Services, cookie));
@@ -670,6 +766,20 @@ public sealed class UploadEndToEndTests
         }
 
         protected override Uri GetBaseAddress() => _baseAddress ?? base.GetBaseAddress();
+    }
+
+    /// <summary>
+    /// Answers direct uploads with an empty <c>405</c>, as a service without them, and sends the other requests on.
+    /// </summary>
+    private sealed class NoDirectUploadsHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath.EndsWith("/uploads/direct", StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed) { RequestMessage = request });
+
+            return base.SendAsync(request, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -744,6 +854,29 @@ public sealed class UploadEndToEndTests
         }
     }
 
+    /// <summary>
+    /// Ends a request at once when its cancellation token is cancelled, as a client's connection does, also before the response starts, which the test
+    /// server waits for until the service answers: the service keeps a completion open while its handler runs.
+    /// </summary>
+    private sealed class PromptCancellationHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var sending = base.SendAsync(request, cancellationToken);
+            var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            using (cancellationToken.Register(() => cancelled.TrySetResult()))
+            {
+                if (await Task.WhenAny(sending, cancelled.Task) == sending)
+                    return await sending;
+            }
+
+            // The response, if one comes, is not read.
+            _ = sending.ContinueWith(t => t.Result.Dispose(), CancellationToken.None, TaskContinuationOptions.OnlyOnRanToCompletion, TaskScheduler.Default);
+            throw new OperationCanceledException(cancellationToken);
+        }
+    }
+
     private sealed class ProgressRecorder : IProgress<UploadProgress>
     {
         private readonly List<UploadProgress> _reports = [];
@@ -764,6 +897,6 @@ public sealed class UploadEndToEndTests
     }
 }
 
-[JsonSerializable(typeof(UploadEndToEndTests.Note))]
+[JsonSerializable(typeof(Note))]
 [JsonSerializable(typeof(UploadEndToEndTests.FolderCommand))]
 internal sealed partial class UploadEndToEndJsonContext : JsonSerializerContext;

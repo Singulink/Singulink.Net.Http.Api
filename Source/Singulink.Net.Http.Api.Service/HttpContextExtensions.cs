@@ -43,9 +43,11 @@ public static class HttpContextExtensions
     /// <summary>
     /// Gets the device that is making the request, as session handling records it (see <see cref="SessionContext{TSessionToken}.Device"/>): the platform,
     /// name and version of the browser or app from the <c>User-Agent</c> header if they can be identified, otherwise the header itself, shortened to
-    /// <see cref="SessionHandlingOptions.MaxDeviceLength"/>. The device is read the first time and kept for the rest of the request, or of the SignalR
-    /// connection that the request established.
+    /// <see cref="SessionHandlingOptions.MaxDeviceLength"/>.
     /// </summary>
+    /// <remarks>
+    /// The device is read the first time and kept for the rest of the request, or of the SignalR connection that the request established.
+    /// </remarks>
     /// <exception cref="BadRequestApiException">The request has no <c>User-Agent</c> header, or an empty one
     /// (<see cref="ApiErrorCodes.UserAgentRequired"/>).</exception>
     public static string GetClientDevice(this HttpContext httpContext)
@@ -86,9 +88,11 @@ public static class HttpContextExtensions
     }
 
     /// <summary>
-    /// Gets the session context from the HTTP context, or <see langword="null"/> if session handling is not registered. The context is created the first time
-    /// and kept for the rest of the request, or of the SignalR connection that the request established.
+    /// Gets the session context from the HTTP context, or <see langword="null"/> if session handling is not registered.
     /// </summary>
+    /// <remarks>
+    /// The context is created the first time and kept for the rest of the request, or of the SignalR connection that the request established.
+    /// </remarks>
     /// <exception cref="InvalidOperationException">The HTTP context's items hold another object under the session context's key.</exception>
     public static SessionContext<TSessionToken>? GetSessionContext<TSessionToken>(this HttpContext httpContext)
         where TSessionToken : class, ISessionToken
@@ -119,8 +123,11 @@ public static class HttpContextExtensions
     }
 
     /// <summary>
-    /// Gets the session token from the HTTP context. If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
+    /// Gets the session token from the HTTP context.
     /// </summary>
+    /// <remarks>
+    /// If the user is not signed in, throws an <see cref="UnauthorizedApiException"/>.
+    /// </remarks>
     public static async ValueTask<TSessionToken> GetRequiredSessionTokenAsync<TSessionToken>(
         this HttpContext httpContext, SessionAccessOptions options = default)
         where TSessionToken : class, ISessionToken

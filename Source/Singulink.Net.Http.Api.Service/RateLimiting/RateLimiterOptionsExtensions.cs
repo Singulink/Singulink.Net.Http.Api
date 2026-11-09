@@ -1,5 +1,6 @@
 using System.Net;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.RateLimiting;
 
 namespace Singulink.Net.Http.Api.Service;
@@ -14,9 +15,11 @@ public static class RateLimiterOptionsExtensions
     /// <summary>
     /// Adds a configuration that applies to the per-client limits that are added to the options after it (see
     /// <see cref="AddClientFixedWindowLimiter(RateLimiterOptions, string, Action{ClientRateLimitOptions})"/> and
-    /// <see cref="SetClientFixedWindowGlobalLimiter(RateLimiterOptions, Action{ClientRateLimitOptions})"/>), before the configuration of each limit. Several
-    /// configurations run in the order they are added.
+    /// <see cref="SetClientFixedWindowGlobalLimiter(RateLimiterOptions, Action{ClientRateLimitOptions})"/>), before the configuration of each limit.
     /// </summary>
+    /// <remarks>
+    /// Several configurations run in the order they are added.
+    /// </remarks>
     /// <param name="options">The rate limiter options.</param>
     /// <param name="configure">An action to configure the options of every limit, such as binding them from a configuration section.</param>
     public static RateLimiterOptions ConfigureClientLimits(this RateLimiterOptions options, Action<ClientRateLimitOptions> configure)
@@ -26,8 +29,7 @@ public static class RateLimiterOptionsExtensions
     }
 
     /// <summary>
-    /// Adds a rate limiting policy that allows each client address a fixed number of requests per window. Apply it to endpoints with
-    /// <see cref="RateLimiterEndpointConventionBuilderExtensions.RequireRateLimiting{TBuilder}(TBuilder, string)"/>.
+    /// Adds a rate limiting policy that allows each client address a fixed number of requests per window.
     /// </summary>
     /// <param name="options">The rate limiter options.</param>
     /// <param name="policyName">The name of the policy.</param>
@@ -49,15 +51,15 @@ public static class RateLimiterOptionsExtensions
     }
 
     /// <summary>
-    /// Adds a rate limiting policy that allows each client address a fixed number of requests per window. Apply it to endpoints with
-    /// <see cref="RateLimiterEndpointConventionBuilderExtensions.RequireRateLimiting{TBuilder}(TBuilder, string)"/>.
+    /// Adds a rate limiting policy that allows each client address a fixed number of requests per window.
     /// </summary>
     /// <param name="options">The rate limiter options.</param>
     /// <param name="policyName">The name of the policy.</param>
     /// <param name="configure">An action to configure the limit. <see cref="ClientRateLimitOptions.PermitLimit"/> must be set.</param>
     /// <remarks>
     /// <para>
-    /// See <see cref="ClientRateLimitOptions"/> for how clients are identified and which clients are exempt. The configurations added with
+    /// Apply it to endpoints with <see cref="RateLimiterEndpointConventionBuilderExtensions.RequireRateLimiting{TBuilder}(TBuilder, string)"/>. See
+    /// <see cref="ClientRateLimitOptions"/> for how clients are identified and which clients are exempt. The configurations added with
     /// <see cref="ConfigureClientLimits"/> before this call run before <paramref name="configure"/>.
     /// </para>
     /// <para>
@@ -69,7 +71,7 @@ public static class RateLimiterOptionsExtensions
     /// <exception cref="FormatException">An entry in <see cref="ClientRateLimitOptions.ExemptNetworks"/> is not a valid address or network.</exception>
     public static RateLimiterOptions AddClientFixedWindowLimiter(this RateLimiterOptions options, string policyName, Action<ClientRateLimitOptions> configure)
     {
-        var partitioner = ClientRateLimitPartitioner.Create(options, configure, $"{ShortLivedKeys.RateLimit}{policyName}:", isGlobal: false);
+        var partitioner = ClientRateLimitPartitioner.Create(options, configure, policyName, $"{ShortLivedKeys.RateLimit}{policyName}:");
         SetDefaultRejectionResponse(options);
 
         return options.AddPolicy(policyName, partitioner.GetPartition);
@@ -116,7 +118,7 @@ public static class RateLimiterOptionsExtensions
     /// <exception cref="FormatException">An entry in <see cref="ClientRateLimitOptions.ExemptNetworks"/> is not a valid address or network.</exception>
     public static RateLimiterOptions SetClientFixedWindowGlobalLimiter(this RateLimiterOptions options, Action<ClientRateLimitOptions> configure)
     {
-        var partitioner = ClientRateLimitPartitioner.Create(options, configure, ShortLivedKeys.GlobalRateLimit, isGlobal: true);
+        var partitioner = ClientRateLimitPartitioner.Create(options, configure, null, ShortLivedKeys.GlobalRateLimit);
         options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, IPAddress>(partitioner.GetPartition);
         SetDefaultRejectionResponse(options);
 
@@ -127,15 +129,19 @@ public static class RateLimiterOptionsExtensions
     /// Configures rejected requests to receive a <see cref="TooManyRequestsApiException"/> response in the toolkit's error format, with the
     /// <see cref="ApiErrorCodes.RateLimited"/> error code, so that clients built with the toolkit report it like any other API error. A request that a
     /// per-client limit with a <see cref="ClientRateLimitOptions.RejectionMessage"/> rejects receives that message.
-    /// <see cref="ApiException.RetryAfter"/> is set when the limiter reports how long the client should wait, which for the per-client limits is the time
-    /// until the next window starts. A request that a per-client limit could not count because the short-lived store threw a <see
-    /// cref="ServiceUnavailableApiException"/>, such as a full <see cref="MemoryShortLivedStore"/>, receives that exception instead.
     /// </summary>
     /// <param name="options">The rate limiter options.</param>
     /// <param name="message">The message reported to the client for the limits without a message of their own, or <see langword="null"/> to use a default
     /// message.</param>
     /// <remarks>
+    /// <para>
+    /// <see cref="ApiException.RetryAfter"/> is set when the limiter reports how long the client should wait, which for the per-client limits is the time
+    /// until the next window starts. A request that a per-client limit could not count because the short-lived store threw a
+    /// <see cref="ServiceUnavailableApiException"/>, such as a full <see cref="MemoryShortLivedStore"/>, receives that exception instead.
+    /// </para>
+    /// <para>
     /// This replaces <see cref="RateLimiterOptions.OnRejected"/> and sets <see cref="RateLimiterOptions.RejectionStatusCode"/>.
+    /// </para>
     /// </remarks>
     public static RateLimiterOptions SetApiRejectionResponse(this RateLimiterOptions options, string? message = null)
     {

@@ -21,6 +21,7 @@ Errors travel between service and client as typed exceptions. This guide covers 
 | <xref:Singulink.Net.Http.Api.ValidationApiException> | 422 | Input failed validation. |
 | <xref:Singulink.Net.Http.Api.UserRequiredApiException> | 428 | The user ID precondition is missing. |
 | <xref:Singulink.Net.Http.Api.TooManyRequestsApiException> | 429 | The client sent too many requests or attempts. |
+| <xref:Singulink.Net.Http.Api.HeadersTooLargeApiException> | 431 | A request header, or the headers together, are larger than the service accepts. |
 | <xref:Singulink.Net.Http.Api.ServerErrorApiException> | 500 | Unexpected failure, reported with a reference ID. |
 | <xref:Singulink.Net.Http.Api.ServiceUnavailableApiException> | 503 | The service cannot handle requests at the moment. |
 
@@ -53,7 +54,7 @@ throw new TooManyRequestsApiException("Too many attempts. Please try again in a 
 };
 ```
 
-<xref:Singulink.Net.Http.Api.Service.ApiExceptionMiddleware>, installed by <xref:Singulink.Net.Http.Api.Service.WebApplicationExtensions.UseApiResponseHandling*>, catches exceptions from endpoints and writes the error response. Exceptions thrown after a streaming response has started are reported inside the stream instead; see [Streaming Responses](streaming-responses.md).
+<xref:Singulink.Net.Http.Api.Service.ApiExceptionMiddleware>, installed by <xref:Singulink.Net.Http.Api.Service.WebApplicationExtensions.UseApiResponseHandling*>, catches exceptions from endpoints and writes the error response. Exceptions thrown after a streaming response has started are reported inside the stream instead; see [Streaming Responses](streaming-responses.md). When the client has aborted the request before the response started, an <xref:System.OperationCanceledException> or <xref:System.IO.IOException> (which includes <xref:Microsoft.AspNetCore.Http.BadHttpRequestException>) propagates as it is, without the <xref:Singulink.Net.Http.Api.Service.IApiExceptionHandler> being called, and the server doesn't log it as an error. Any other exception is still resolved, through the handler if one is registered: one that resolves to an API error, whether it is an <xref:Singulink.Net.Http.Api.ApiException> or is mapped to one by the handler or the built-in mappings, ends the request without a response, since nobody can receive it, and neither the middleware nor the server logs it (the handler itself can, as the default handler does for an unexpected exception); the rest propagate to the server, which logs them.
 
 <xref:Singulink.Net.Http.Api.Service.HttpResponseExtensions.WriteApiErrorAsync*> writes an <xref:Singulink.Net.Http.Api.ApiException> to a response in the same format, `Retry-After` header included, without throwing it. The toolkit's [rate limit](rate-limiting.md) rejections and its [Cloudflare](cloudflare.md) middleware write their errors with it.
 
@@ -199,26 +200,32 @@ The errors that the toolkit reports itself carry an error code. The codes are co
 | `passkey-wrong-account` | <xref:Singulink.Net.Http.Api.PasskeyErrorCodes.WrongAccount> | 401 or 422 | The passkey is registered to a different user than the one a sign-in or verification is for. |
 | `passkey-verification-failed` | <xref:Singulink.Net.Http.Api.PasskeyErrorCodes.VerificationFailed> | 401 or 422 | A credential fails verification. |
 | `passkey-already-registered` | <xref:Singulink.Net.Http.Api.PasskeyErrorCodes.AlreadyRegistered> | 409 | A new passkey is already registered. |
-| `upload-invalid` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Invalid> | 400 | The file name, length, content type, chunk size, idempotency key or command of an upload's creation is not valid, or the command is missing where the endpoint requires one (see [Chunked Uploads](uploads.md)). |
-| `upload-creation-unreadable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationUnreadable> | 400 | The body of an upload's creation cannot be read as a creation. |
+| `upload-invalid` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Invalid> | 400 | The ID, file name, length, content type, chunk size, idempotency key or command of an upload's creation or direct upload is not valid, or the command is missing where the endpoint requires one (see [Chunked Uploads](uploads.md)). |
+| `upload-creation-unreadable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationUnreadable> | 400 | The body of an upload's creation, or the creation header of a direct upload, cannot be read as a creation. |
 | `upload-creation-not-json` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationNotJson> | 415 | The body of an upload's creation is not JSON. |
-| `upload-creation-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationTooLarge> | 413 | The body of an upload's creation is larger than 64 KiB. |
-| `upload-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.TooLarge> | 413 | An upload is larger than its endpoint allows, or would need more chunks than the service allows at its largest chunk size. |
+| `upload-creation-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationTooLarge> | 413 | The body of an upload's creation is larger than 64 KiB, or than a smaller request size limit of the server. |
+| `upload-creation-header-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationHeaderTooLarge> | 431 | The creation header of a direct upload is larger than 8 KiB. |
+| `upload-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.TooLarge> | 413 | An upload is larger than its endpoint's largest upload or <xref:Singulink.Net.Http.Api.Service.Uploads.ChunkedUploadOptions.MaxTotalSize> allows, or would need more chunks than the service allows at its largest chunk size. |
 | `upload-exceeds-size-limit` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.ExceedsSizeLimit> | 413 | An upload is larger than the open uploads of a user can be together, so it can never be created. |
-| `upload-limit-reached` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.LimitReached> | 429 | A user who creates an upload already has the most open uploads that the service allows. |
-| `upload-size-limit-reached` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.SizeLimitReached> | 429 | The open uploads of a user who creates an upload would together be longer than the service allows for a user. |
+| `upload-direct-too-large` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.DirectTooLarge> | 413 | A direct upload, which uploads a file in one request, is larger than the largest chunk of the service. The file can still be uploaded in chunks. |
+| `upload-limit-reached` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.LimitReached> | 429 | A user who creates an upload already has the most open uploads that the service allows. With a `Retry-After` of a second. |
+| `upload-size-limit-reached` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.SizeLimitReached> | 429 | The open uploads of a user who creates an upload would together be longer than the service allows for a user. With a `Retry-After` of a second. |
 | `upload-storage-full` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.StorageFull> | 503 | The open uploads have reached their total size limit, or the upload store has no room for a new upload. |
-| `upload-key-conflict` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.KeyConflict> | 409 | The idempotency key of an upload's creation is the key of another upload of the user. |
-| `upload-creation-pending` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationPending> | 503 | An earlier creation with the idempotency key of an upload's creation has not created its upload yet, or a stale reservation of the key can't be released yet. |
-| `upload-not-found` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.NotFound> | 404 | An upload is unknown, expired or aborted, or belongs to another user, endpoint or route values. |
-| `upload-chunk-invalid` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.ChunkInvalid> | 400 | A chunk's `Content-Range` is missing or does not cover exactly one chunk of its upload, or its body's length differs from it. |
+| `upload-id-conflict` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.IdConflict> | 409 | The ID of an upload's creation is the ID of another upload of the user. |
+| `upload-key-conflict` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.KeyConflict> | 409 | The idempotency key of a 4.x client's creation is the key of another upload of the user. |
+| `upload-creation-pending` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CreationPending> | 503 | An upload of the user with the ID of a creation is still being removed. With a `Retry-After` of a second. |
+| `upload-not-found` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.NotFound> | 404 | An upload is unknown, expired or cancelled, or belongs to another user, endpoint or route values. |
+| `upload-chunk-invalid` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.ChunkInvalid> | 400 | A chunk's `Content-Range` is missing or does not cover exactly one chunk of its upload, its body's length differs from it, or the length of a direct upload's body differs from its creation's. |
 | `upload-closed` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Closed> | 409 | A chunk arrives for an upload whose handler is running or has finished. |
 | `upload-incomplete` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Incomplete> | 409 | An upload is completed while chunks of it are missing. |
 | `upload-query-mismatch` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.QueryMismatch> | 409 | The completion of an upload has another query string than its creation, other than the user ID precondition. |
 | `upload-server-stopping` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.ServerStopping> | 503 | The server that a completion reached is stopping, while the completion waits for the handler that runs on another server or before it starts the handler. |
 | `upload-store-unavailable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.StoreUnavailable> | 503 | The store of uploads failed, such as a share that the service could not reach for a moment. |
+| `upload-cancelled` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Cancelled> | 409 | An upload was cancelled while its handler ran, or before it started, and the handler didn't finish. Ends the completions attached to the run. |
+| `upload-finished` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Finished> | 409 | An upload that is cancelled has finished, and its outcome is kept. |
+| `upload-cancellation-unavailable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.CancellationUnavailable> | 503 | The cancellation of an upload could not be written or read in the short-lived store, such as one that could not be reached for a moment. With a `Retry-After` of 2 seconds. |
 | `upload-interrupted` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.Interrupted> | 500 | An upload's handler stopped before it finished, because the service stopped or failed, its server lost the claim of its run, or it ran past its time limit. This is the upload's final outcome. |
-| `upload-outcome-unreadable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.OutcomeUnreadable> | 500 | An upload's stored outcome cannot be read, such as a file of the directory store that was damaged. This is the upload's final outcome. |
+| `upload-outcome-unreadable` | <xref:Singulink.Net.Http.Api.UploadErrorCodes.OutcomeUnreadable> | 500 | An upload's stored outcome cannot be read, such as one that a server left partly written when it stopped while it stored it. This is the upload's final outcome. |
 
 Passkey errors are `401` in a sign-in and `422` in a verification or registration, which runs in a signed-in session. A verification for a user without passkeys and a passkey that is already registered are `409`. An interrupted upload is a `500`, which is not a transient failure (see <xref:Singulink.Net.Http.Api.Client.ApiFailures.IsTransient*?displayProperty=nameWithType>), since the upload's handler does not run again. Other errors that the toolkit reports, such as a request that cannot be read or a user ID precondition that does not match, are told apart by their status and have no error code.
 

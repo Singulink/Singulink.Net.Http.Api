@@ -583,6 +583,7 @@ public sealed class StreamingResponseTests
     [DataRow(422, typeof(ValidationApiException))]
     [DataRow(428, typeof(UserRequiredApiException))]
     [DataRow(429, typeof(TooManyRequestsApiException))]
+    [DataRow(431, typeof(HeadersTooLargeApiException))]
     [DataRow(500, typeof(ServerErrorApiException))]
     [DataRow(503, typeof(ServiceUnavailableApiException))]
     [DataRow(418, typeof(ApiException))]

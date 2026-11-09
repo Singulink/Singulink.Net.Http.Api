@@ -32,9 +32,11 @@ public sealed class PasskeyCredential
 
     /// <summary>
     /// Creates a credential from its WebAuthn JSON (the <c>PublicKeyCredential.toJSON()</c> form), with the attachment that its
-    /// <c>authenticatorAttachment</c> property reports, or <see cref="PasskeyAttachment.Unknown"/> if it reports none or the JSON can't be read. The JSON
-    /// is not validated; the service validates the credential.
+    /// <c>authenticatorAttachment</c> property reports, or <see cref="PasskeyAttachment.Unknown"/> if it reports none or the JSON can't be read.
     /// </summary>
+    /// <remarks>
+    /// The JSON is not validated; the service validates the credential.
+    /// </remarks>
     /// <param name="json">The credential as WebAuthn JSON.</param>
     public static PasskeyCredential FromJson(string json) => new(json, ReadAttachment(json));
 

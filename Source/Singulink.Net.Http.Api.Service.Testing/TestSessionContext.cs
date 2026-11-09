@@ -58,7 +58,8 @@ public class TestSessionContext<TSessionToken> : SessionContext<TSessionToken>
     public bool IsOriginAllowed { get; set; } = true;
 
     /// <summary>
-    /// Gets the session handling options: the forced access options of token retrievals, and the expiries and maximum lifetimes of sign-ins.
+    /// Gets the session handling options: the forced access options of token retrievals, and the expiries and maximum lifetimes of sign-ins. Default is a
+    /// new <see cref="SessionHandlingOptions"/>, with the defaults of its properties.
     /// </summary>
     public SessionHandlingOptions Options { get; init; } = new();
 

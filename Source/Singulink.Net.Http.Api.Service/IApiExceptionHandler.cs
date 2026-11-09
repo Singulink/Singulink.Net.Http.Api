@@ -10,6 +10,12 @@ namespace Singulink.Net.Http.Api.Service;
 /// <see cref="ServiceCollectionExtensions.AddApiExceptionHandler(IServiceCollection)"/> or derived from to add application-specific mappings. If no handler is
 /// registered, <see cref="ApiException"/> instances are reported as-is and other exceptions propagate through the request pipeline (or, for streaming
 /// responses that have already started, are reported as a generic server error, with details included only in development environments).
+/// <para>
+/// For a request that the client has aborted before the response started, <see cref="ApiExceptionMiddleware"/> calls the handler for every exception except
+/// an <see cref="OperationCanceledException"/> or <see cref="IOException"/> (which includes <see cref="BadHttpRequestException"/>), which propagate as they
+/// are. When such a request's exception resolves to an <see cref="ApiException"/>, nothing is written to the response and neither the middleware nor the
+/// server logs it.
+/// </para>
 /// </remarks>
 public interface IApiExceptionHandler
 {

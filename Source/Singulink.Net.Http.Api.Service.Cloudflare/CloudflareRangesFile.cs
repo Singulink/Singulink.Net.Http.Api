@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Singulink.IO;
 
 namespace Singulink.Net.Http.Api.Service;
 
@@ -15,12 +16,12 @@ internal static class CloudflareRangesFile
     public const string EndLine = "# end";
 
     /// <summary>
-    /// Reads the file. Throws <see cref="FileNotFoundException"/> or <see cref="DirectoryNotFoundException"/> if it does not exist, and <see
-    /// cref="InvalidDataException"/> if it is not a complete list.
+    /// Reads the file. Throws <see cref="FileNotFoundException"/> or <see cref="DirectoryNotFoundException"/> if it does not exist, and
+    /// <see cref="InvalidDataException"/> if it is not a complete list.
     /// </summary>
-    public static async Task<(IPNetwork[] Networks, DateTimeOffset SavedAt)> ReadAsync(string path, CancellationToken cancellationToken)
+    public static async Task<(IPNetwork[] Networks, DateTimeOffset SavedAt)> ReadAsync(IAbsoluteFilePath file, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0, useAsync: true);
+        await using var stream = file.OpenAsyncStream(FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0);
 
         // Files created by hand have nothing but the ranges, so the date of the list is the time the file was last written. It is read from the open file
         // so that it always belongs to the contents that are read.
@@ -35,10 +36,10 @@ internal static class CloudflareRangesFile
     /// <summary>
     /// Replaces the file in a single step, so that readers see the previous file or the new one but never a partly written one, even after a power loss.
     /// </summary>
-    public static async Task WriteAsync(string path, IPNetwork[] networks, CancellationToken cancellationToken)
+    public static async Task WriteAsync(IAbsoluteFilePath file, IPNetwork[] networks, CancellationToken cancellationToken)
     {
         // Unique, so that processes that save to the same file (such as servers that share it on a network) never write to the same temporary file.
-        string tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        var tempFile = file.ParentDirectory.CombineFile($"{file.Name}.{Guid.NewGuid():N}.tmp", PathOptions.None);
 
         var builder = new StringBuilder();
 
@@ -50,10 +51,9 @@ internal static class CloudflareRangesFile
 
         try
         {
-            if (Path.GetDirectoryName(path) is { Length: > 0 } directory)
-                Directory.CreateDirectory(directory);
+            file.ParentDirectory.Create();
 
-            await using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0, useAsync: true))
+            await using (var stream = tempFile.OpenAsyncStream(FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0))
             {
                 await stream.WriteAsync(contents, cancellationToken);
 
@@ -61,22 +61,22 @@ internal static class CloudflareRangesFile
                 stream.Flush(flushToDisk: true);
             }
 
-            await ReplaceAsync(tempPath, path, cancellationToken);
+            await ReplaceAsync(tempFile, file, cancellationToken);
         }
         catch
         {
-            TryDelete(tempPath);
+            TryDelete(tempFile);
             throw;
         }
 
         // On Windows, a file cannot be replaced while another process reads it (such as another server that shares it), but reads only take a moment.
-        static async Task ReplaceAsync(string tempPath, string path, CancellationToken cancellationToken)
+        static async Task ReplaceAsync(IAbsoluteFilePath tempFile, IAbsoluteFilePath file, CancellationToken cancellationToken)
         {
             for (int attempt = 1; ; attempt++)
             {
                 try
                 {
-                    File.Move(tempPath, path, overwrite: true);
+                    tempFile.MoveTo(file, overwrite: true);
                     return;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < 10)
@@ -86,11 +86,11 @@ internal static class CloudflareRangesFile
             }
         }
 
-        static void TryDelete(string path)
+        static void TryDelete(IAbsoluteFilePath file)
         {
             try
             {
-                File.Delete(path);
+                file.Delete();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {

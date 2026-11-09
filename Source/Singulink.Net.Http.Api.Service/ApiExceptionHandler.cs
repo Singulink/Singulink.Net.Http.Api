@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Hosting;
+
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
@@ -54,15 +56,21 @@ public abstract class ApiExceptionHandler : IApiExceptionHandler
     /// <summary>
     /// Maps an exception that is an <see cref="ApiException"/>, such as an error of the toolkit with an error code (see <see cref="ApiException.ErrorCode"/>),
     /// to the <see cref="ApiException"/> that is reported, such as one with a message of the application's own. The default implementation returns the
-    /// exception as it is. <see cref="MapAsync"/> is not called for such an exception.
+    /// exception as it is.
     /// </summary>
+    /// <remarks>
+    /// <see cref="MapAsync"/> is not called for such an exception.
+    /// </remarks>
     protected virtual ValueTask<ApiException> MapApiExceptionAsync(HttpContext httpContext, ApiException exception) => new(exception);
 
     /// <summary>
     /// Maps application-specific exceptions to the <see cref="ApiException"/> that should be reported to the client (e.g. validation library exceptions to a
-    /// <see cref="ValidationApiException"/>). Returns <see langword="null"/> (the default) if the exception is not recognized, in which case a
-    /// <see cref="BadHttpRequestException"/> is reported with its status code and other exceptions are treated as unexpected.
+    /// <see cref="ValidationApiException"/>). Returns <see langword="null"/> (the default) if the exception is not recognized.
     /// </summary>
+    /// <remarks>
+    /// For an exception that is not recognized, a <see cref="BadHttpRequestException"/> is reported with its status code and other exceptions are treated
+    /// as unexpected.
+    /// </remarks>
     protected virtual ValueTask<ApiException?> MapAsync(HttpContext httpContext, Exception exception) => default;
 
     /// <summary>

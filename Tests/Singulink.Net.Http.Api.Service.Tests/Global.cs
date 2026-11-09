@@ -2,6 +2,7 @@ global using System.Net;
 global using Microsoft.AspNetCore.Http;
 global using PrefixClassName.MsTest;
 global using Shouldly;
+global using Singulink.IO;
 global using Singulink.Net.Http.Api;
 global using Singulink.Net.Http.Api.Service.SignIn;
 

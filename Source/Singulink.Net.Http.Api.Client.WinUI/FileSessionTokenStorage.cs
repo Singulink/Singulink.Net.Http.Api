@@ -1,6 +1,7 @@
 #if !__WASM__ && !__ANDROID__ && !__IOS__
 using System.Security.Cryptography;
 using System.Text;
+using Singulink.IO;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -10,13 +11,13 @@ namespace Singulink.Net.Http.Api.Client;
 /// </summary>
 internal static class FileSessionTokenStorage
 {
-    public static string? Read(string path)
+    public static string? Read(IAbsoluteFilePath file)
     {
         byte[] stored;
 
         try
         {
-            stored = File.ReadAllBytes(path);
+            stored = File.ReadAllBytes(file.PathExport);
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -33,17 +34,17 @@ internal static class FileSessionTokenStorage
         catch (CryptographicException)
         {
             // A token that isn't encrypted for this user, such as one restored from another device, can't be used.
-            File.Delete(path);
+            file.Delete();
             return null;
         }
     }
 
-    public static void Write(string path, string? token)
+    public static void Write(IAbsoluteFilePath file, string? token)
     {
         if (token is null)
         {
-            if (File.Exists(path))
-                File.Delete(path);
+            if (file.Exists)
+                file.Delete();
 
             return;
         }
@@ -53,12 +54,12 @@ internal static class FileSessionTokenStorage
         if (OperatingSystem.IsWindows())
             data = ProtectedData.Protect(data, null, DataProtectionScope.CurrentUser);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        file.ParentDirectory.Create();
 
         // The file is replaced as a whole, so that a write that fails keeps the token that was stored before.
-        string tempPath = path + ".tmp";
-        File.WriteAllBytes(tempPath, data);
-        File.Move(tempPath, path, overwrite: true);
+        var tempFile = file.ParentDirectory.CombineFile(file.Name + ".tmp", PathOptions.None);
+        File.WriteAllBytes(tempFile.PathExport, data);
+        tempFile.MoveTo(file, overwrite: true);
     }
 }
 #endif

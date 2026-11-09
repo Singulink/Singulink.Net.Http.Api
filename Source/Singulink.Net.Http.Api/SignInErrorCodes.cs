@@ -7,27 +7,36 @@ namespace Singulink.Net.Http.Api;
 public static class SignInErrorCodes
 {
     /// <summary>
-    /// The sign-in code is unknown, expired or already used, or the code verifier does not match it, so the user signs in again. Thrown as an
-    /// <see cref="UnauthorizedApiException"/> by <c>SignInCodes.SignInAsync</c>.
+    /// The sign-in code is unknown, expired or already used, or the code verifier does not match it, so the user signs in again.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> by <c>SignInCodes.SignInAsync</c>.
+    /// </remarks>
     public const string SignInCodeInvalid = "sign-in-code-invalid";
 
     /// <summary>
-    /// The user entered too many wrong device link codes and must wait before trying again. Thrown as a <see cref="TooManyRequestsApiException"/> by
-    /// <c>DeviceLinks.FindAsync</c> and <c>DeviceLinks.ApproveAsync</c>.
+    /// The user entered too many wrong device link codes and must wait before trying again.
     /// </summary>
+    /// <remarks>
+    /// Thrown as a <see cref="TooManyRequestsApiException"/> by <c>DeviceLinks.FindAsync</c> and <c>DeviceLinks.ApproveAsync</c>.
+    /// </remarks>
     public const string DeviceLinkTooManyWrongCodes = "device-link-too-many-wrong-codes";
 
     /// <summary>
-    /// The device link is unknown or expired, or the poll secret is wrong, so the new device starts a new link. Thrown as an
-    /// <see cref="UnauthorizedApiException"/> by <c>DeviceLinks.CheckAsync</c>. On the client, <c>DeviceLinkWaiter.WaitForApprovalAsync</c> ends its wait by
-    /// throwing it.
+    /// The device link is unknown or expired, or the poll secret is wrong, so the new device starts a new link.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> by <c>DeviceLinks.CheckAsync</c>. On the client, <c>DeviceLinkWaiter.WaitForApprovalAsync</c>
+    /// ends its wait by throwing it.
+    /// </remarks>
     public const string DeviceLinkExpired = "device-link-expired";
 
     /// <summary>
-    /// The PKCE code challenge is missing or malformed. Thrown as a <see cref="BadRequestApiException"/> by <c>PkceChallenge.EnsureValid</c>, and so by
-    /// <c>SignInCodes.CreateAsync</c>, <c>DeviceLinks.StartAsync</c>, <c>PasskeyService.BeginSignInAsync</c> and <c>PasskeyService.BeginRegistrationAsync</c>.
+    /// The PKCE code challenge is missing or malformed.
     /// </summary>
+    /// <remarks>
+    /// Thrown as a <see cref="BadRequestApiException"/> by <c>PkceChallenge.EnsureValid</c>, and so by <c>SignInCodes.CreateAsync</c>,
+    /// <c>DeviceLinks.StartAsync</c>, <c>PasskeyService.BeginSignInAsync</c> and <c>PasskeyService.BeginRegistrationAsync</c>.
+    /// </remarks>
     public const string CodeChallengeInvalid = "code-challenge-invalid";
 }

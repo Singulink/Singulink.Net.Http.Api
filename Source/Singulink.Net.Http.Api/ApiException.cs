@@ -56,10 +56,12 @@ public class ApiException : Exception
     }
 
     /// <summary>
-    /// Gets how long the client should wait before making the request again, if the service specified it. Error responses carry it in the
-    /// <c>Retry-After</c> header, the error records of streaming responses in their <c>retryAfter</c> property, and hub errors in their message, each in
-    /// whole seconds, rounded up.
+    /// Gets how long the client should wait before making the request again, if the service specified it. Must be at least zero.
     /// </summary>
+    /// <remarks>
+    /// Error responses carry it in the <c>Retry-After</c> header, the error records of streaming responses in their <c>retryAfter</c> property, and hub
+    /// errors in their message, each in whole seconds, rounded up.
+    /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException">The value is negative.</exception>
     public TimeSpan? RetryAfter
     {
@@ -78,16 +80,21 @@ public class ApiException : Exception
 
     /// <summary>
     /// Gets the reference ID that the service reported the error with, such as the ID it logged an unexpected exception with, or <see langword="null"/> if
-    /// it reported none. Error responses carry it in the <c>Reference-Id</c> header, the error records of streaming responses in their <c>referenceId</c>
-    /// property, and hub errors in their message.
+    /// it reported none.
     /// </summary>
+    /// <remarks>
+    /// Error responses carry it in the <c>Reference-Id</c> header, the error records of streaming responses in their <c>referenceId</c> property, and hub
+    /// errors in their message.
+    /// </remarks>
     public Guid? ReferenceId { get; init; }
 
     /// <summary>
     /// Gets the address from the <c>Location</c> header of the <c>3xx</c> response that the exception reports, resolved against the request's address if it
-    /// is relative, or <see langword="null"/> if the response had no valid header or is not a <c>3xx</c> response. API clients do not follow redirects,
-    /// except on browser platforms.
+    /// is relative, or <see langword="null"/> if the response had no valid header or is not a <c>3xx</c> response.
     /// </summary>
+    /// <remarks>
+    /// API clients do not follow redirects, except on browser platforms.
+    /// </remarks>
     public Uri? Location { get; internal init; }
 
     /// <summary>
@@ -107,12 +114,15 @@ public class ApiException : Exception
     }
 
     /// <summary>
-    /// Creates a copy of the exception with another message. The copy keeps the status code, the error code, the retry time, the reference ID, the error
-    /// content, the location, the expected user ID of a <see cref="UserChangedApiException"/>, the data (<see cref="Exception.Data"/>) and the inner
-    /// exception. It is of the toolkit's exception type for the status code, such as <see cref="ConflictApiException"/> for <c>409</c>, also when the
-    /// exception is of a type derived from it, whose own members it doesn't keep. It has no stack trace, and doesn't keep <see cref="Exception.HResult"/>,
-    /// <see cref="Exception.HelpLink"/> or <see cref="Exception.Source"/>.
+    /// Creates a copy of the exception with another message.
     /// </summary>
+    /// <remarks>
+    /// The copy keeps the status code, the error code, the retry time, the reference ID, the error content, the location, the expected user ID of a
+    /// <see cref="UserChangedApiException"/>, the data (<see cref="Exception.Data"/>) and the inner exception. It is of the toolkit's exception type for the
+    /// status code, such as <see cref="ConflictApiException"/> for <c>409</c>, also when the exception is of a type derived from it, whose own members it
+    /// doesn't keep. It has no stack trace, and doesn't keep <see cref="Exception.HResult"/>, <see cref="Exception.HelpLink"/> or
+    /// <see cref="Exception.Source"/>.
+    /// </remarks>
     /// <param name="message">The message of the copy.</param>
     public ApiException WithMessage(string message)
     {

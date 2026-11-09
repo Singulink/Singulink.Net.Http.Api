@@ -18,7 +18,25 @@ internal static class UploadErrors
 
     public static BadRequestApiException ChunkSizeInvalid() => Invalid("chunkSize", "The chunk size is not positive.");
 
+    public static BadRequestApiException IdInvalid() => Invalid("id", "The upload's ID is the empty GUID.");
+
     public static BadRequestApiException IdempotencyKeyInvalid() => Invalid("idempotencyKey", "The idempotency key is empty or longer than 128 characters.");
+
+    public static ContentTooLargeApiException DirectTooLarge(int maxSize)
+    {
+        var exception = new ContentTooLargeApiException(
+            $"The file is too large to upload directly. Files of up to {FormatSize(maxSize)} can be uploaded in one request, and larger ones in chunks.") {
+            ErrorCode = UploadErrorCodes.DirectTooLarge,
+        };
+
+        exception.Data[UploadErrorData.MaxSizeKey] = (long)maxSize;
+        return exception;
+    }
+
+    public static ConflictApiException IdConflict()
+    {
+        return new ConflictApiException("The upload's ID is the ID of another upload.") { ErrorCode = UploadErrorCodes.IdConflict };
+    }
 
     public static ConflictApiException KeyConflict()
     {
@@ -27,7 +45,7 @@ internal static class UploadErrors
 
     public static ServiceUnavailableApiException CreationPending(TimeSpan retryAfter)
     {
-        return new ServiceUnavailableApiException("The upload is still being created. Please try again.") {
+        return new ServiceUnavailableApiException("An earlier upload with the same ID is still being removed. Please try again.") {
             ErrorCode = UploadErrorCodes.CreationPending,
             RetryAfter = retryAfter,
         };
@@ -69,6 +87,16 @@ internal static class UploadErrors
         return new ContentTooLargeApiException(message, innerException) { ErrorCode = UploadErrorCodes.CreationTooLarge };
     }
 
+    /// <summary>
+    /// Gets the error of a direct upload whose creation header is longer than the longest one.
+    /// </summary>
+    public static HeadersTooLargeApiException CreationHeaderTooLarge(int maxLength)
+    {
+        return new HeadersTooLargeApiException($"The creation header of a direct upload is larger than {FormatSize(maxLength)}.") {
+            ErrorCode = UploadErrorCodes.CreationHeaderTooLarge,
+        };
+    }
+
     public static BadRequestApiException CreationUnreadable(Exception? innerException = null)
     {
         return new BadRequestApiException("The creation of an upload cannot be read.", innerException) { ErrorCode = UploadErrorCodes.CreationUnreadable };
@@ -84,20 +112,21 @@ internal static class UploadErrors
         return new ServerErrorApiException("The outcome of the upload cannot be read.") { ErrorCode = UploadErrorCodes.OutcomeUnreadable };
     }
 
-    public static TooManyRequestsApiException LimitReached(int maxUploads)
+    public static TooManyRequestsApiException LimitReached(int maxUploads, TimeSpan retryAfter)
     {
         var exception = new TooManyRequestsApiException("Too many uploads are in progress. Please wait for one to finish and try again.") {
             ErrorCode = UploadErrorCodes.LimitReached,
+            RetryAfter = retryAfter,
         };
 
         exception.Data[UploadErrorData.MaxUploadsPerUserKey] = maxUploads;
         return exception;
     }
 
-    public static TooManyRequestsApiException SizeLimitReached(long maxTotalSizePerUser)
+    public static TooManyRequestsApiException SizeLimitReached(long maxTotalSizePerUser, TimeSpan retryAfter)
     {
         string message = $"The uploads in progress can take up {FormatSize(maxTotalSizePerUser)} together. Please wait for one to finish and try again.";
-        var exception = new TooManyRequestsApiException(message) { ErrorCode = UploadErrorCodes.SizeLimitReached };
+        var exception = new TooManyRequestsApiException(message) { ErrorCode = UploadErrorCodes.SizeLimitReached, RetryAfter = retryAfter };
 
         exception.Data[UploadErrorData.MaxTotalSizePerUserKey] = maxTotalSizePerUser;
         return exception;
@@ -131,6 +160,13 @@ internal static class UploadErrors
         };
     }
 
+    public static BadRequestApiException BodyLengthInvalid(Exception? innerException = null)
+    {
+        return new BadRequestApiException("The length of the body differs from the length of the file.", innerException) {
+            ErrorCode = UploadErrorCodes.ChunkInvalid,
+        };
+    }
+
     public static BadRequestApiException ChunkLengthInvalid(Exception? innerException = null)
     {
         return new BadRequestApiException("The length of the chunk differs from its Content-Range header.", innerException) {
@@ -152,6 +188,26 @@ internal static class UploadErrors
     {
         return new ConflictApiException("The query string of the completion differs from the one the upload was created with.") {
             ErrorCode = UploadErrorCodes.QueryMismatch,
+        };
+    }
+
+    public static ConflictApiException Cancelled()
+    {
+        return new ConflictApiException("The upload was cancelled before its processing finished.") { ErrorCode = UploadErrorCodes.Cancelled };
+    }
+
+    public static ConflictApiException Finished()
+    {
+        return new ConflictApiException("The upload has already been processed, so it can no longer be cancelled.") {
+            ErrorCode = UploadErrorCodes.Finished,
+        };
+    }
+
+    public static ServiceUnavailableApiException CancellationUnavailable(TimeSpan retryAfter, Exception? innerException = null)
+    {
+        return new ServiceUnavailableApiException("The cancellation of the upload can't be reached at the moment. Please try again.", innerException) {
+            ErrorCode = UploadErrorCodes.CancellationUnavailable,
+            RetryAfter = retryAfter,
         };
     }
 

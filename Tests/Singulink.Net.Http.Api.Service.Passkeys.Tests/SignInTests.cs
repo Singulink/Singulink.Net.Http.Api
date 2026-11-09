@@ -356,7 +356,7 @@ public abstract class SignInTests
         var ex = await Should.ThrowAsync<UnauthorizedApiException>(() => fixture.SignInAsync(authenticator));
         ex.ErrorCode.ShouldBe(PasskeyErrorCodes.VerificationFailed);
 
-        using var relaxedFixture = CreateFixture(o => o.RequireUserVerification = false);
+        using var relaxedFixture = CreateFixture(o => o.UserVerification = PasskeyRequirement.Preferred);
         using var relaxedAuthenticator = new SoftwareAuthenticator(PasskeyFixture.Origin) { VerifiesUser = false };
         await relaxedFixture.RegisterAsync(relaxedAuthenticator);
 

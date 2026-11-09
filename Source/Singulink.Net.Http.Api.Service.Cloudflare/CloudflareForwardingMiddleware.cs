@@ -40,6 +40,7 @@ internal sealed partial class CloudflareForwardingMiddleware
     {
         _next = next;
         _networks = networks;
+        options.Value.Freeze();
         _retryAfter = options.Value.InitialRetryInterval;
         _timeProvider = timeProvider;
         _logger = logger;
@@ -139,6 +140,8 @@ internal sealed partial class CloudflareForwardingMiddleware
 
     private Task WriteUnavailableResponseAsync(HttpContext context)
     {
+        _networks.AddRefusedRequest();
+
         // Keeps Cloudflare (or any other cache) from serving the error after the service is ready.
         context.Response.Headers.CacheControl = "no-store";
 

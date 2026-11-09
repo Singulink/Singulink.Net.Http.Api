@@ -33,6 +33,7 @@ internal sealed class SessionHandler<TSessionToken>
         ILoggerFactory loggerFactory)
     {
         Options = options.Value;
+        Options.Freeze();
         OriginValidator = originValidator;
 
         _dataProtector = dataProtectionProvider.CreateProtector(Options.DataProtectionPurpose ?? $"Singulink/Session[{typeof(TSessionToken).FullName}]");

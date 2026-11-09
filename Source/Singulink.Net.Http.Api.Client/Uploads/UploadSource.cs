@@ -1,17 +1,23 @@
+#if NET
+using Singulink.IO;
+#endif
+
 namespace Singulink.Net.Http.Api.Client;
 
 /// <summary>
-/// The content of a file to upload in chunks (see <see cref="ApiClientBase.UploadAsync{TResult}"/> and
+/// The content of a file to upload (see <see cref="ApiClientBase.UploadAsync{TResult}"/> and
 /// <see cref="ApiClientBase.UploadStreamingAsync{TItem}"/>), with its name, length and content type. It reads any byte range of the content, so that each
 /// chunk is read from where it starts.
 /// </summary>
 /// <remarks>
 /// <para>
 /// An upload reads one range at a time, in order, each into the buffer of a chunk, and sends a chunk whose request fails again from that buffer. It reads a
-/// range again only for a chunk that the service still lacks when the upload completes.
+/// range again only for a chunk that the service still lacks when the upload completes, and for the file of a direct upload that goes on with the three
+/// requests.
 /// </para>
 /// <para>
-/// <see cref="FromFile(string, string?, string?)"/>, <see cref="FromStream(Stream, string, string?)"/>,
+/// <see cref="FromFile(string, string?, string?)"/> (and in the .NET build an overload that takes an <c>IAbsoluteFilePath</c>),
+/// <see cref="FromStream(Stream, string, string?)"/>,
 /// <see cref="FromStreamFactory(string, long, Func{CancellationToken, Task{Stream}}, string?)"/> and
 /// <see cref="Create(string, long, Func{long, Memory{byte}, CancellationToken, ValueTask{int}}, string?)"/> create sources. A derived class implements
 /// <see cref="ReadAsync(long, Memory{byte}, CancellationToken)"/>, and <see cref="ReleaseAsync"/> if it keeps something open between reads.
@@ -69,20 +75,23 @@ public abstract class UploadSource
     public abstract ValueTask<int> ReadAsync(long offset, Memory<byte> buffer, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Releases what the source keeps open between reads, such as a stream. An upload calls it when it stops reading the source: once its chunks are sent,
-    /// and when it fails or is cancelled. A later read opens what it needs again. An exception that it throws does not change how the upload goes on, and
-    /// is traced as a warning (see <see cref="System.Diagnostics.Trace"/>). Does nothing by default.
+    /// Releases what the source keeps open between reads, such as a stream. Does nothing by default.
     /// </summary>
     /// <remarks>
+    /// An upload calls it when it stops reading the source: once its chunks are sent, and when it fails or is cancelled. A later read opens what it needs
+    /// again. An exception that it throws does not change how the upload goes on, and is traced as a warning (see <see cref="System.Diagnostics.Trace"/>).
     /// <see cref="ReadAsync"/> and <see cref="ReleaseAsync"/> are both public, so a source can read and release another source.
     /// </remarks>
     public virtual ValueTask ReleaseAsync() => default;
 
     /// <summary>
-    /// Creates a source that reads a file. Each read opens the file and checks that its length and last write time are still the ones it had when the
-    /// source was created, so that a file that changes fails the read with an <see cref="IOException"/> instead of being uploaded with other content.
-    /// Other processes can read, write and delete the file while a read has it open.
+    /// Creates a source that reads a file.
     /// </summary>
+    /// <remarks>
+    /// Each read opens the file and checks that its length and last write time are still the ones it had when the source was created, so that a file that
+    /// changes fails the read with an <see cref="IOException"/> instead of being uploaded with other content. Other processes can read, write and delete
+    /// the file while a read has it open.
+    /// </remarks>
     /// <param name="path">The path of the file.</param>
     /// <param name="fileName">The file name that the service receives. Default is <see langword="null"/>, which uses the name in
     /// <paramref name="path"/>.</param>
@@ -99,10 +108,41 @@ public abstract class UploadSource
         return new FileSource(file, fileName ?? file.Name, contentType);
     }
 
+#if NET
     /// <summary>
-    /// Creates a source that reads a seekable stream by setting its position, one read at a time. The content is the whole stream, whose length is
-    /// read now. A read of a stream whose length has changed since throws an <see cref="IOException"/>. The stream is not disposed.
+    /// Creates a source that reads a file.
     /// </summary>
+    /// <remarks>
+    /// Each read opens the file and checks that its length and last write time are still the ones it had when the source was created, so that a file that
+    /// changes fails the read with an <see cref="IOException"/> instead of being uploaded with other content. Other processes can read, write and delete
+    /// the file while a read has it open.
+    /// </remarks>
+    /// <param name="file">The file.</param>
+    /// <param name="fileName">The file name that the service receives. Default is <see langword="null"/>, which uses the name of
+    /// <paramref name="file"/>.</param>
+    /// <param name="contentType">The content type of the file, such as <c>image/png</c>, which the service receives. Default is <see langword="null"/>,
+    /// which sends none.</param>
+    /// <exception cref="FileNotFoundException">The file does not exist.</exception>
+    public static UploadSource FromFile(IAbsoluteFilePath file, string? fileName = null, string? contentType = null)
+    {
+        // The display path, without the \\?\ prefix of the export path on Windows, which .NET doesn't need for long paths, so that messages show the path
+        // as the app knows it.
+        var info = new FileInfo(file.PathDisplay);
+
+        if (!info.Exists)
+            throw new FileNotFoundException($"The file '{file.PathDisplay}' does not exist.", file.PathDisplay);
+
+        return new FileSource(info, fileName ?? file.Name, contentType);
+    }
+#endif
+
+    /// <summary>
+    /// Creates a source that reads a seekable stream by setting its position, one read at a time.
+    /// </summary>
+    /// <remarks>
+    /// The content is the whole stream, whose length is read now. A read of a stream whose length has changed since throws an <see cref="IOException"/>.
+    /// The stream is not disposed.
+    /// </remarks>
     /// <param name="stream">The stream, which must be readable and seekable.</param>
     /// <param name="fileName">The name of the file, which the service receives.</param>
     /// <param name="contentType">The content type of the file, such as <c>image/png</c>, which the service receives. Default is <see langword="null"/>,
@@ -120,10 +160,13 @@ public abstract class UploadSource
     }
 
     /// <summary>
-    /// Creates a source that reads streams that a function opens, one read at a time. It keeps a stream open between reads and reads it forward, setting
-    /// its position if it is seekable. It opens a new stream to go back in one that is not seekable, after a read fails, and after
-    /// <see cref="ReleaseAsync"/>. A stream whose length differs from <paramref name="length"/> fails the read with an <see cref="IOException"/>.
+    /// Creates a source that reads streams that a function opens, one read at a time.
     /// </summary>
+    /// <remarks>
+    /// It keeps a stream open between reads and reads it forward, setting its position if it is seekable. It opens a new stream to go back in one that is
+    /// not seekable, after a read fails, and after <see cref="ReleaseAsync"/>. A stream whose length differs from <paramref name="length"/> fails the read
+    /// with an <see cref="IOException"/>.
+    /// </remarks>
     /// <param name="fileName">The name of the file, which the service receives.</param>
     /// <param name="length">The length of the content in bytes.</param>
     /// <param name="openAsync">A function that opens a readable stream of the content, positioned at its start. The source disposes the streams.</param>

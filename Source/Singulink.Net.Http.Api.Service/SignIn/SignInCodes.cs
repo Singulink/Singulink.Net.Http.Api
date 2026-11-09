@@ -28,9 +28,11 @@ public sealed class SignInCodes
     /// <summary>
     /// Initializes a new instance of the <see cref="SignInCodes"/> class.
     /// </summary>
-    public SignInCodes(IShortLivedStore store, IOptions<SignInCodeOptions> options, ILogger<SignInCodes> logger)
+    public SignInCodes(
+        [FromKeyedServices(ShortLivedStoreKeys.SignIn)] IShortLivedStore store, IOptions<SignInCodeOptions> options, ILogger<SignInCodes> logger)
     {
         _store = store;
+        options.Value.Freeze();
         _lifetime = options.Value.Lifetime;
         _logger = logger;
     }

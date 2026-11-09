@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -18,8 +19,6 @@ public sealed class ChunkedUploadRunTests
 
     private static readonly TimeSpan RenewInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan WaitTimeout = TimeSpan.FromSeconds(20);
-
-    public sealed record Note(string Text);
 
     /// <summary>
     /// A scoped service, which is disposed with the services of its request.
@@ -75,7 +74,6 @@ public sealed class ChunkedUploadRunTests
 
         await using var host = await UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, Task<Note> (UploadedFile file) => Task.FromResult(new Note("done"))),
-            options => options.Directory = null,
             configureServices: services => {
                 services.AddSingleton<IUploadStore>(store);
                 services.AddSingleton<IApiExceptionHandler>(handler);
@@ -401,11 +399,11 @@ public sealed class ChunkedUploadRunTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var lateState = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var idleExpiry = TimeSpan.FromHours(1);
+        var processingTimeout = TimeSpan.FromHours(1);
 
         await using var host = await UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, HandleAsync),
-            options => options.IdleExpiry = idleExpiry,
+            options => options.ProcessingTimeout = processingTimeout,
             timeProvider: clock,
             configureServices: services => services.AddScoped<RequestResource>());
 
@@ -416,8 +414,8 @@ public sealed class ChunkedUploadRunTests
         await started.Task.WaitAsync(WaitTimeout);
 
         // The handler's token is cancelled at the limit, and the run ends a lease of a minute later.
-        await WaitUntilAsync(() => clock.HasTimerDueIn(idleExpiry + TimeSpan.FromMinutes(1)));
-        clock.Advance(idleExpiry + TimeSpan.FromMinutes(1));
+        await WaitUntilAsync(() => clock.HasTimerDueIn(processingTimeout + TimeSpan.FromMinutes(1)));
+        clock.Advance(processingTimeout + TimeSpan.FromMinutes(1));
 
         using var first = await completion.WaitAsync(WaitTimeout);
         using var reader = new StreamReader(await first.Content.ReadAsStreamAsync());
@@ -562,7 +560,7 @@ public sealed class ChunkedUploadRunTests
         using (var outcome = await host.CompleteAsync(interrupted))
             (await outcome.Content.ReadAsStringAsync()).ShouldBe("[upload-interrupted] Interrupted, in the app's words.");
 
-        // An upload aborted while its handler runs, after the completion's first ping, ends the completion with an error record.
+        // An upload cancelled while its handler runs, after the completion's first ping, ends the completion with an error record.
         var aborted = await host.CreateUploadAsync("b", 10);
         await host.PutChunksAsync(aborted, UploadTestHost.CreateFile(10));
 
@@ -575,10 +573,10 @@ public sealed class ChunkedUploadRunTests
         clock.Advance(TimeSpan.FromSeconds(10));
 
         using var response = await completion.WaitAsync(WaitTimeout);
-        (await host.AbortAsync(aborted)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await host.AbortAsync(aborted)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
 
         (await UploadTestHost.ReadLinesAsync(response)).ShouldBe([
-            """{"ping":true}""", """{"error":{"status":404,"code":"upload-not-found","message":"Gone, in the app's words."}}""",
+            """{"ping":true}""", """{"error":{"status":409,"code":"upload-cancelled","message":"Cancelled, in the app's words."}}""",
         ]);
 
         async Task<Note> HandleAsync(UploadedFile file, CancellationToken cancellationToken)
@@ -596,8 +594,11 @@ public sealed class ChunkedUploadRunTests
         await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, (UploadedFile file) => Task.FromResult(new Note("a"))));
         var (session, _) = await host.UploadAsync(UploadTestHost.CreateFile(10));
 
-        string outcomePath = Path.Combine(host.GetUploadDirectory(session), "outcome.json");
-        await File.WriteAllTextAsync(outcomePath, $$"""{"outcome":"not an outcome","storedUtc":"{{DateTime.UtcNow:O}}"}""");
+        // The outcome's file in the user's outcomes, with the upload's record, is readable, and its outcome is not.
+        string outcomePath = host.GetOutcomeFile(session);
+        var outcome = JsonNode.Parse(await File.ReadAllTextAsync(outcomePath))!;
+        outcome["outcome"] = "not an outcome";
+        await File.WriteAllTextAsync(outcomePath, outcome.ToJsonString());
 
         await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.InternalServerError, UploadErrorCodes.OutcomeUnreadable);
         host.Web.Logs.ShouldContain(l => l.Level == LogLevel.Error && l.Message.Contains("cannot be read", StringComparison.Ordinal));
@@ -607,7 +608,6 @@ public sealed class ChunkedUploadRunTests
     {
         return UploadTestHost.StartAsync(
             app => app.MapChunkedUpload(Pattern, handler),
-            options => options.Directory = null,
             configureServices: services => services.AddSingleton<IUploadStore>(store),
             timeProvider: clock);
     }
@@ -641,6 +641,7 @@ public sealed class ChunkedUploadRunTests
                 exception.WithMessage($"The {property} is wrong."),
             { ErrorCode: UploadErrorCodes.Interrupted } => exception.WithMessage("Interrupted, in the app's words."),
             { ErrorCode: UploadErrorCodes.NotFound } => exception.WithMessage("Gone, in the app's words."),
+            { ErrorCode: UploadErrorCodes.Cancelled } => exception.WithMessage("Cancelled, in the app's words."),
             _ => exception,
         });
     }

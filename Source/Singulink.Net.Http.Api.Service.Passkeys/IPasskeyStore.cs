@@ -19,11 +19,14 @@ public interface IPasskeyStore
     Task<PasskeyRecord?> FindAsync(byte[] credentialId, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Gets all the passkeys of a user. They are used to limit sign-ins and verifications to the user's passkeys, and to stop a user from adding a
-    /// second passkey to an authenticator that already has one for them.
+    /// Gets all the passkeys of a user.
     /// </summary>
     /// <param name="userId">The user ID.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <remarks>
+    /// They are used to limit sign-ins and verifications to the user's passkeys, and to stop a user from adding a second passkey to an authenticator that
+    /// already has one for them.
+    /// </remarks>
     Task<IReadOnlyList<PasskeyRecord>> GetUserPasskeysAsync(string userId, CancellationToken cancellationToken);
 
     /// <summary>

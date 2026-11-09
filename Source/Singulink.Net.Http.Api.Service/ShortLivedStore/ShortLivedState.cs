@@ -4,7 +4,8 @@ namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
 /// Keeps states of one type under one key prefix in the registered <see cref="IShortLivedStore"/>, each for the same lifetime: adds them under new random
-/// IDs, and gets, takes and removes them by ID. An ID that does not have the form of one (see <see cref="ShortLivedId.IsWellFormed"/>) is not looked up.
+/// IDs, and gets, takes and removes them by ID. An ID that does not have the form of one
+/// (see <see cref="ShortLivedId.IsWellFormed(string)"/>) is not looked up.
 /// </summary>
 /// <typeparam name="T">The type of the states.</typeparam>
 /// <remarks>
@@ -78,9 +79,11 @@ public class ShortLivedState<T>
     }
 
     /// <summary>
-    /// Gets and removes the state with the specified ID, or returns <see langword="null"/> if there is none, or the ID does not have the form of an ID. A
-    /// state is returned at most once, even when it is taken by concurrent calls.
+    /// Gets and removes the state with the specified ID, or returns <see langword="null"/> if there is none, or the ID does not have the form of an ID.
     /// </summary>
+    /// <remarks>
+    /// A state is returned at most once, even when it is taken by concurrent calls.
+    /// </remarks>
     /// <param name="id">The ID that <see cref="AddAsync"/> returned.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     public ValueTask<T?> TakeAsync(string id, CancellationToken cancellationToken = default)
@@ -89,8 +92,11 @@ public class ShortLivedState<T>
     }
 
     /// <summary>
-    /// Removes the state with the specified ID, if there is one. Nothing is removed if the ID does not have the form of an ID.
+    /// Removes the state with the specified ID, if there is one.
     /// </summary>
+    /// <remarks>
+    /// Nothing is removed if the ID does not have the form of an ID.
+    /// </remarks>
     /// <param name="id">The ID that <see cref="AddAsync"/> returned.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     public ValueTask RemoveAsync(string id, CancellationToken cancellationToken = default)

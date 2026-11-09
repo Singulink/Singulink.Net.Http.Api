@@ -74,8 +74,29 @@ public sealed class UploadRetryPolicyTests
         var policy = new UploadRetryPolicy(TimeSpan.FromMinutes(5), new ManualTimeProvider());
         var exception = new ServiceUnavailableApiException("Full.") { RetryAfter = TimeSpan.FromSeconds(45) };
 
-        policy.GetRetryDelay(exception, 1).ShouldBe(TimeSpan.FromSeconds(45));
-        policy.GetRetryDelay(exception, 9).ShouldBe(TimeSpan.FromSeconds(45));
+        policy.GetRetryDelay(exception, 1).ShouldNotBeNull().ShouldBeInRange(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(67.5));
+        policy.GetRetryDelay(exception, 9).ShouldNotBeNull().ShouldBeInRange(TimeSpan.FromSeconds(45), TimeSpan.FromSeconds(67.5));
+    }
+
+    [TestMethod]
+    public void RetryAfterWait_IsTheRetryTime_RaisedByUpToHalf()
+    {
+        UploadRetryPolicy.GetRetryAfterWait(TimeSpan.FromSeconds(1), 0).ShouldBe(TimeSpan.FromSeconds(1));
+        UploadRetryPolicy.GetRetryAfterWait(TimeSpan.FromSeconds(1), 0.5).ShouldBe(TimeSpan.FromSeconds(1.25));
+        UploadRetryPolicy.GetRetryAfterWait(TimeSpan.FromSeconds(1), 0.999).ShouldBeLessThan(TimeSpan.FromSeconds(1.5));
+    }
+
+    [TestMethod]
+    public void RetryDelay_OfARetryAfter_EndsWithinTheRetryTimeout()
+    {
+        var time = new ManualTimeProvider();
+        var policy = new UploadRetryPolicy(TimeSpan.FromMinutes(5), time);
+        var exception = new TooManyRequestsApiException("Wait.") { RetryAfter = TimeSpan.FromSeconds(30) };
+
+        time.Advance(TimeSpan.FromSeconds(260));
+
+        for (int i = 0; i < 20; i++)
+            policy.GetRetryDelay(exception, 1).ShouldNotBeNull().ShouldBeInRange(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(40));
     }
 
     [TestMethod]
@@ -112,7 +133,7 @@ public sealed class UploadRetryPolicyTests
         policy.GetRetryDelay(exception, 1).ShouldBeNull();
 
         policy.OnSuccess();
-        policy.GetRetryDelay(exception, 1).ShouldBe(TimeSpan.FromMinutes(1));
+        policy.GetRetryDelay(exception, 1).ShouldNotBeNull().ShouldBeInRange(TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1.5));
     }
 
     [TestMethod]

@@ -155,6 +155,7 @@ Continue with these related articles:
 - [Running Multiple Servers](multiple-servers.md) - What servers share, and the short-lived store.
 - [Trimming and Native AOT](trimming-and-aot.md) - What the packages need from trimmed and Native AOT apps.
 - [Architecture and Conventions](../concepts/architecture.md) - What each package contains and why the conventions look the way they do.
-- [Upgrading from 3.x](upgrading.md) - What changes for an app written for 3.x.
+- [Upgrading to 5.0](../upgrading/upgrading-to-5.md) - What changes for an app written for 4.x.
+- [Upgrading to 4.0](../upgrading/upgrading-to-4.md) - What changes for an app written for 3.x.
 
 </div>

@@ -15,9 +15,8 @@ public sealed class UploadRecord
     /// <param name="chunkSize">The chunk size in bytes.</param>
     /// <param name="createdUtc">The time the upload was created, in UTC.</param>
     /// <param name="metadata">The service's metadata of the upload.</param>
-    /// <param name="idempotencyKey">The idempotency key that is reserved for the upload, if its creation has one.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="length"/> is negative or <paramref name="chunkSize"/> is not positive.</exception>
-    public UploadRecord(string id, string userId, long length, int chunkSize, DateTime createdUtc, string metadata, string? idempotencyKey = null)
+    public UploadRecord(string id, string userId, long length, int chunkSize, DateTime createdUtc, string metadata)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(chunkSize);
@@ -28,12 +27,15 @@ public sealed class UploadRecord
         ChunkSize = chunkSize;
         CreatedUtc = createdUtc;
         Metadata = metadata;
-        IdempotencyKey = idempotencyKey;
     }
 
     /// <summary>
-    /// Gets the upload ID: 256 random bits as 43 base64url characters, unique across users.
+    /// Gets the upload ID, which the user's client chose or the service created: a GUID in its 36-character form, in lowercase, or for an upload that
+    /// 4.x created, 43 base64url characters.
     /// </summary>
+    /// <remarks>
+    /// IDs are unique among the uploads of a user only: uploads of different users can have the same ID, so a store keeps uploads by their user and ID.
+    /// </remarks>
     public string Id { get; }
 
     /// <summary>
@@ -47,8 +49,11 @@ public sealed class UploadRecord
     public long Length { get; }
 
     /// <summary>
-    /// Gets the chunk size in bytes. Every chunk has this length, except the last, which has the rest of the file.
+    /// Gets the chunk size in bytes.
     /// </summary>
+    /// <remarks>
+    /// Every chunk has this length, except the last, which has the rest of the file.
+    /// </remarks>
     public int ChunkSize { get; }
 
     /// <summary>
@@ -66,12 +71,6 @@ public sealed class UploadRecord
     /// own.
     /// </summary>
     public string Metadata { get; }
-
-    /// <summary>
-    /// Gets the idempotency key that is reserved for the upload (see <see cref="IUploadStore.ReserveKeyAsync"/>), or <see langword="null"/> if its
-    /// creation has none. Deleting the upload releases it.
-    /// </summary>
-    public string? IdempotencyKey { get; }
 
     /// <summary>
     /// Gets the offset of a chunk in the file.

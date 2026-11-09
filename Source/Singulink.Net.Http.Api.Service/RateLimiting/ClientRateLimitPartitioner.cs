@@ -27,20 +27,15 @@ internal sealed partial class ClientRateLimitPartitioner
     private readonly int _queueLimit;
     private readonly string? _rejectionMessage;
     private readonly ClientRateLimits _limits;
+    private readonly RateLimitPolicyCounters _counters;
     private readonly Func<IPAddress, RateLimiter> _createLimiter;
 
     private int _forwardingWarningLogged;
 
-    private ClientRateLimitPartitioner(ClientRateLimitOptions options, string keyPrefix, bool isGlobal, ClientRateLimits limits)
+    private ClientRateLimitPartitioner(ClientRateLimitOptions options, string? policy, string keyPrefix, ClientRateLimits limits)
     {
-        if (options.PermitLimit is 0)
-        {
-            throw new InvalidOperationException(
-                $"{nameof(ClientRateLimitOptions)}.{nameof(ClientRateLimitOptions.PermitLimit)} must be set to a positive value.");
-        }
-
         _keyPrefix = keyPrefix;
-        _isGlobal = isGlobal;
+        _isGlobal = policy is null;
         _enabled = options.Enabled;
         _exemptPrivateNetworks = options.ExemptPrivateNetworks;
         _exemptNetworks = options.ExemptNetworks.Select(ParseNetwork).ToArray();
@@ -49,23 +44,22 @@ internal sealed partial class ClientRateLimitPartitioner
         _queueLimit = options.QueueLimit;
         _rejectionMessage = options.RejectionMessage;
         _limits = limits;
+        _counters = new RateLimitPolicyCounters(policy, _permitLimit, _window);
+        _limits.AddPolicy(_counters);
         _createLimiter = CreateLimiter;
     }
 
     /// <summary>
-    /// Creates a partitioner for a limit of the specified rate limiter options, whose counts are kept under the specified key prefix, which must be unique to
-    /// the limit. The options of the limit are configured with the shared configuration of the rate limiter options first.
+    /// Creates a partitioner for a limit of the specified rate limiter options, the policy of the specified name (<see langword="null"/> for the global
+    /// limiter), whose counts are kept under the specified key prefix, which must be unique to the limit. The options of the limit are configured with the
+    /// shared configuration of the rate limiter options first.
     /// </summary>
-    public static ClientRateLimitPartitioner Create(
-        RateLimiterOptions rateLimiterOptions, Action<ClientRateLimitOptions> configure, string keyPrefix, bool isGlobal)
+    public static ClientRateLimitPartitioner Create(RateLimiterOptions rateLimiterOptions, Action<ClientRateLimitOptions> configure, string? policy, string keyPrefix)
     {
         var limits = ClientRateLimits.Get(rateLimiterOptions);
-        var options = new ClientRateLimitOptions();
+        var options = new ClientRateLimitOptions(limits, configure);
 
-        limits.ConfigureShared(options);
-        configure(options);
-
-        return new ClientRateLimitPartitioner(options, keyPrefix, isGlobal, limits);
+        return new ClientRateLimitPartitioner(options, policy, keyPrefix, limits);
     }
 
     public RateLimitPartition<IPAddress> GetPartition(HttpContext context)
@@ -98,7 +92,16 @@ internal sealed partial class ClientRateLimitPartitioner
         string keyPrefix = $"{_keyPrefix}{clientKey}:";
 
         return new ClientFixedWindowRateLimiter(
-            services.Store, services.TimeProvider, keyPrefix, _permitLimit, _window, _queueLimit, _rejectionMessage, countSynchronously: !_isGlobal);
+            services.Store,
+            services.TimeProvider,
+            keyPrefix,
+            _permitLimit,
+            _window,
+            _queueLimit,
+            _rejectionMessage,
+            countSynchronously: !_isGlobal,
+            _counters,
+            services.Metrics);
     }
 
     private bool IsExempt(IPAddress? address, bool isPrivate)

@@ -7,6 +7,7 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.Testing" />
   </ItemGroup>
 
   <ItemGroup>
@@ -16,5 +17,6 @@
   <ItemGroup>
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\CapturingLoggerProvider.cs" Link="Infrastructure\CapturingLoggerProvider.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\ManualClock.cs" Link="Infrastructure\ManualClock.cs" />
+    <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\OptionsAssertions.cs" Link="Infrastructure\OptionsAssertions.cs" />
   </ItemGroup>
 </Project>

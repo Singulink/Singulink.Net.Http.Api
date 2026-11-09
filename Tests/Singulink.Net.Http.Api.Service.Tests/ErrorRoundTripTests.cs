@@ -28,6 +28,7 @@ public sealed class ErrorRoundTripTests
     [DataRow(413, typeof(ContentTooLargeApiException))]
     [DataRow(415, typeof(UnsupportedMediaTypeApiException))]
     [DataRow(429, typeof(TooManyRequestsApiException))]
+    [DataRow(431, typeof(HeadersTooLargeApiException))]
     [DataRow(500, typeof(ServerErrorApiException))]
     [DataRow(503, typeof(ServiceUnavailableApiException))]
     public async Task ThrownException_ArrivesAsTheSameTypeWithRetryAfter(int status, Type exceptionType)
@@ -182,6 +183,7 @@ public sealed class ErrorRoundTripTests
         413 => new ContentTooLargeApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
         415 => new UnsupportedMediaTypeApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
         429 => new TooManyRequestsApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
+        431 => new HeadersTooLargeApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
         500 => new ServerErrorApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
         503 => new ServiceUnavailableApiException("The message.") { ErrorCode = "the-code", RetryAfter = RetryAfter },
         _ => throw new ArgumentOutOfRangeException(nameof(status)),

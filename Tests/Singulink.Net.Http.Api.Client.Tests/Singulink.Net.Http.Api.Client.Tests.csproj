@@ -24,4 +24,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Source\Singulink.Net.Http.Api.Client\Singulink.Net.Http.Api.Client.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\OptionsAssertions.cs" Link="Infrastructure\OptionsAssertions.cs" />
+  </ItemGroup>
 </Project>

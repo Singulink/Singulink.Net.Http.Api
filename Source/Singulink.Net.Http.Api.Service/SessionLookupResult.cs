@@ -25,8 +25,10 @@ public sealed class SessionLookupResult<TSessionToken>
     public SessionRecord Session { get; }
 
     /// <summary>
-    /// Gets the token that the session continues with instead of the one it was found with, or <see langword="null"/> to keep that token. The request that
-    /// found the session gets the replacement token, and the session cookie is reissued with it.
+    /// Gets the token that the session continues with instead of the one it was found with, or <see langword="null"/> to keep that token.
     /// </summary>
+    /// <remarks>
+    /// The request that found the session gets the replacement token, and the session cookie is reissued with it.
+    /// </remarks>
     public TSessionToken? ReplacementToken { get; }
 }

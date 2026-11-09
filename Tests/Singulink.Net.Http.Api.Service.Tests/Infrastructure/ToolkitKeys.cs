@@ -12,4 +12,12 @@ public static class ToolkitKeys
     public const string DeviceLinkCode = "httpapi:device-link-code:";
 
     public const string PasskeyCeremony = "httpapi:passkey-ceremony:";
+
+    public const string UploadCount = "httpapi:upload-count:";
+
+    public const string UploadSize = "httpapi:upload-size:";
+
+    public const string UploadTotalSize = "httpapi:upload-total-size";
+
+    public const string UploadCancel = "httpapi:upload-cancel:";
 }

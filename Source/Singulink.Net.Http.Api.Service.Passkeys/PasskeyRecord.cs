@@ -44,21 +44,29 @@ public sealed class PasskeyRecord
     public required byte[] PublicKey { get; init; }
 
     /// <summary>
-    /// Gets the signature counter the authenticator last reported. Many passkeys always report 0. Authenticators that count are checked to have
-    /// counted up since the last use, which detects some cloned authenticators.
+    /// Gets the signature counter the authenticator last reported.
     /// </summary>
+    /// <remarks>
+    /// Many passkeys always report 0. Authenticators that count are checked to have counted up since the last use, which detects some cloned
+    /// authenticators.
+    /// </remarks>
     public uint SignCount { get; init; }
 
     /// <summary>
-    /// Gets the transports the authenticator reported when the passkey was created (such as <c>internal</c>, <c>hybrid</c> or <c>usb</c>). They are passed
-    /// back to browsers to help them find the passkey. Transports this library does not know are kept as reported, but not passed back.
+    /// Gets the transports the authenticator reported when the passkey was created (such as <c>internal</c>, <c>hybrid</c> or <c>usb</c>).
     /// </summary>
+    /// <remarks>
+    /// They are passed back to browsers to help them find the passkey. Transports this library does not know are kept as reported, but not passed back.
+    /// </remarks>
     public IReadOnlyList<string> Transports { get; init; } = [];
 
     /// <summary>
     /// Gets a value indicating whether the passkey can be backed up or synced to other devices (by a password manager such as iCloud Keychain or Google
-    /// Password Manager). This never changes for a passkey.
+    /// Password Manager).
     /// </summary>
+    /// <remarks>
+    /// This never changes for a passkey.
+    /// </remarks>
     public bool IsBackupEligible { get; init; }
 
     /// <summary>

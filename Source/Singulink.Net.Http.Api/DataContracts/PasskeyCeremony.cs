@@ -19,21 +19,29 @@ public sealed class PasskeyCeremony
     }
 
     /// <summary>
-    /// Gets the ceremony ID, which the client sends back with the credential to finish the ceremony. It is a random secret that can be used once.
+    /// Gets the ceremony ID, which the client sends back with the credential to finish the ceremony.
     /// </summary>
+    /// <remarks>
+    /// It is a random secret that can be used once.
+    /// </remarks>
     public string Id { get; }
 
     /// <summary>
     /// Gets the WebAuthn options for the browser as JSON: a <c>PublicKeyCredentialRequestOptionsJSON</c> object for sign-ins and verifications, or a
-    /// <c>PublicKeyCredentialCreationOptionsJSON</c> object for registrations. Browsers read it with
-    /// <c>PublicKeyCredential.parseRequestOptionsFromJSON</c> or <c>PublicKeyCredential.parseCreationOptionsFromJSON</c>.
+    /// <c>PublicKeyCredentialCreationOptionsJSON</c> object for registrations.
     /// </summary>
+    /// <remarks>
+    /// Browsers read it with <c>PublicKeyCredential.parseRequestOptionsFromJSON</c> or <c>PublicKeyCredential.parseCreationOptionsFromJSON</c>.
+    /// </remarks>
     public string OptionsJson { get; }
 
     /// <summary>
-    /// Gets how long the ceremony can be finished after the service started it. Counted from when the client receives the ceremony, it ends later than on
-    /// the service by the time the response took to arrive. The browser's prompt can stay open for up to the <c>timeout</c> in <see cref="OptionsJson"/>,
-    /// so the ceremony can expire while a prompt that started less than that before its end is still open.
+    /// Gets how long the ceremony can be finished after the service started it.
     /// </summary>
+    /// <remarks>
+    /// Counted from when the client receives the ceremony, it ends later than on the service by the time the response took to arrive. The browser's prompt
+    /// can stay open for up to the <c>timeout</c> in <see cref="OptionsJson"/>, so the ceremony can expire while a prompt that started less than that before
+    /// its end is still open.
+    /// </remarks>
     public TimeSpan Lifetime { get; }
 }

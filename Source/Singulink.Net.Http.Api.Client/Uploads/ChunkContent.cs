@@ -15,6 +15,13 @@ internal sealed class ChunkContent : HttpContent
     private readonly UploadProgressTracker.SendAttempt _attempt;
     private readonly InactivityTimeout _inactivity;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChunkContent"/> class.
+    /// </summary>
+    /// <param name="buffer">The buffer with the chunk's bytes.</param>
+    /// <param name="count">The number of bytes of the chunk, from the start of the buffer.</param>
+    /// <param name="attempt">The attempt that the written bytes are counted for.</param>
+    /// <param name="inactivity">The inactivity timeout of the request, which each slice starts again.</param>
     public ChunkContent(byte[] buffer, int count, UploadProgressTracker.SendAttempt attempt, InactivityTimeout inactivity)
     {
         _buffer = buffer;

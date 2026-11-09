@@ -1,111 +1,45 @@
-using System.Buffers;
-using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
-using Microsoft.Extensions.Options;
+using Singulink.IO;
 
 namespace Singulink.Net.Http.Api.Service.Uploads;
 
-#pragma warning disable SA1402 // File may only contain a single type
-
 /// <summary>
-/// The default <see cref="IUploadStore"/>, which keeps uploads in a directory (<see cref="ChunkedUploadOptions.Directory"/>) on a local disk or a share
-/// that several servers mount.
+/// The <see cref="IUploadStore"/> that keeps uploads in a directory (see <see cref="DirectoryUploadStoreOptions"/>) on a local disk or a share that several
+/// servers mount.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Each upload has a directory, <c>{Directory}/{userKey}/{uploadId}</c>, where <c>userKey</c> is a hash of the user ID. It holds <c>upload.json</c>, the
-/// upload's record, and <c>data</c>, the file, which is created with the upload's length and, where the file system can, space reserved for it. Each chunk
-/// is written at its offset through to the disk, and only then is an empty marker, <c>chunks/{index}</c>, created for it, so a chunk whose write was
+/// Each open upload has a directory, <c>{Directory}/{userKey}/{uploadId}</c>, where <c>userKey</c> is a hash of the user ID. It holds <c>upload.json</c>,
+/// the upload's record, and <c>data</c>, the file, which is created with the upload's length and, where the file system can, space reserved for it. A
+/// creation makes the directory under a name of its own, <c>{uploadId}.{random}.new</c>, and then moves it to the upload's name, which fails while the user
+/// has an upload with the ID, so that of creations of an upload at the same time one creates it, and an upload exists only once it is complete. Each
+/// chunk is written at its offset through to the disk, and only then is an empty marker, <c>chunks/{index}</c>, created for it, so a chunk whose write was
 /// interrupted is missing. A write of a chunk that was received removes its marker first.
 /// </para>
 /// <para>
-/// A chunk that is being written has a write marker, <c>chunks/{index}.{writeId}.writing</c>, which holds the time the write last showed that it is
-/// alive. A write creates its marker and then checks for a claim, an outcome and a deletion, and a claim is created and then checks for write markers
-/// that are alive, so of a write and a claim made at the same time, at least one sees the other and gives way. A marker that cannot be opened is taken
-/// as alive. A write that finds a claim waits up to 2 seconds for it to back off, so a write that meets a claim that won takes 2 seconds to be closed. A
-/// claim that backs off and can't be removed is kept renewed and removed again in the background, for up to 10 minutes, and looks like a running run
-/// meanwhile, so a write that meets it is closed.
-/// </para>
-/// <para>
-/// The files that only one request may create, the <c>claim</c> of a run, the <c>outcome.json</c> of an upload and the reservation of an idempotency key,
-/// a file in <c>{Directory}/{userKey}/keys</c> named by a hash of the key, are created in one step that fails if the file exists
-/// (<see cref="FileMode.CreateNew"/>), which the file system, also that of a file server, decides for all of its clients, and their content is then
-/// written. A reader can find such a file empty or partly written for a moment: it takes a file that it cannot read as being written for a minute after
-/// the file's last write time, by the file system's clock, and as broken after that. A server that stalls for longer than that while it creates such a
-/// file can find it taken over, and two servers then have the claim or the reservation. The other files, such as the record, the write markers and the
-/// claims that are renewed, are written under a temporary name and moved to their name, replacing a file of that name, so they are complete whenever they
-/// can be read. A release of a reservation creates a marker of its own, <c>{key}.{reservationId}.released</c>, which only one release can do, and then
-/// removes the reservation. A deleted upload gets a <c>deleted</c> marker before its files are removed, so it is gone even if some of them cannot be
-/// removed yet.
-/// </para>
-/// <para>
-/// The checks for files that another server may have created open them rather than ask whether they exist, which clients of file shares can answer from
-/// caches of their own. The times that tell whether a claim or a write is alive are in the content of their files rather than in the file system's times.
+/// Paths are Singulink.IO paths. The operations that Singulink.IO would make with an extra call to the file system, such as the check of a directory's type
+/// before a move, or of a file's existence before its times are read or set, are made on <see cref="IAbsolutePath.PathExport"/> instead, since on a share
+/// each call is a round trip.
 /// </para>
 /// </remarks>
-internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
+internal sealed partial class DirectoryUploadStore : IUploadStore, IDisposable
 {
     private const string RecordFileName = "upload.json";
-    private const string DataFileName = "data";
-    private const string ChunksDirectoryName = "chunks";
-    private const string ClaimFileName = "claim";
-    private const string OutcomeFileName = "outcome.json";
     private const string DeletedFileName = "deleted";
-    private const string KeysDirectoryName = "keys";
-    private const string TemporaryFileExtension = ".tmp";
-    private const string WritingFileExtension = ".writing";
-    private const string ReleasedFileExtension = ".released";
 
-    // The size of the writes of a chunk to the file.
-    private const int WriteBlockSize = 1 << 20;
+    // The lock file of a directory that only this process uses, in the root directory.
+    private const string LockFileName = "uploads.lock";
 
-    // How many times an operation is tried that fails because another process has the file open for a moment, such as a virus scanner.
-    private const int Attempts = 10;
+    // The extension of the directory that a creation makes an upload in, before it moves the directory to the upload's name.
+    private const string NewDirectoryExtension = ".new";
 
-    // The Win32 errors of a disk that has no room for a file (ERROR_HANDLE_DISK_FULL, ERROR_DISK_FULL), and of a file that is larger than the file system
-    // allows (ERROR_FILE_TOO_LARGE, and ERROR_INVALID_PARAMETER for space reserved for a file), which are the lower 16 bits of an IOException's HResult on
-    // Windows.
-    private const int ErrorHandleDiskFull = 0x27;
-    private const int ErrorInvalidParameter = 0x57;
-    private const int ErrorDiskFull = 0x70;
-    private const int ErrorFileTooLarge = 0xDF;
+    // The outcome of an upload that 4.x finished, in the upload's directory.
+    private const string LegacyOutcomeFileName = "outcome.json";
 
-    // How old the files of a creation that failed, temporary files, released reservations and the markers of writes that stopped must be before they are
-    // removed, which leaves time for the creation, the write or the release to finish.
-    private static readonly TimeSpan StrayDataAge = TimeSpan.FromHours(1);
-
-    // How long a file that is created with its content, and that cannot be read yet, is taken as being written.
-    private static readonly TimeSpan IncompleteFileAge = TimeSpan.FromMinutes(1);
-
-    // How often a write of a chunk shows that it is alive, and how long after it last did a claim takes it for stopped.
-    private static readonly TimeSpan WriteHeartbeatInterval = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan WriteLease = TimeSpan.FromMinutes(1);
-
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromMilliseconds(100);
-
-    // How much later than an upload's creation the time of its chunks is at the least, which is more than the resolution of a file system's times.
-    private static readonly TimeSpan MinChunkTimeAfterCreation = TimeSpan.FromSeconds(2);
-
-    // How long a read of an upload whose files changed while it was read waits before it reads them again.
-    private static readonly TimeSpan ReadAgainDelay = TimeSpan.FromMilliseconds(20);
-
-    // How long a release of a key's reservation waits for another release of it to remove it.
-    private static readonly TimeSpan ReleaseWait = TimeSpan.FromSeconds(2);
-
-    // How long a write of a chunk waits for a claim made at the same time to back off.
-    private static readonly TimeSpan ClaimBackOffWait = TimeSpan.FromSeconds(2);
-
-    // How often a claim that backed off and could not be removed is removed again, and for how long.
-    private static readonly TimeSpan ClaimRemovalInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan MaxClaimRemovalTime = TimeSpan.FromMinutes(10);
-
-    // How often a release of a key's reservation that could not remove it removes it again, and for how long.
-    private static readonly TimeSpan ReservationRemovalInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan MaxReservationRemovalTime = TimeSpan.FromMinutes(10);
+    // How long the metrics go without the store's free space after a read of it failed, such as on a share that can't be reached, where a read waits for a
+    // timeout.
+    private static readonly TimeSpan AvailableBytesRetryDelay = TimeSpan.FromMinutes(5);
 
     private readonly TimeProvider _timeProvider;
     private readonly ILogger _logger;
@@ -113,112 +47,134 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
     // Stops the removals in the background once the store is disposed.
     private readonly CancellationTokenSource _disposed = new();
 
-    public DirectoryUploadStore(IOptions<ChunkedUploadOptions> options, IHostEnvironment environment, TimeProvider timeProvider, ILoggerFactory loggerFactory)
-    {
-        string directory = options.Value.Directory ?? throw new InvalidOperationException(
-            $"Chunked uploads require {nameof(ChunkedUploadOptions)}.{nameof(ChunkedUploadOptions.Directory)} to be set, unless the app registers an " +
-            $"{nameof(IUploadStore)} of its own. Use a location that survives restarts and redeployments, for example \"../data/uploads\".");
+    // The lock file, open without sharing while the store is in use, of a directory that only this process uses.
+    private readonly FileStream? _lockFile;
 
-        RootDirectory = Path.GetFullPath(directory, environment.ContentRootPath);
+    // When a read of the free space for the metrics last failed, in UTC ticks, or 0 if none did.
+    private long _availableBytesFailureTicks;
+
+    public DirectoryUploadStore(DirectoryUploadStoreOptions options, TimeProvider timeProvider, ILoggerFactory loggerFactory)
+    {
+        // Freezing checks the options, so the required values are set, and they can no longer change from then on.
+        options.Freeze();
+        RootDirectory = options.Directory;
+        SharingMode = options.SharingMode;
+
         _timeProvider = timeProvider;
         _logger = loggerFactory.CreateLogger(typeof(DirectoryUploadStore).FullName!);
+
+        if (SharingMode is StoreSharingMode.ProcessLocal)
+            _lockFile = OpenLockFile(RootDirectory);
     }
 
-    /// <summary>
-    /// Specifies the state of a file that is created with its content (see <see cref="TryCreateFileAsync"/>).
-    /// </summary>
-    private enum CreatedFileState
-    {
-        Missing,
-        Complete,
-        BeingWritten,
-        Broken,
-    }
+    public IAbsoluteDirectoryPath RootDirectory { get; }
 
-    public string RootDirectory { get; }
+    public StoreSharingMode SharingMode { get; }
 
     private DateTime UtcNow => _timeProvider.GetUtcNow().UtcDateTime;
 
-    // The token source is only cancelled, not disposed, so that the removals still running can read their token.
-    public void Dispose() => _disposed.Cancel();
+    public ValueTask<UploadStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default)
+    {
+        var (directory, availableBytes) = ReadAvailableBytes();
+
+        return new(new UploadStoreUsage {
+            Location = RootDirectory.PathDisplay,
+            AvailableBytes = availableBytes,
+            TotalBytes = directory.TotalSize,
+        });
+    }
 
     /// <summary>
-    /// Gets the time of a chunk of an upload: now, and always later than the upload's creation, so that an upload that has received a chunk can be told
-    /// apart from one that has not (see <see cref="StoredUpload.LastWriteUtc"/>), at least 2 seconds later, so that it is also later on file systems whose
-    /// times have whole seconds or two.
+    /// Gets the space available to the store for the metrics, or <see langword="null"/> if it can't be read. After a read that failed, the space isn't
+    /// read again for a few minutes.
     /// </summary>
-    private DateTime GetChunkTimeUtc(UploadRecord upload)
+    internal long? TryGetAvailableBytes()
     {
-        var nowUtc = UtcNow;
-        var earliestUtc = upload.CreatedUtc + MinChunkTimeAfterCreation;
+        long failureTicks = Interlocked.Read(ref _availableBytesFailureTicks);
 
-        return nowUtc > earliestUtc ? nowUtc : earliestUtc;
-    }
-
-    public async ValueTask<UploadKeyReservation> ReserveKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
-    {
-        string path = GetKeyPath(userId, key);
-
-        for (int attempt = 1; ; attempt++)
-        {
-            var reservation = new KeyFile { ReservationId = CreateId(), UploadId = uploadId, ReservedUtc = UtcNow };
-
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-                // A creation that stalled for long enough before its content arrived, such as on a share whose server failed over, can find its file
-                // taken for broken and released, and another reservation in its place.
-                if (await TryCreateFileAsync(path, reservation, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken) &&
-                    (await ReadCreatedFileAsync(path, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken)).Value?.ReservationId ==
-                    reservation.ReservationId)
-                {
-                    return new UploadKeyReservation(reservation.UploadId, reservation.ReservedUtc);
-                }
-            }
-            catch (DirectoryNotFoundException) when (attempt < Attempts)
-            {
-                // The cleanup removed the directory of the keys while it was empty.
-                continue;
-            }
-
-            var existing = await ReadCreatedFileAsync(path, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken);
-
-            switch (existing.State)
-            {
-                case CreatedFileState.Complete:
-                    return new UploadKeyReservation(existing.Value!.UploadId, existing.Value.ReservedUtc);
-                case CreatedFileState.Broken:
-                    _logger.LogWarning("The reservation of an upload key in {Path} cannot be read, so it is released.", path);
-                    await ReleaseReservationAsync(path, GetBrokenReservationId(existing.WrittenUtc), cancellationToken);
-                    break;
-                case CreatedFileState.BeingWritten when attempt >= Attempts:
-                    throw new IOException($"The reservation of an upload key in {path} is still being written.");
-                case CreatedFileState.BeingWritten:
-                    await Task.Delay(RetryDelay, cancellationToken);
-                    break;
-            }
-
-            // A reservation that was released in the meantime is made again.
-        }
-    }
-
-    public async ValueTask ReleaseKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
-    {
-        string path = GetKeyPath(userId, key);
-        var reservation = await ReadCreatedFileAsync(path, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken);
-
-        if (reservation.Value?.UploadId == uploadId)
-            await ReleaseReservationAsync(path, reservation.Value.ReservationId, cancellationToken);
-    }
-
-    public async ValueTask<bool> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
-    {
-        string directory = GetUploadDirectory(upload.UserId, upload.Id);
+        if (failureTicks is not 0 && _timeProvider.GetUtcNow().UtcTicks - failureTicks < AvailableBytesRetryDelay.Ticks)
+            return null;
 
         try
         {
-            string dataPath = Path.Combine(directory, DataFileName);
+            return ReadAvailableBytes().Bytes;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Interlocked.Exchange(ref _availableBytesFailureTicks, _timeProvider.GetUtcNow().UtcTicks);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Reads the space available to the store in its directory, or, while the directory doesn't exist, in the nearest directory that does, whose volume it
+    /// will be on: a shared directory exists once the first upload is created in it.
+    /// </summary>
+    /// <returns>The directory whose space was read, and the space.</returns>
+    private (IAbsoluteDirectoryPath Directory, long Bytes) ReadAvailableBytes()
+    {
+        try
+        {
+            return (RootDirectory, RootDirectory.AvailableFreeSpace);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            var directory = RootDirectory.GetLastExistingDirectory();
+            return (directory, directory.AvailableFreeSpace);
+        }
+    }
+
+    public void Dispose()
+    {
+        // The token source is only cancelled, not disposed, so that the removals still running can read their token.
+        _disposed.Cancel();
+        _lockFile?.Dispose();
+    }
+
+    /// <summary>
+    /// Opens the lock file of a directory that only this process uses, without sharing, so that no other process can use the directory while this one does.
+    /// It is removed when it is closed. The open does not wait: another process that holds the lock, such as the previous process of an overlapped restart,
+    /// may hold it for minutes. Windows enforces the lock, also on an SMB share. .NET on Linux and macOS emulates it with an advisory lock
+    /// (<c>flock</c>), which holds on a local disk and is not guaranteed on an NFS mount.
+    /// </summary>
+    /// <exception cref="IOException">Another process holds the lock, or the lock file can't be opened.</exception>
+    private static FileStream OpenLockFile(IAbsoluteDirectoryPath rootDirectory)
+    {
+        var file = rootDirectory.CombineFile(LockFileName, PathOptions.None);
+
+        try
+        {
+            rootDirectory.Create();
+            return file.OpenStream(FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+        }
+        catch (IOException ex)
+        {
+            throw new IOException(
+                $"The lock file of the upload directory ({file.PathDisplay}) can't be opened, so the directory may be in use by another process, such as the " +
+                $"previous process of an overlapped restart. {nameof(DirectoryUploadStoreOptions)}.{nameof(DirectoryUploadStoreOptions.SharingMode)} is " +
+                $"{nameof(StoreSharingMode.ProcessLocal)}, so only one process can use the directory at a time.",
+                ex);
+        }
+    }
+
+    public async ValueTask<UploadCreationResult> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
+    {
+        var userDirectory = GetUserDirectory(upload.UserId);
+        var directory = userDirectory.CombineDirectory(upload.Id, PathOptions.None);
+
+        // A finished upload has its outcome among the user's outcomes, and its directory only while it leaves it. This only saves building the upload for
+        // nothing: the move below is what tells, since another creation can get there in between.
+        if (directory.Exists || HasOutcome(userDirectory, upload.Id))
+            return UploadCreationResult.Exists;
+
+        // The upload is made in a directory of its own and then moved to its name, which only one creation can do, so that it is complete once it exists. The
+        // move fails if the name exists: Windows refuses it, and on Unix rename(2) only replaces an empty directory, which the new one never is. The one gap
+        // is on Unix, a removal of an earlier upload with the ID that has just emptied its directory.
+        var newDirectory = userDirectory.CombineDirectory($"{upload.Id}.{CreateId()}{NewDirectoryExtension}", PathOptions.None);
+
+        try
+        {
+            var dataFile = newDirectory.CombineFile(DataFileName, PathOptions.None);
 
             try
             {
@@ -234,9 +190,9 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
                 {
                     try
                     {
-                        Directory.CreateDirectory(directory);
+                        newDirectory.Create();
 
-                        using var data = new FileStream(dataPath, dataOptions);
+                        using var data = new FileStream(dataFile.PathExport, dataOptions);
                         data.SetLength(upload.Length);
                         break;
                     }
@@ -248,1138 +204,168 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
             }
             catch (IOException ex) when (IsOutOfSpace(ex, upload.Length, isReservation: true))
             {
-                _logger.LogWarning(ex, "An upload of {Length} bytes could not be created in {Directory}.", upload.Length, RootDirectory);
-                TryDeleteDirectory(directory);
-                return false;
+                _logger.LogWarning(ex, "An upload of {Length} bytes could not be created in {Directory}.", upload.Length, RootDirectory.PathDisplay);
+                TryDeleteDirectory(newDirectory);
+                return UploadCreationResult.NoRoom;
             }
 
             // The file's last write is the upload's creation until a chunk arrives.
-            await RetryAsync(() => File.SetLastWriteTimeUtc(dataPath, upload.CreatedUtc), cancellationToken);
-            Directory.CreateDirectory(Path.Combine(directory, ChunksDirectoryName));
+            await RetryAsync(() => File.SetLastWriteTimeUtc(dataFile.PathExport, upload.CreatedUtc), cancellationToken);
+            newDirectory.CombineDirectory(ChunksDirectoryName, PathOptions.None).Create();
 
-            var record = new RecordFile {
-                Id = upload.Id,
-                UserId = upload.UserId,
-                Length = upload.Length,
-                ChunkSize = upload.ChunkSize,
-                CreatedUtc = upload.CreatedUtc,
-                Metadata = upload.Metadata,
-                IdempotencyKey = upload.IdempotencyKey,
-            };
+            await WriteFileAsync(
+                newDirectory.CombineFile(RecordFileName, PathOptions.None), ToRecordFile(upload), DirectoryUploadStoreJsonContext.Default.RecordFile,
+                cancellationToken);
 
-            // The record is written last: an upload without one does not exist yet.
-            await WriteFileAsync(Path.Combine(directory, RecordFileName), record, DirectoryUploadStoreJsonContext.Default.RecordFile, cancellationToken);
-            return true;
+            try
+            {
+                Directory.Move(newDirectory.PathExport, directory.PathExport);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && directory.Exists)
+            {
+                // Another creation of the upload moved its directory first, or the directory of an earlier upload with the ID is being removed.
+                TryDeleteDirectory(newDirectory);
+                return UploadCreationResult.Exists;
+            }
         }
         catch
         {
-            TryDeleteDirectory(directory);
+            TryDeleteDirectory(newDirectory);
             throw;
         }
+
+        // An earlier upload with the ID that finished in the meantime copied its outcome to the user's outcomes before it removed its directory, which had to
+        // be gone for the move to succeed, so its outcome is there now.
+        if (HasOutcome(userDirectory, upload.Id))
+        {
+            TryDeleteFile(directory.CombineFile(RecordFileName, PathOptions.None));
+            await RemoveDirectoryAsync(directory);
+            return UploadCreationResult.Exists;
+        }
+
+        return UploadCreationResult.Created;
     }
 
     public async ValueTask<StoredUpload?> GetAsync(string userId, string uploadId, CancellationToken cancellationToken = default)
     {
-        if (!ShortLivedId.IsWellFormed(uploadId))
+        if (!UploadIds.IsWellFormed(uploadId))
             return null;
 
-        return await ReadAsync(GetUploadDirectory(userId, uploadId), userId, uploadId, withoutOutcome: false, cancellationToken);
+        // An upload that is no longer open has no directory, or one that is being removed, and has finished if it has an outcome.
+        return await ReadAsync(GetUploadDirectory(userId, uploadId), userId, uploadId, withoutOutcome: false, cancellationToken) ??
+            await ReadOutcomeAsync(GetUserDirectory(userId), userId, uploadId, cancellationToken);
     }
 
-    public async IAsyncEnumerable<StoredUpload> ListAsync(
-        string? userId = null, bool withoutOutcomes = false, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<StoredUpload> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // The directories are listed up front, so that uploads that are removed while they are listed don't disturb the listing.
-        string[] userDirectories = userId is null ? GetDirectories(RootDirectory) : [GetUserDirectory(userId)];
-
-        foreach (string userDirectory in userDirectories)
+        foreach (var userDirectory in GetDirectories(RootDirectory))
         {
-            string userKey = Path.GetFileName(userDirectory);
+            string userKey = userDirectory.Name;
 
-            foreach (string uploadDirectory in GetDirectories(userDirectory))
+            foreach (var uploadDirectory in GetDirectories(userDirectory))
             {
-                string uploadId = Path.GetFileName(uploadDirectory);
+                string uploadId = uploadDirectory.Name;
 
-                if (!ShortLivedId.IsWellFormed(uploadId))
+                if (!UploadIds.IsWellFormed(uploadId))
                     continue;
 
-                var upload = await ReadAsync(uploadDirectory, userId, uploadId, withoutOutcomes, cancellationToken);
+                var upload = await ReadAsync(uploadDirectory, userId: null, uploadId, withoutOutcome: true, cancellationToken);
 
-                if (upload is not null && (userId is not null || ShortLivedId.Hash(upload.Record.UserId) == userKey))
+                if (upload is not null && ShortLivedId.Hash(upload.Record.UserId) == userKey)
                     yield return upload;
             }
         }
     }
 
-    public async ValueTask<ChunkWriteResult> WriteChunkAsync(UploadRecord upload, int index, Stream content, CancellationToken cancellationToken = default)
-    {
-        string directory = GetUploadDirectory(upload.UserId, upload.Id);
-        string dataPath = Path.Combine(directory, DataFileName);
-        string markerPath = Path.Combine(directory, ChunksDirectoryName, index.ToString(CultureInfo.InvariantCulture));
-        string writingPath = $"{markerPath}.{CreateId()}{WritingFileExtension}";
-
-        try
-        {
-            await WriteFileAsync(writingPath, new WritingFile { AliveUtc = UtcNow }, DirectoryUploadStoreJsonContext.Default.WritingFile, cancellationToken);
-        }
-        catch (Exception ex) when (ex is DirectoryNotFoundException || (ex is IOException or UnauthorizedAccessException && IsBeingDeleted(directory)))
-        {
-            // An outcome removes the directory of the chunks. On Windows, a directory that is being removed cannot be written to for a moment.
-            return GetEndedWriteResult(directory);
-        }
-
-        using var heartbeatStop = new CancellationTokenSource();
-        Task? heartbeat = null;
-        bool isWritingData = false;
-
-        try
-        {
-            // A claim, an outcome or a deletion made before the write marker existed wins. A claim made after it sees the marker.
-            if (!Exists(Path.Combine(directory, RecordFileName)) || Exists(Path.Combine(directory, DeletedFileName)))
-                return ChunkWriteResult.NotFound;
-
-            if (Exists(Path.Combine(directory, OutcomeFileName)) || !await WaitWhileClaimedAsync(directory, cancellationToken))
-                return ChunkWriteResult.Closed;
-
-            // A chunk that was received is missing until it has been written again, so that a write that fails can't leave it reported as received.
-            await DeleteFileAsync(markerPath, cancellationToken);
-
-            // The upload is kept for as long as after its last chunk from now on, also while a slow chunk arrives.
-            await RetryAsync(() => File.SetLastWriteTimeUtc(dataPath, GetChunkTimeUtc(upload)), cancellationToken);
-
-            heartbeat = KeepWriteAliveAsync(writingPath, heartbeatStop.Token);
-            isWritingData = true;
-
-            if (!await WriteDataAsync(dataPath, upload.GetChunkOffset(index), upload.GetChunkLength(index), content, cancellationToken))
-                return ChunkWriteResult.NoRoom;
-
-            isWritingData = false;
-
-            await RetryAsync(() => File.SetLastWriteTimeUtc(dataPath, GetChunkTimeUtc(upload)), cancellationToken);
-            await RetryAsync(() => File.WriteAllBytes(markerPath, []), cancellationToken);
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException ||
-            (ex is IOException or UnauthorizedAccessException && IsBeingDeleted(directory)))
-        {
-            return GetEndedWriteResult(directory);
-        }
-        catch (IOException ex) when (!isWritingData && IsOutOfSpace(ex, upload.GetChunkLength(index), isReservation: false))
-        {
-            // The marker of the chunk could not be created on a full disk. The content's own failures are not the disk's.
-            _logger.LogWarning(ex, "A chunk of {Length} bytes could not be written in {Directory}.", upload.GetChunkLength(index), RootDirectory);
-            return ChunkWriteResult.NoRoom;
-        }
-        finally
-        {
-            // The heartbeat stops before the marker is removed, so that it can't put the marker back.
-            heartbeatStop.Cancel();
-
-            if (heartbeat is not null)
-                await heartbeat;
-
-            TryDeleteFile(writingPath);
-        }
-
-        return ChunkWriteResult.Written;
-    }
-
-    public ValueTask<IReadOnlyCollection<int>> GetReceivedChunksAsync(UploadRecord upload, CancellationToken cancellationToken = default)
-    {
-        string chunksDirectory = Path.Combine(GetUploadDirectory(upload.UserId, upload.Id), ChunksDirectoryName);
-        var received = new SortedSet<int>();
-
-        try
-        {
-            // Write markers and temporary files have names that are not numbers.
-            foreach (string path in Directory.EnumerateFiles(chunksDirectory))
-            {
-                if (int.TryParse(Path.GetFileName(path), NumberStyles.None, CultureInfo.InvariantCulture, out int index) && index < upload.ChunkCount)
-                    received.Add(index);
-            }
-        }
-        catch (DirectoryNotFoundException)
-        {
-        }
-
-        return new(received);
-    }
-
-    public async ValueTask<IUploadRunClaim?> TryClaimRunAsync(UploadRecord upload, TimeSpan leaseDuration, CancellationToken cancellationToken = default)
-    {
-        string directory = GetUploadDirectory(upload.UserId, upload.Id);
-
-        if (!Exists(Path.Combine(directory, RecordFileName)) || HasOutcomeOrIsDeleted(directory))
-            return null;
-
-        string claimPath = Path.Combine(directory, ClaimFileName);
-        var nowUtc = UtcNow;
-        var claim = new ClaimFile { ClaimId = CreateId(), LeaseDuration = leaseDuration, StartedUtc = nowUtc, RenewedUtc = nowUtc };
-
-        try
-        {
-            if (!await TryCreateFileAsync(claimPath, claim, DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken))
-                return null;
-        }
-        catch (DirectoryNotFoundException)
-        {
-            // The upload was deleted in the meantime.
-            return null;
-        }
-
-        var created = new Claim(this, directory, claim.ClaimId, upload);
-
-        try
-        {
-            // A claim that stalled for long enough before its content arrived can have been taken for broken, which ends the upload as interrupted, and
-            // the file is then not this claim's to remove.
-            var current = await ReadCreatedFileAsync(claimPath, DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken);
-
-            if (current.Value?.ClaimId != claim.ClaimId)
-                return null;
-
-            // An outcome or a deletion that came in the meantime wins, and so does a write of a chunk that is alive.
-            if (!HasOutcomeOrIsDeleted(directory) && !await HasLiveWritesAsync(directory, cancellationToken))
-                return created;
-        }
-        catch
-        {
-            await RemoveClaimAsync(created, claimPath, leaseDuration);
-            throw;
-        }
-
-        await RemoveClaimAsync(created, claimPath, leaseDuration);
-        return null;
-    }
-
-    /// <summary>
-    /// Waits for a moment while the upload's run is claimed, for a claim that was made at the same time as a write of a chunk: a claim that sees the write's
-    /// marker backs off, and is removed within a moment.
-    /// </summary>
-    /// <returns><see langword="true"/> if the run is not claimed, or <see langword="false"/> if it still is, or the upload has an outcome.</returns>
-    private static async Task<bool> WaitWhileClaimedAsync(string directory, CancellationToken cancellationToken)
-    {
-        string claimPath = Path.Combine(directory, ClaimFileName);
-        long started = Stopwatch.GetTimestamp();
-
-        while (Exists(claimPath))
-        {
-            if (Stopwatch.GetElapsedTime(started) > ClaimBackOffWait)
-                return false;
-
-            await Task.Delay(ReadAgainDelay, cancellationToken);
-        }
-
-        return !Exists(Path.Combine(directory, OutcomeFileName));
-    }
-
-    /// <summary>
-    /// Removes a claim that backs off. A claim that is left would lapse, which ends the upload as interrupted, so one that can't be removed, such as while
-    /// another process has it open, is kept renewed and removed again in the background, for up to 10 minutes.
-    /// </summary>
-    private async Task RemoveClaimAsync(Claim claim, string claimPath, TimeSpan leaseDuration)
-    {
-        try
-        {
-            await claim.RemoveAsync(CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(ex, "The claim {Path} that backed off could not be removed, and is removed again in the background.", claimPath);
-            _ = KeepRemovingClaimAsync(claim, claimPath, leaseDuration);
-        }
-    }
-
-    private async Task KeepRemovingClaimAsync(Claim claim, string claimPath, TimeSpan leaseDuration)
-    {
-        long started = _timeProvider.GetTimestamp();
-        long renewed = started;
-
-        try
-        {
-            while (_timeProvider.GetElapsedTime(started) < MaxClaimRemovalTime)
-            {
-                await Task.Delay(ClaimRemovalInterval, _timeProvider, _disposed.Token);
-
-                try
-                {
-                    await claim.RemoveAsync(CancellationToken.None);
-                    return;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Removed again at the next interval.
-                }
-
-                if (_timeProvider.GetElapsedTime(renewed) >= leaseDuration / 4)
-                {
-                    try
-                    {
-                        if (!await claim.RenewAsync(CancellationToken.None))
-                            return;
-
-                        renewed = _timeProvider.GetTimestamp();
-                    }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    {
-                    }
-                }
-            }
-
-            _logger.LogError("The claim {Path} that backed off could not be removed for 10 minutes, so it lapses.", claimPath);
-        }
-        catch (OperationCanceledException) when (_disposed.IsCancellationRequested)
-        {
-            // The store is disposed, and the claim lapses.
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "The claim {Path} that backed off could not be removed, so it lapses.", claimPath);
-        }
-    }
-
     public ValueTask<UploadContent> GetContentAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
-        string dataPath = Path.Combine(GetUploadDirectory(upload.UserId, upload.Id), DataFileName);
-        return new(new FileContent(dataPath));
+        var dataFile = GetUploadDirectory(upload.UserId, upload.Id).CombineFile(DataFileName, PathOptions.None);
+        return new(new FileContent(dataFile));
     }
 
-    public async ValueTask<bool> TrySetOutcomeAsync(UploadRecord upload, string outcome, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
-        string directory = GetUploadDirectory(upload.UserId, upload.Id);
-
-        if (!Exists(Path.Combine(directory, RecordFileName)) || Exists(Path.Combine(directory, DeletedFileName)))
-            return false;
-
-        var outcomeFile = new OutcomeFile { Outcome = outcome, StoredUtc = UtcNow };
-        string outcomePath = Path.Combine(directory, OutcomeFileName);
+        var directory = GetUploadDirectory(upload.UserId, upload.Id);
+        var recordFile = directory.CombineFile(RecordFileName, PathOptions.None);
+        bool isRemoving = true;
+        bool isDeleted = false;
 
         try
         {
-            if (!await TryCreateFileAsync(outcomePath, outcomeFile, DirectoryUploadStoreJsonContext.Default.OutcomeFile, cancellationToken))
-                return false;
+            // Of the deletions at the same time, the one that creates the marker deletes the upload if it is open: it had its record, and has no outcome in
+            // its directory. The others remove it all the same. The record is checked before the marker is created: the others remove the record only once
+            // they have failed to create the marker, so they can't remove it before the one that created the marker checks it.
+            bool hadRecord = Exists(recordFile);
+            bool isMarked = await TryCreateEmptyFileAsync(directory.CombineFile(DeletedFileName, PathOptions.None));
+            isDeleted = hadRecord && isMarked && !Exists(directory.CombineFile(FinishedFileName, PathOptions.None));
         }
         catch (DirectoryNotFoundException)
         {
-            // The upload was deleted in the meantime.
-            return false;
+            // The upload has finished, or another deletion removed it.
+            isRemoving = false;
         }
-
-        TryDeleteFile(Path.Combine(directory, DataFileName));
-        TryDeleteDirectory(Path.Combine(directory, ChunksDirectoryName));
-        TryDeleteFile(Path.Combine(directory, ClaimFileName));
-
-        return true;
-    }
-
-    public async ValueTask DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
-    {
-        string directory = GetUploadDirectory(upload.UserId, upload.Id);
-        string recordPath = Path.Combine(directory, RecordFileName);
-
-        try
-        {
-            await RetryAsync(() => File.WriteAllBytes(Path.Combine(directory, DeletedFileName), []), cancellationToken);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && !Exists(recordPath))
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && !Exists(recordFile))
         {
             // Another deletion of the upload at the same time, such as the end of its run after it was aborted, removed the record and is removing the
-            // directory.
-            return;
+            // directory, or the upload has finished and its directory is being removed.
+            isRemoving = false;
         }
 
-        // The record goes first, so that the upload stays gone even if the marker is removed before files that cannot be removed yet.
-        TryDeleteFile(recordPath);
-
-        // Another deletion of the upload at the same time can make one attempt fail.
-        for (int attempt = 1; ; attempt++)
+        if (isRemoving)
         {
-            TryDeleteDirectory(directory);
-
-            if (!Directory.Exists(directory) || attempt is 3)
-                break;
-
-            await Task.Delay(50, CancellationToken.None);
+            // The record goes first, so that the upload stays gone even if the marker is removed before files that cannot be removed yet.
+            TryDeleteFile(recordFile);
+            await RemoveDirectoryAsync(directory);
         }
 
-        if (upload.IdempotencyKey is { } key)
-            await ReleaseKeyAsync(upload.UserId, key, upload.Id, cancellationToken);
-    }
-
-    public async ValueTask CleanUpAsync(CancellationToken cancellationToken = default)
-    {
-        // Reservations hold times of the time provider in their content, while the file system sets the times of files and directories by the system's
-        // clock, which they are compared with, so that a time provider ahead of the system's clock can't make a file that is being written look stray.
-        var strayBeforeUtc = UtcNow - StrayDataAge;
-        var strayFilesBeforeUtc = TimeProvider.System.GetUtcNow().UtcDateTime - StrayDataAge;
-
-        foreach (string userDirectory in GetDirectories(RootDirectory))
-        {
-            await CleanUpKeysAsync(userDirectory, strayBeforeUtc, strayFilesBeforeUtc, cancellationToken);
-
-            foreach (string uploadDirectory in GetDirectories(userDirectory))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                try
-                {
-                    bool isDeleted = Exists(Path.Combine(uploadDirectory, DeletedFileName));
-                    bool hasRecord = Exists(Path.Combine(uploadDirectory, RecordFileName));
-
-                    if (isDeleted || (!hasRecord && Directory.GetCreationTimeUtc(uploadDirectory) < strayFilesBeforeUtc))
-                    {
-                        TryDeleteDirectory(uploadDirectory);
-                        continue;
-                    }
-
-                    RemoveStrayFiles(uploadDirectory, TemporaryFileExtension, strayFilesBeforeUtc);
-                    RemoveStrayFiles(Path.Combine(uploadDirectory, ChunksDirectoryName), TemporaryFileExtension, strayFilesBeforeUtc);
-                    RemoveStrayFiles(Path.Combine(uploadDirectory, ChunksDirectoryName), WritingFileExtension, strayFilesBeforeUtc);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    _logger.LogWarning(ex, "The leftovers of uploads in {Directory} could not be removed.", uploadDirectory);
-                }
-            }
-
-            try
-            {
-                // A creation of an upload creates the user's directory before the upload's directory in it, so a directory that changed lately is kept.
-                if (Directory.GetLastWriteTimeUtc(userDirectory) < strayFilesBeforeUtc && !Directory.EnumerateFileSystemEntries(userDirectory).Any())
-                    Directory.Delete(userDirectory);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // A new upload of the user was created in the meantime, or the directory is in use.
-            }
-        }
-    }
-
-    /// <summary>
-    /// Gets the mount point of the file system that a full path is on: the longest of the root directories of the system's drives that the path is in, or
-    /// the root of the path if it is in none of them.
-    /// </summary>
-    internal static string GetMountPoint(string fullPath, IEnumerable<string> driveRoots)
-    {
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-        string? mountPoint = null;
-
-        foreach (string root in driveRoots)
-        {
-            string prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
-            bool isInRoot = root.Length > 0 &&
-                (fullPath.StartsWith(prefix, comparison) || fullPath.Equals(Path.TrimEndingDirectorySeparator(root), comparison));
-
-            if (isInRoot && (mountPoint is null || root.Length > mountPoint.Length))
-                mountPoint = root;
-        }
-
-        return mountPoint ?? Path.GetPathRoot(fullPath) ?? string.Empty;
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether two full paths are on the same file system, by the mount points of the system's drives (see
-    /// <see cref="GetMountPoint"/>).
-    /// </summary>
-    internal static bool IsOnSameFileSystem(string path, string otherPath)
-    {
-        string[] driveRoots;
-
-        try
-        {
-            driveRoots = [.. DriveInfo.GetDrives().Select(d => d.RootDirectory.FullName)];
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            driveRoots = [];
-        }
-
-        return string.Equals(GetMountPoint(path, driveRoots), GetMountPoint(otherPath, driveRoots), StringComparison.Ordinal);
-    }
-
-    private static string[] GetDirectories(string path)
-    {
-        try
-        {
-            return Directory.GetDirectories(path);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return [];
-        }
+        await RemoveOutcomeFilesAsync(GetUserDirectory(upload.UserId), upload.Id, cancellationToken);
+        return isDeleted;
     }
 
     private static string CreateId() => Guid.NewGuid().ToString("N");
 
-    private static string GetBrokenReservationId(DateTime writtenUtc) => "broken-" + writtenUtc.Ticks.ToString(CultureInfo.InvariantCulture);
+    private static RecordFile ToRecordFile(UploadRecord upload) => new() {
+        Id = upload.Id,
+        UserId = upload.UserId,
+        Length = upload.Length,
+        ChunkSize = upload.ChunkSize,
+        CreatedUtc = upload.CreatedUtc,
+        Metadata = upload.Metadata,
+    };
 
-    private static bool HasOutcomeOrIsDeleted(string directory)
+    private static UploadRecord ToRecord(RecordFile record)
     {
-        return Exists(Path.Combine(directory, OutcomeFileName)) || Exists(Path.Combine(directory, DeletedFileName));
+        return new UploadRecord(record.Id, record.UserId, record.Length, record.ChunkSize, record.CreatedUtc, record.Metadata);
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether an upload whose directory exists has an outcome, or has been deleted.
+    /// </summary>
+    private static bool HasOutcomeOrIsDeleted(IAbsoluteDirectoryPath directory)
+    {
+        return Exists(directory.CombineFile(FinishedFileName, PathOptions.None)) || Exists(directory.CombineFile(DeletedFileName, PathOptions.None));
     }
 
     /// <summary>
     /// Gets a value indicating whether an upload has been deleted or is being deleted: a deletion creates the <c>deleted</c> marker first and then removes
     /// the record before the other files.
     /// </summary>
-    private static bool IsBeingDeleted(string directory)
+    private static bool IsBeingDeleted(IAbsoluteDirectoryPath directory)
     {
-        return Exists(Path.Combine(directory, DeletedFileName)) || !Exists(Path.Combine(directory, RecordFileName));
+        return Exists(directory.CombineFile(DeletedFileName, PathOptions.None)) || !Exists(directory.CombineFile(RecordFileName, PathOptions.None));
     }
 
-    /// <summary>
-    /// Gets the result of a write of a chunk whose upload ended while it was written: closed if the upload has an outcome, which removes the chunks, and
-    /// not found otherwise.
-    /// </summary>
-    private static ChunkWriteResult GetEndedWriteResult(string directory)
-    {
-        return Exists(Path.Combine(directory, OutcomeFileName)) ? ChunkWriteResult.Closed : ChunkWriteResult.NotFound;
-    }
+    private IAbsoluteDirectoryPath GetUserDirectory(string userId) => RootDirectory.CombineDirectory(ShortLivedId.Hash(userId), PathOptions.None);
 
-    /// <summary>
-    /// Gets a value indicating whether a file exists by opening it, which asks the file system, also that of a file server, rather than a cache of a client
-    /// of a share. A file that exists but cannot be opened, such as one that another process holds or that is being deleted, is taken as existing.
-    /// </summary>
-    private static bool Exists(string path)
-    {
-        try
-        {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, bufferSize: 1);
-            return true;
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-        {
-            return false;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return true;
-        }
-    }
-
-    private static FileStream OpenRead(string path)
-    {
-        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
-    }
-
-    /// <summary>
-    /// Reads a file that is written under a temporary name and moved to its name (see <see cref="WriteFileAsync"/>), again after a short wait while another
-    /// process has it open for a moment, such as a virus scanner.
-    /// </summary>
-    /// <returns>The file's content, or <see langword="null"/> if it does not exist.</returns>
-    private static async Task<T?> ReadFileAsync<T>(string path, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-        where T : class
-    {
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await using var stream = OpenRead(path);
-                return await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken);
-            }
-            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-            {
-                return null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < Attempts)
-            {
-                await Task.Delay(RetryDelay, cancellationToken);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Reads a file that is created with its content (see <see cref="TryCreateFileAsync"/>), which can be empty or partly written for a moment, again
-    /// after a short wait while another process has it open for a moment, such as a virus scanner.
-    /// </summary>
-    private async Task<CreatedFile<T>> ReadCreatedFileAsync<T>(string path, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-        where T : class
-    {
-        var file = await ReadCreatedFileOnceAsync(path, typeInfo, cancellationToken);
-
-        if (file.State is not CreatedFileState.Broken)
-            return file;
-
-        // A file that looks broken is read again a moment later, and is broken only if it is still the same, since the times of a file that is being
-        // created can be passing ones for a moment, such as the verifier of an exclusive creation over NFS.
-        await Task.Delay(RetryDelay, cancellationToken);
-        var again = await ReadCreatedFileOnceAsync(path, typeInfo, cancellationToken);
-
-        if (again.State is CreatedFileState.Broken && again.WrittenUtc != file.WrittenUtc)
-            return again with { State = CreatedFileState.BeingWritten };
-
-        return again;
-    }
-
-    private async Task<CreatedFile<T>> ReadCreatedFileOnceAsync<T>(string path, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-        where T : class
-    {
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                await using var stream = OpenRead(path);
-
-                try
-                {
-                    if (await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken) is { } value)
-                        return new CreatedFile<T>(CreatedFileState.Complete, value, default);
-                }
-                catch (JsonException)
-                {
-                }
-
-                // The file system sets the file's times by its own clock, which is the file server's on a share, so the file's age is measured by it.
-                var writtenUtc = File.GetLastWriteTimeUtc(stream.SafeFileHandle);
-                bool isBeingWritten = writtenUtc + IncompleteFileAge > GetFileSystemUtcNow(Path.GetDirectoryName(path)!);
-
-                return new CreatedFile<T>(isBeingWritten ? CreatedFileState.BeingWritten : CreatedFileState.Broken, null, writtenUtc);
-            }
-            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
-            {
-                return new CreatedFile<T>(CreatedFileState.Missing, null, default);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && attempt < Attempts)
-            {
-                await Task.Delay(RetryDelay, cancellationToken);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Gets the current time of the file system of a directory: the last write time of a file that is created there, which the file server sets on a share,
-    /// and which is removed again. A file that can't be created gives the system's time, which is logged.
-    /// </summary>
-    private DateTime GetFileSystemUtcNow(string directory)
-    {
-        try
-        {
-            string path = Path.Combine(directory, CreateId() + TemporaryFileExtension);
-            using var handle = File.OpenHandle(path, FileMode.Create, FileAccess.Write, FileShare.None, FileOptions.DeleteOnClose);
-
-            return File.GetLastWriteTimeUtc(handle);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogDebug(ex, "The time of the file system in {Directory} could not be read, so the system's time is used.", directory);
-            return TimeProvider.System.GetUtcNow().UtcDateTime;
-        }
-    }
-
-    /// <summary>
-    /// Creates a file that must not exist yet, with its content, in one step that fails if the file exists, which the file system decides for all of its
-    /// clients, so that of several creations at the same time, also on several servers, one creates the file. Readers can find the file empty or partly
-    /// written while it is written (see <see cref="ReadCreatedFileAsync"/>).
-    /// </summary>
-    /// <returns><see langword="true"/> if the file was created, or <see langword="false"/> if it exists.</returns>
-    private static async Task<bool> TryCreateFileAsync<T>(string path, T value, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-    {
-        FileStream stream;
-
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete, bufferSize: 0, useAsync: true);
-                break;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && ex is not DirectoryNotFoundException &&
-                IsCreationRaced(path, attempt))
-            {
-                if (Exists(path))
-                    return false;
-
-                // The file existed and was removed in the meantime, or is being removed, and is created again in a moment.
-                await Task.Delay(ReadAgainDelay, cancellationToken);
-            }
-        }
-
-        try
-        {
-            await using (stream)
-            {
-                await JsonSerializer.SerializeAsync(stream, value, typeInfo, cancellationToken);
-
-                // Without this, the file can reach the disk before its content does, and a power loss would leave it empty or partly written.
-                stream.Flush(flushToDisk: true);
-            }
-        }
-        catch
-        {
-            TryDeleteFile(path);
-            throw;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Creates an empty file that must not exist yet, in one step that fails if the file exists (see <see cref="TryCreateFileAsync"/>).
-    /// </summary>
-    /// <returns><see langword="true"/> if the file was created, or <see langword="false"/> if it exists.</returns>
-    private static async Task<bool> TryCreateEmptyFileAsync(string path)
-    {
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete).Dispose();
-                return true;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && ex is not DirectoryNotFoundException &&
-                IsCreationRaced(path, attempt))
-            {
-                if (Exists(path))
-                    return false;
-
-                await Task.Delay(ReadAgainDelay);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether a creation of a file that failed is handled: because the file exists, or, before the last attempt, because it
-    /// existed and was removed in the meantime, after which the creation is made again. Otherwise, its exception is thrown.
-    /// </summary>
-    private static bool IsCreationRaced(string path, int attempt) => attempt < Attempts || Exists(path);
-
-    /// <summary>
-    /// Writes a file under a temporary name and then moves it to its name, replacing a file of that name if there is one, so that the file is complete
-    /// whenever it can be read.
-    /// </summary>
-    private static async Task WriteFileAsync<T>(string path, T value, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-    {
-        string temporaryPath = await WriteTemporaryFileAsync(path, value, typeInfo, cancellationToken);
-
-        try
-        {
-            // On Windows, a file that a reader has open for a moment cannot be replaced.
-            await RetryAsync(() => File.Move(temporaryPath, path, overwrite: true), cancellationToken);
-        }
-        catch
-        {
-            TryDeleteFile(temporaryPath);
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Writes the content of a file under a temporary name next to it, and flushes it to the disk.
-    /// </summary>
-    /// <returns>The path of the temporary file.</returns>
-    private static async Task<string> WriteTemporaryFileAsync<T>(string path, T value, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
-    {
-        // Unique, so that servers that write the same file at the same time never write to the same temporary file.
-        string temporaryPath = $"{path}.{CreateId()}{TemporaryFileExtension}";
-
-        try
-        {
-            await using var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 0, useAsync: true);
-            await JsonSerializer.SerializeAsync(stream, value, typeInfo, cancellationToken);
-
-            // Without this, the move can reach the disk before the content does, and a power loss would leave an empty or partial file.
-            stream.Flush(flushToDisk: true);
-        }
-        catch
-        {
-            TryDeleteFile(temporaryPath);
-            throw;
-        }
-
-        return temporaryPath;
-    }
-
-    /// <summary>
-    /// Writes a chunk's content to the data file at its offset. Only a failed write of the file can be for a full disk: the content's failures are its own.
-    /// </summary>
-    /// <returns><see langword="true"/> if the content was written, or <see langword="false"/> if the file system has no room for it.</returns>
-    private async Task<bool> WriteDataAsync(string dataPath, long offset, int length, Stream content, CancellationToken cancellationToken)
-    {
-        using var handle = File.OpenHandle(
-            dataPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, FileOptions.Asynchronous | FileOptions.WriteThrough);
-
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(WriteBlockSize);
-
-        try
-        {
-            while (true)
-            {
-                int read = await content.ReadAtLeastAsync(buffer.AsMemory(0, WriteBlockSize), WriteBlockSize, throwOnEndOfStream: false, cancellationToken);
-
-                if (read is 0)
-                    break;
-
-                try
-                {
-                    await RandomAccess.WriteAsync(handle, buffer.AsMemory(0, read), offset, cancellationToken);
-                }
-                catch (IOException ex) when (IsOutOfSpace(ex, length, isReservation: false))
-                {
-                    // A file system that cannot reserve space for the file runs out of it as chunks are written.
-                    _logger.LogWarning(ex, "A chunk of {Length} bytes could not be written in {Directory}.", length, RootDirectory);
-                    return false;
-                }
-
-                offset += read;
-            }
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Runs an operation on files, again after a short wait when it fails because another process has a file open for a moment, such as a virus scanner.
-    /// </summary>
-    private static async Task RetryAsync(Action operation, CancellationToken cancellationToken)
-    {
-        for (int attempt = 1; ; attempt++)
-        {
-            try
-            {
-                operation();
-                return;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException && ex is not (FileNotFoundException or DirectoryNotFoundException) &&
-                attempt < Attempts)
-            {
-                await Task.Delay(RetryDelay, cancellationToken);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Deletes a file, again after a short wait while another process has it open for a moment, such as a virus scanner. Throws if it cannot.
-    /// </summary>
-    private static Task DeleteFileAsync(string path, CancellationToken cancellationToken)
-    {
-        return RetryAsync(
-            () => {
-                try
-                {
-                    File.Delete(path);
-                }
-                catch (DirectoryNotFoundException)
-                {
-                }
-            },
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Releases a reservation of an idempotency key, unless it was released in the meantime: creates the reservation's marker, which only one release
-    /// can do, and then removes the reservation, which no other release can have removed, and which can't have been reserved again, since a reservation
-    /// is only made once the file of the last one is removed. The marker stays until the cleanup removes it, so that a release that read the reservation
-    /// before then finds it rather than removing a newer reservation. A release that finds the marker waits a moment for the other release to remove the
-    /// reservation, so that the reservation is gone once a release returns. The release that made the marker is the only one that can remove the
-    /// reservation, so if it can't, such as while another process has the file open, it removes it again in the background, for up to 10 minutes.
-    /// </summary>
-    private async Task ReleaseReservationAsync(string path, string reservationId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (!await TryCreateEmptyFileAsync($"{path}.{reservationId}{ReleasedFileExtension}"))
-            {
-                await WaitWhileReservedAsync(path, reservationId, cancellationToken);
-                return;
-            }
-        }
-        catch (DirectoryNotFoundException)
-        {
-            // Released, and the directory of the keys removed since.
-            return;
-        }
-
-        try
-        {
-            await DeleteFileAsync(path, cancellationToken);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger.LogWarning(ex, "The reservation of an upload key in {Path} could not be removed, and is removed again in the background.", path);
-            _ = KeepRemovingReservationAsync(path, reservationId);
-        }
-    }
-
-    private async Task KeepRemovingReservationAsync(string path, string reservationId)
-    {
-        long started = _timeProvider.GetTimestamp();
-
-        try
-        {
-            while (_timeProvider.GetElapsedTime(started) < MaxReservationRemovalTime)
-            {
-                await Task.Delay(ReservationRemovalInterval, _timeProvider, _disposed.Token);
-
-                try
-                {
-                    if (await IsReservedAsync(path, reservationId, _disposed.Token))
-                        await DeleteFileAsync(path, _disposed.Token);
-
-                    return;
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Removed again at the next interval.
-                }
-            }
-
-            _logger.LogError("The reservation of an upload key in {Path} could not be removed for 10 minutes.", path);
-        }
-        catch (OperationCanceledException) when (_disposed.IsCancellationRequested)
-        {
-            // The store is disposed, and the reservation is taken over once the cleanup has removed its marker.
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "The reservation of an upload key in {Path} could not be removed.", path);
-        }
-    }
-
-    /// <summary>
-    /// Waits for up to 2 seconds while a key's file holds a reservation that another release is removing.
-    /// </summary>
-    private async Task WaitWhileReservedAsync(string path, string reservationId, CancellationToken cancellationToken)
-    {
-        long started = Stopwatch.GetTimestamp();
-
-        while (Stopwatch.GetElapsedTime(started) < ReleaseWait && await IsReservedAsync(path, reservationId, cancellationToken))
-            await Task.Delay(ReadAgainDelay, cancellationToken);
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether a key's file holds the specified reservation, also one that is broken.
-    /// </summary>
-    private async Task<bool> IsReservedAsync(string path, string reservationId, CancellationToken cancellationToken)
-    {
-        var current = await ReadCreatedFileOnceAsync(path, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken);
-
-        return current.State switch {
-            CreatedFileState.Missing => false,
-            CreatedFileState.Complete => current.Value!.ReservationId == reservationId,
-            _ => GetBrokenReservationId(current.WrittenUtc) == reservationId,
-        };
-    }
-
-    private static void RemoveStrayFiles(string directory, string extension, DateTime strayBeforeUtc)
-    {
-        try
-        {
-            foreach (string path in Directory.EnumerateFiles(directory, "*" + extension))
-            {
-                if (File.GetLastWriteTimeUtc(path) < strayBeforeUtc)
-                    TryDeleteFile(path);
-            }
-        }
-        catch (DirectoryNotFoundException)
-        {
-        }
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Removed by a later cleanup.
-        }
-    }
-
-    private static void TryDeleteDirectory(string path)
-    {
-        try
-        {
-            Directory.Delete(path, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Removed by a later cleanup.
-        }
-    }
-
-    private string GetUserDirectory(string userId) => Path.Combine(RootDirectory, ShortLivedId.Hash(userId));
-
-    private string GetKeyPath(string userId, string key) => Path.Combine(GetUserDirectory(userId), KeysDirectoryName, ShortLivedId.Hash(key));
-
-    private string GetUploadDirectory(string userId, string uploadId) => Path.Combine(GetUserDirectory(userId), uploadId);
-
-    /// <summary>
-    /// Gets a value indicating whether an exception of a write of the specified length is because there is no room for it: on Windows, its error says
-    /// so, and elsewhere, the volume of the directory has less space available than the length.
-    /// </summary>
-    /// <param name="exception">The exception of the write.</param>
-    /// <param name="length">The length of the write.</param>
-    /// <param name="isReservation">Whether the write reserved the space of a file, which on Windows also fails for a file that is larger than the file
-    /// system allows.</param>
-    private bool IsOutOfSpace(IOException exception, long length, bool isReservation)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            int error = exception.HResult & 0xFFFF;
-            return error is ErrorHandleDiskFull or ErrorDiskFull || (isReservation && error is ErrorInvalidParameter or ErrorFileTooLarge);
-        }
-
-        try
-        {
-            return new DriveInfo(RootDirectory).AvailableFreeSpace < length;
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Writes the current time to the marker of a write of a chunk at an interval, until it is stopped, so that claims know that the write is alive. A
-    /// renewal that fails is made again at the next interval.
-    /// </summary>
-    private async Task KeepWriteAliveAsync(string writingPath, CancellationToken stop)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(WriteHeartbeatInterval, _timeProvider);
-
-            while (await timer.WaitForNextTickAsync(stop))
-            {
-                try
-                {
-                    await WriteFileAsync(writingPath, new WritingFile { AliveUtc = UtcNow }, DirectoryUploadStoreJsonContext.Default.WritingFile, stop);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    _logger.LogWarning(ex, "The marker {Path} of a write of a chunk could not be renewed, and is renewed at the next interval.", writingPath);
-                }
-            }
-        }
-        catch (OperationCanceledException) when (stop.IsCancellationRequested)
-        {
-        }
-    }
-
-    /// <summary>
-    /// Gets a value indicating whether a chunk of an upload is being written: whether a write marker shows a write that is alive. Removes the markers of
-    /// writes that stopped without removing them.
-    /// </summary>
-    private async Task<bool> HasLiveWritesAsync(string directory, CancellationToken cancellationToken)
-    {
-        string[] paths;
-
-        try
-        {
-            paths = Directory.GetFiles(Path.Combine(directory, ChunksDirectoryName), "*" + WritingFileExtension);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return false;
-        }
-
-        foreach (string path in paths)
-        {
-            WritingFile? write;
-
-            try
-            {
-                write = await ReadFileAsync(path, DirectoryUploadStoreJsonContext.Default.WritingFile, cancellationToken);
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogWarning(ex, "The marker {Path} of a write of a chunk cannot be read, so it is removed.", path);
-                TryDeleteFile(path);
-                continue;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // On Windows, a marker that a write that ends is removing cannot be opened for a moment, so the write is taken as alive, and the run is
-                // claimed later.
-                return true;
-            }
-
-            if (write is null)
-                continue;
-
-            if (write.AliveUtc + WriteLease > UtcNow)
-                return true;
-
-            TryDeleteFile(path);
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Removes the reservations of keys whose uploads were never created or that cannot be read, the markers of reservations that were released, and
-    /// temporary files that are left.
-    /// </summary>
-    private async Task CleanUpKeysAsync(string userDirectory, DateTime strayBeforeUtc, DateTime strayFilesBeforeUtc, CancellationToken cancellationToken)
-    {
-        string keysDirectory = Path.Combine(userDirectory, KeysDirectoryName);
-        string[] paths;
-
-        try
-        {
-            paths = Directory.GetFiles(keysDirectory);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            return;
-        }
-
-        foreach (string path in paths)
-        {
-            if (path.EndsWith(TemporaryFileExtension, StringComparison.Ordinal) || path.EndsWith(ReleasedFileExtension, StringComparison.Ordinal))
-            {
-                if (File.GetLastWriteTimeUtc(path) < strayFilesBeforeUtc)
-                    TryDeleteFile(path);
-
-                continue;
-            }
-
-            try
-            {
-                var reservation = await ReadCreatedFileAsync(path, DirectoryUploadStoreJsonContext.Default.KeyFile, cancellationToken);
-
-                if (reservation.State is CreatedFileState.Broken)
-                {
-                    _logger.LogWarning("The reservation of an upload key in {Path} cannot be read, so it is released.", path);
-                    await ReleaseReservationAsync(path, GetBrokenReservationId(reservation.WrittenUtc), cancellationToken);
-                }
-                else if (reservation.Value is { } key && key.ReservedUtc < strayBeforeUtc && ShortLivedId.IsWellFormed(key.UploadId) &&
-                    !Exists(Path.Combine(userDirectory, key.UploadId, RecordFileName)))
-                {
-                    await ReleaseReservationAsync(path, key.ReservationId, cancellationToken);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _logger.LogWarning(ex, "The reservation of an upload key in {Path} could not be cleaned up.", path);
-            }
-        }
-
-        try
-        {
-            if (!Directory.EnumerateFileSystemEntries(keysDirectory).Any())
-                Directory.Delete(keysDirectory);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // A key was reserved in the meantime.
-        }
-    }
+    private IAbsoluteDirectoryPath GetUploadDirectory(string userId, string uploadId) => GetUserDirectory(userId).CombineDirectory(uploadId, PathOptions.None);
 
     /// <summary>
     /// Reads an upload with its current state. Files can be added and removed while it is read, such as when its claim is released or its outcome is
     /// stored, so a read that finds a file gone that it listed starts again a moment later.
     /// </summary>
-    private async ValueTask<StoredUpload?> ReadAsync(string directory, string? userId, string uploadId, bool withoutOutcome, CancellationToken cancellationToken)
+    private async ValueTask<StoredUpload?> ReadAsync(
+        IAbsoluteDirectoryPath directory, string? userId, string uploadId, bool withoutOutcome, CancellationToken cancellationToken)
     {
         for (int attempt = 1; ; attempt++)
         {
@@ -1411,31 +397,37 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
     /// <see langword="true"/>, and whether its files stayed as they were listed while they were read. On the last attempt, a file that is gone or still
     /// being written is taken as it is: a run without a claim, no outcome yet, and a file whose last write is the upload's creation.</returns>
     private async ValueTask<(StoredUpload? Upload, bool IsConsistent)> TryReadAsync(
-        string directory, string? userId, string uploadId, bool withoutOutcome, bool isLastAttempt, CancellationToken cancellationToken)
+        IAbsoluteDirectoryPath directory, string? userId, string uploadId, bool withoutOutcome, bool isLastAttempt, CancellationToken cancellationToken)
     {
         HashSet<string> names;
 
         try
         {
-            names = Directory.EnumerateFileSystemEntries(directory).Select(Path.GetFileName).ToHashSet(StringComparer.Ordinal)!;
+            names = directory.GetChildEntries().Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
         }
         catch (DirectoryNotFoundException)
         {
             return (null, true);
         }
 
-        if (names.Contains(DeletedFileName) || !names.Contains(RecordFileName) || (withoutOutcome && names.Contains(OutcomeFileName)))
+        // An upload that 4.x finished is not kept. Its directory is removed at the first cleanup after the upgrade.
+        // TODO 6.0: remove the check of its outcome.json.
+        if (names.Contains(DeletedFileName) || !names.Contains(RecordFileName) || names.Contains(LegacyOutcomeFileName) ||
+            (withoutOutcome && names.Contains(FinishedFileName)))
+        {
             return (null, true);
+        }
 
         RecordFile? recordFile;
 
         try
         {
-            recordFile = await ReadFileAsync(Path.Combine(directory, RecordFileName), DirectoryUploadStoreJsonContext.Default.RecordFile, cancellationToken);
+            recordFile = await ReadFileAsync(
+                directory.CombineFile(RecordFileName, PathOptions.None), DirectoryUploadStoreJsonContext.Default.RecordFile, cancellationToken);
         }
         catch (JsonException ex)
         {
-            _logger.LogWarning(ex, "The record of the upload in {Directory} cannot be read.", directory);
+            _logger.LogWarning(ex, "The record of the upload in {Directory} cannot be read.", directory.PathDisplay);
             return (null, true);
         }
 
@@ -1447,21 +439,21 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
         if (recordFile.Id != uploadId || (userId is not null && recordFile.UserId != userId))
             return (null, true);
 
-        var record = new UploadRecord(
-            recordFile.Id, recordFile.UserId, recordFile.Length, recordFile.ChunkSize, recordFile.CreatedUtc, recordFile.Metadata, recordFile.IdempotencyKey);
+        var record = ToRecord(recordFile);
 
-        if (names.Contains(OutcomeFileName))
+        // An upload that is being finished, or whose server stopped while it finished it, has its outcome in its directory.
+        if (names.Contains(FinishedFileName))
         {
-            string outcomePath = Path.Combine(directory, OutcomeFileName);
-            var outcome = await ReadCreatedFileAsync(outcomePath, DirectoryUploadStoreJsonContext.Default.OutcomeFile, cancellationToken);
+            var finishedFile = directory.CombineFile(FinishedFileName, PathOptions.None);
+            var outcome = await ReadCreatedFileAsync(finishedFile, DirectoryUploadStoreJsonContext.Default.OutcomeFile, cancellationToken);
 
             switch (outcome.State)
             {
                 case CreatedFileState.Complete:
                     return (new StoredUpload(record, record.CreatedUtc, outcome: outcome.Value!.Outcome, outcomeUtc: outcome.Value.StoredUtc), true);
                 case CreatedFileState.Broken:
-                    // The service reports an outcome that it cannot read, and the upload is removed when the outcome's file is no longer kept.
-                    _logger.LogWarning("The outcome of the upload in {Directory} cannot be read.", directory);
+                    // The service reports an outcome that it cannot read, which the cleanup keeps as such in the user's outcomes.
+                    _logger.LogWarning("The outcome of the upload in {Directory} cannot be read.", directory.PathDisplay);
                     return (new StoredUpload(record, record.CreatedUtc, outcome: string.Empty, outcomeUtc: outcome.WrittenUtc), true);
                 case CreatedFileState.Missing:
                     return (null, false);
@@ -1476,7 +468,8 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
 
         if (names.Contains(ClaimFileName))
         {
-            claim = await ReadCreatedFileAsync(Path.Combine(directory, ClaimFileName), DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken);
+            var claimFile = directory.CombineFile(ClaimFileName, PathOptions.None);
+            claim = await ReadCreatedFileAsync(claimFile, DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken);
 
             // The claim was released, or an outcome was stored, while the upload was read.
             if (claim.State is CreatedFileState.Missing && !isLastAttempt)
@@ -1485,7 +478,7 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
 
         // The file's last write time is the time of the last chunk. The file is removed once an outcome is stored, and a handler can move it while its run
         // is claimed.
-        var data = new FileInfo(Path.Combine(directory, DataFileName));
+        var data = new FileInfo(directory.CombineFile(DataFileName, PathOptions.None).PathExport);
 
         if (!data.Exists && claim.State is CreatedFileState.Missing && !isLastAttempt)
             return (null, false);
@@ -1496,7 +489,7 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
         {
             case CreatedFileState.Complete:
                 // An outcome that was stored while the claim was read ends the run.
-                if (Exists(Path.Combine(directory, OutcomeFileName)) && !isLastAttempt)
+                if (Exists(directory.CombineFile(FinishedFileName, PathOptions.None)) && !isLastAttempt)
                     return (null, false);
 
                 var state = claim.Value!.RenewedUtc + claim.Value.LeaseDuration < UtcNow ? UploadRunState.Lapsed : UploadRunState.Running;
@@ -1505,7 +498,7 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
                 return (new StoredUpload(record, lastWriteUtc, UploadRunState.Running, claim.WrittenUtc), true);
             case CreatedFileState.Broken:
                 // A claim that cannot be read is taken as lapsed, which ends the upload as interrupted.
-                _logger.LogWarning("The claim of the run of the upload in {Directory} cannot be read.", directory);
+                _logger.LogWarning("The claim of the run of the upload in {Directory} cannot be read.", directory.PathDisplay);
                 return (new StoredUpload(record, lastWriteUtc, UploadRunState.Lapsed, claim.WrittenUtc), true);
         }
 
@@ -1513,172 +506,36 @@ internal sealed class DirectoryUploadStore : IUploadStore, IDisposable
     }
 
     /// <summary>
-    /// A file that is created with its content: its state, its content once it is complete, and the time it was last written while it cannot be read.
-    /// </summary>
-    private readonly record struct CreatedFile<T>(CreatedFileState State, T? Value, DateTime WrittenUtc)
-        where T : class;
-
-    /// <summary>
-    /// A claim of a run, kept in the upload's <c>claim</c> file.
-    /// </summary>
-    private sealed class Claim(DirectoryUploadStore store, string directory, string claimId, UploadRecord upload) : IUploadRunClaim
-    {
-        private string ClaimPath => Path.Combine(directory, ClaimFileName);
-
-        public async ValueTask<bool> RenewAsync(CancellationToken cancellationToken = default)
-        {
-            if (HasOutcomeOrIsDeleted(directory) || await ReadCurrentAsync(cancellationToken) is not { } claim)
-                return false;
-
-            var renewed = new ClaimFile {
-                ClaimId = claim.ClaimId, LeaseDuration = claim.LeaseDuration, StartedUtc = claim.StartedUtc, RenewedUtc = store.UtcNow,
-            };
-
-            await WriteFileAsync(ClaimPath, renewed, DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken);
-            return true;
-        }
-
-        public async ValueTask ReleaseAsync(CancellationToken cancellationToken = default)
-        {
-            if (await ReadCurrentAsync(cancellationToken) is null)
-                return;
-
-            // The upload has all its chunks again, and is kept for as long as after its last chunk.
-            try
-            {
-                await RetryAsync(() => File.SetLastWriteTimeUtc(Path.Combine(directory, DataFileName), store.GetChunkTimeUtc(upload)), cancellationToken);
-            }
-            catch (FileNotFoundException)
-            {
-            }
-
-            // A claim that is left would lapse, which ends the upload as interrupted, so a claim that can't be removed fails the release.
-            await DeleteFileAsync(ClaimPath, cancellationToken);
-        }
-
-        /// <summary>
-        /// Removes the claim, if it is still this one, without touching the upload.
-        /// </summary>
-        public async Task RemoveAsync(CancellationToken cancellationToken)
-        {
-            if (await ReadCurrentAsync(cancellationToken) is not null)
-                await DeleteFileAsync(ClaimPath, cancellationToken);
-        }
-
-        private async Task<ClaimFile?> ReadCurrentAsync(CancellationToken cancellationToken)
-        {
-            var claim = await ReadFileAsync(ClaimPath, DirectoryUploadStoreJsonContext.Default.ClaimFile, cancellationToken);
-            return claim?.ClaimId == claimId ? claim : null;
-        }
-    }
-
-    /// <summary>
     /// The complete file of an upload, which is its <c>data</c> file until it is moved.
     /// </summary>
-    private sealed class FileContent(string path) : UploadContent
+    private sealed class FileContent(IAbsoluteFilePath file) : UploadContent
     {
-        private string _path = path;
+        private IAbsoluteFilePath _file = file;
 
-        public override string? FilePath => _path;
+        public override IAbsoluteFilePath? File => _file;
 
         public override Stream OpenReadStream()
         {
             // Deleting the upload, such as when it is aborted, removes the file while it is open.
-            return new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.Asynchronous);
+            return _file.OpenAsyncStream(FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         }
 
-        public override async Task MoveToAsync(string destinationPath, CancellationToken cancellationToken = default)
+        public override async Task MoveToAsync(IAbsoluteFilePath destination, CancellationToken cancellationToken = default)
         {
-            string fullPath = Path.GetFullPath(destinationPath);
             cancellationToken.ThrowIfCancellationRequested();
 
-            // A file on the same file system is renamed, and one on another is copied, which can be cancelled, where File.Move would copy it synchronously.
-            if (IsOnSameFileSystem(fullPath, _path))
+            // A file on the same file system is renamed, and one on another is copied, which can be cancelled, where a move would copy it synchronously.
+            if (IsOnSameFileSystem(destination, _file))
             {
-                File.Move(_path, fullPath, overwrite: false);
+                _file.MoveTo(destination, overwrite: false);
             }
             else
             {
-                await base.MoveToAsync(fullPath, cancellationToken);
-                TryDeleteFile(_path);
+                await base.MoveToAsync(destination, cancellationToken);
+                TryDeleteFile(_file);
             }
 
-            _path = fullPath;
+            _file = destination;
         }
     }
 }
-
-/// <summary>
-/// The record of an upload in its <c>upload.json</c> file.
-/// </summary>
-internal sealed class RecordFile
-{
-    public required string Id { get; init; }
-
-    public required string UserId { get; init; }
-
-    public required long Length { get; init; }
-
-    public required int ChunkSize { get; init; }
-
-    public required DateTime CreatedUtc { get; init; }
-
-    public required string Metadata { get; init; }
-
-    public string? IdempotencyKey { get; init; }
-}
-
-/// <summary>
-/// The claim of an upload's run in its <c>claim</c> file, with the time it was last renewed.
-/// </summary>
-internal sealed class ClaimFile
-{
-    public required string ClaimId { get; init; }
-
-    public required TimeSpan LeaseDuration { get; init; }
-
-    public required DateTime StartedUtc { get; init; }
-
-    public required DateTime RenewedUtc { get; init; }
-}
-
-/// <summary>
-/// The marker of a write of a chunk, with the time the write last showed that it is alive.
-/// </summary>
-internal sealed class WritingFile
-{
-    public required DateTime AliveUtc { get; init; }
-}
-
-/// <summary>
-/// The reservation of an idempotency key in its file in the <c>keys</c> directory of the user.
-/// </summary>
-internal sealed class KeyFile
-{
-    /// <summary>
-    /// Gets the ID of the reservation, which names the marker of its release.
-    /// </summary>
-    public required string ReservationId { get; init; }
-
-    public required string UploadId { get; init; }
-
-    public required DateTime ReservedUtc { get; init; }
-}
-
-/// <summary>
-/// The outcome of an upload in its <c>outcome.json</c> file.
-/// </summary>
-internal sealed class OutcomeFile
-{
-    public required string Outcome { get; init; }
-
-    public required DateTime StoredUtc { get; init; }
-}
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(RecordFile))]
-[JsonSerializable(typeof(ClaimFile))]
-[JsonSerializable(typeof(WritingFile))]
-[JsonSerializable(typeof(OutcomeFile))]
-[JsonSerializable(typeof(KeyFile))]
-internal sealed partial class DirectoryUploadStoreJsonContext : JsonSerializerContext;

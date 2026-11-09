@@ -12,6 +12,19 @@ public sealed class SharedShortLivedStore(TimeProvider timeProvider) : IShortLiv
     private readonly Lock _lock = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
 
+    public StoreSharingMode SharingMode => StoreSharingMode.Shared;
+
+    /// <summary>
+    /// Gets the number of entries, as a database store would count its rows. The rest it can't tell.
+    /// </summary>
+    public async ValueTask<ShortLivedStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default)
+    {
+        await Task.Yield();
+
+        lock (_lock)
+            return new ShortLivedStoreUsage { EntryCount = _entries.Count };
+    }
+
     /// <summary>
     /// Gets the keys that currently have a value or counter.
     /// </summary>
@@ -41,6 +54,15 @@ public sealed class SharedShortLivedStore(TimeProvider timeProvider) : IShortLiv
             _entries[key] = new Entry(Encoding.UTF8.GetBytes(value), now + lifetime);
             return true;
         }
+    }
+
+    public async ValueTask SetAsync(string key, string value, TimeSpan lifetime, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(lifetime, TimeSpan.Zero);
+        await Task.Yield();
+
+        lock (_lock)
+            _entries[key] = new Entry(Encoding.UTF8.GetBytes(value), timeProvider.GetUtcNow() + lifetime);
     }
 
     public async ValueTask<string?> GetAsync(string key, CancellationToken cancellationToken = default)

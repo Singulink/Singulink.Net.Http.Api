@@ -25,8 +25,6 @@ public sealed class ChunkedUploadCompletionTests
 
     public sealed record Done(string Name, string Hash);
 
-    public sealed record Note(string Text);
-
     public sealed record FolderCommand(string Title, int Priority);
 
     [TestMethod]
@@ -419,7 +417,7 @@ public sealed class ChunkedUploadCompletionTests
     }
 
     [TestMethod]
-    public async Task Abort_WhileRunning_CancelsHandlerAndRemovesUpload()
+    public async Task Cancel_WhileTheHandlerRuns_IsAccepted_CancelsItsToken_AndTheRunEndsTheUploadAsCancelled()
     {
         var started = new TaskCompletionSource();
         var cancelled = new TaskCompletionSource();
@@ -450,11 +448,11 @@ public sealed class ChunkedUploadCompletionTests
         await started.Task.WaitAsync(WaitTimeout);
 
         (await host.GetStatusAsync(session)).State.ShouldBe(UploadState.Processing);
-        (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
         await cancelled.Task.WaitAsync(WaitTimeout);
 
         var lines = await UploadTestHost.ReadLinesAsync(completion);
-        lines[^1].ShouldStartWith("""{"error":{"status":404,"code":"upload-not-found",""");
+        lines[^1].ShouldStartWith("""{"error":{"status":409,"code":"upload-cancelled",""");
 
         await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.NotFound, UploadErrorCodes.NotFound);
         Directory.Exists(directory).ShouldBeFalse();
@@ -624,10 +622,10 @@ public sealed class ChunkedUploadCompletionTests
     }
 
     [TestMethod]
-    public async Task UploadedFile_InDirectoryStore_HasFilePath()
+    public async Task UploadedFile_InDirectoryStore_HasFile()
     {
         await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, async (UploadedFile file) => {
-            byte[] content = await File.ReadAllBytesAsync(file.FilePath!);
+            byte[] content = await File.ReadAllBytesAsync(file.File!.PathExport);
 
             await using var stream = file.OpenReadStream();
             return new Note($"{content.Length} {stream.CanSeek} {stream.CanWrite}");
@@ -647,8 +645,8 @@ public sealed class ChunkedUploadCompletionTests
         try
         {
             await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, async (UploadedFile uploaded) => {
-                await uploaded.MoveToAsync(destination);
-                return new Note(uploaded.FilePath!);
+                await uploaded.MoveToAsync(TestPaths.ToFile(destination));
+                return new Note(uploaded.File!.PathDisplay);
             }));
 
             var (_, lines) = await host.UploadAsync(file);
@@ -670,10 +668,11 @@ public sealed class ChunkedUploadCompletionTests
         try
         {
             await using var host = await UploadTestHost.StartAsync(app => app.MapChunkedUpload(Pattern, async (UploadedFile uploaded) => {
-                string? path = uploaded.FilePath;
-                await Should.ThrowAsync<OperationCanceledException>(() => uploaded.MoveToAsync(destination, new CancellationToken(canceled: true)));
+                var file = uploaded.File!;
+                var moveTo = TestPaths.ToFile(destination);
+                await Should.ThrowAsync<OperationCanceledException>(() => uploaded.MoveToAsync(moveTo, new CancellationToken(canceled: true)));
 
-                return new Note($"{uploaded.FilePath == path} {File.Exists(path)} {File.Exists(destination)}");
+                return new Note($"{ReferenceEquals(uploaded.File, file)} {file.Exists} {File.Exists(destination)}");
             }));
 
             var (_, lines) = await host.UploadAsync(UploadTestHost.CreateFile(10));
@@ -712,7 +711,7 @@ public sealed class ChunkedUploadCompletionTests
     }
 
     [TestMethod]
-    public async Task Run_PastIdleExpiry_IsInterrupted()
+    public async Task Run_PastProcessingTimeout_IsInterrupted_AndNotAtIdleExpiry()
     {
         var clock = new ManualClock(manualTimestamps: true);
 
@@ -723,7 +722,8 @@ public sealed class ChunkedUploadCompletionTests
                 return new Note("never");
             }),
             options => {
-                options.IdleExpiry = TimeSpan.FromHours(1);
+                options.IdleExpiry = TimeSpan.FromMinutes(10);
+                options.ProcessingTimeout = TimeSpan.FromHours(1);
                 options.CompletionPingInterval = TimeSpan.FromHours(2);
             },
             timeProvider: clock);
@@ -733,7 +733,13 @@ public sealed class ChunkedUploadCompletionTests
 
         var completion = host.CompleteAsync(session);
         await WaitUntilAsync(() => clock.HasTimerDueIn(TimeSpan.FromHours(1)));
-        clock.Advance(TimeSpan.FromHours(1));
+
+        // The idle expiry applies to uploads that receive chunks, not to the run.
+        clock.Advance(TimeSpan.FromMinutes(30));
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+        completion.IsCompleted.ShouldBeFalse();
+
+        clock.Advance(TimeSpan.FromMinutes(30));
 
         await UploadTestHost.ShouldBeErrorAsync(await completion, HttpStatusCode.InternalServerError, UploadErrorCodes.Interrupted);
         await UploadTestHost.ShouldBeErrorAsync(await host.CompleteAsync(session), HttpStatusCode.InternalServerError, UploadErrorCodes.Interrupted);
@@ -760,7 +766,10 @@ public sealed class ChunkedUploadCompletionTests
                 await release.Task.WaitAsync(WaitTimeout);
                 return new Note("done");
             }),
-            options => options.IdleExpiry = TimeSpan.FromHours(3));
+            options => {
+                options.IdleExpiry = TimeSpan.FromHours(1);
+                options.ProcessingTimeout = TimeSpan.FromHours(3);
+            });
 
         var session = await host.CreateUploadAsync("a", 10);
         await host.PutChunksAsync(session, UploadTestHost.CreateFile(10));

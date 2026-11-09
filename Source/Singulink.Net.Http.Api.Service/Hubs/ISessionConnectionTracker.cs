@@ -8,6 +8,16 @@ namespace Singulink.Net.Http.Api.Service;
 internal interface ISessionConnectionTracker
 {
     /// <summary>
+    /// Gets the name of the session token type, which the metrics and the health check of hub sessions report the tracker by.
+    /// </summary>
+    string TokenTypeName { get; }
+
+    /// <summary>
+    /// Gets the tracked connections, the connections that rechecks ended since the app started, and the last round of rechecks.
+    /// </summary>
+    HubSessionTrackerStatus GetStatus();
+
+    /// <summary>
     /// Validates the session of a connection that is connecting if its cookie is due.
     /// </summary>
     ValueTask ValidateIfDueAsync(HubCallerContext connection);

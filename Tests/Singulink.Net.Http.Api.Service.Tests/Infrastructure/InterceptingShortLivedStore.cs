@@ -6,7 +6,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// </summary>
 public sealed class InterceptingShortLivedStore(IShortLivedStore inner) : IShortLivedStore
 {
-    private readonly List<(string Operation, string KeyPrefix)> _failures = [];
+    private readonly List<(string Operation, string Key, bool IsPrefix)> _failures = [];
 
     /// <summary>
     /// Gets or sets the code that runs before each operation with the operation's name (such as <c>"TryAdd"</c>) and key. It can throw to fail the
@@ -14,23 +14,46 @@ public sealed class InterceptingShortLivedStore(IShortLivedStore inner) : IShort
     /// </summary>
     public Action<string, string>? Before { get; set; }
 
+    public StoreSharingMode SharingMode => inner.SharingMode;
+
+    public ValueTask<ShortLivedStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default) =>
+        RunAsync("GetUsage", string.Empty, cancellationToken, () => inner.GetUsageAsync(cancellationToken));
+
     /// <summary>
     /// Gets or sets the code that runs after each operation that succeeded, with the operation's name and key.
     /// </summary>
     public Action<string, string>? After { get; set; }
 
     /// <summary>
+    /// Makes the next operation of the specified name on the specified key fail with an <see cref="InvalidOperationException"/>, as a store that cannot be
+    /// reached would.
+    /// </summary>
+    public void FailOnce(string operation, string key)
+    {
+        lock (_failures)
+            _failures.Add((operation, key, false));
+    }
+
+    /// <summary>
     /// Makes the next operation of the specified name on a key with the specified prefix fail with an <see cref="InvalidOperationException"/>, as a store
     /// that cannot be reached would.
     /// </summary>
-    public void FailOnce(string operation, string keyPrefix)
+    public void FailOnceWithPrefix(string operation, string keyPrefix)
     {
         lock (_failures)
-            _failures.Add((operation, keyPrefix));
+            _failures.Add((operation, keyPrefix, true));
     }
 
     public ValueTask<bool> TryAddAsync(string key, string value, TimeSpan lifetime, CancellationToken cancellationToken = default) =>
         RunAsync("TryAdd", key, cancellationToken, () => inner.TryAddAsync(key, value, lifetime, cancellationToken));
+
+    public async ValueTask SetAsync(string key, string value, TimeSpan lifetime, CancellationToken cancellationToken = default)
+    {
+        await RunAsync("Set", key, cancellationToken, async () => {
+            await inner.SetAsync(key, value, lifetime, cancellationToken);
+            return true;
+        });
+    }
 
     public ValueTask<string?> GetAsync(string key, CancellationToken cancellationToken = default) =>
         RunAsync("Get", key, cancellationToken, () => inner.GetAsync(key, cancellationToken));
@@ -53,7 +76,7 @@ public sealed class InterceptingShortLivedStore(IShortLivedStore inner) : IShort
     {
         lock (_failures)
         {
-            int index = _failures.FindIndex(f => f.Operation == operation && key.StartsWith(f.KeyPrefix, StringComparison.Ordinal));
+            int index = _failures.FindIndex(f => f.Operation == operation && (f.IsPrefix ? key.StartsWith(f.Key, StringComparison.Ordinal) : key == f.Key));
 
             if (index >= 0)
             {

@@ -269,7 +269,7 @@ public abstract class ClientRateLimitTests
         var configuration = new ConfigurationBuilder().AddJsonStream(new MemoryStream(Encoding.UTF8.GetBytes(json))).Build();
         var section = configuration.GetSection("RateLimits");
 
-        var bound = new ClientRateLimitOptions();
+        var bound = Activator.CreateInstance<ClientRateLimitOptions>();
         section.Bind(bound);
         bound.ExemptNetworks.ShouldBe(["203.0.113.7/32", "2001:db8:1234::/48"]);
         bound.Window.ShouldBe(TimeSpan.FromMinutes(5));
@@ -382,6 +382,9 @@ public abstract class ClientRateLimitTests
 
                 return $"{request.Path} {rejection.RejectionMessage ?? "(none)"} {request.Headers["X-Lang"]} {seconds}";
             }));
+
+        // Windows are aligned to the clock, so the test starts at the start of an hour, whose window of the limit ends after that of the global limiter.
+        Clock.Advance(TimeSpan.FromTicks(TimeSpan.TicksPerHour - (Clock.GetUtcNow().UtcTicks % TimeSpan.TicksPerHour)));
 
         await SendAsync(host, ClientA);
         var byPolicy = await SendAsync(host, ClientA, "/limited", ("X-Lang", "fr"));
@@ -623,8 +626,9 @@ public abstract class ClientRateLimitTests
     [TestMethod]
     public void Options_RejectInvalidValues()
     {
-        var options = new ClientRateLimitOptions();
+        var options = new ClientRateLimitOptions { PermitLimit = 1 };
 
+        Should.Throw<ArgumentOutOfRangeException>(() => options.PermitLimit = 0);
         Should.Throw<ArgumentOutOfRangeException>(() => options.PermitLimit = -1);
         Should.Throw<ArgumentOutOfRangeException>(() => options.Window = TimeSpan.Zero);
         Should.Throw<ArgumentOutOfRangeException>(() => options.QueueLimit = -1);
@@ -661,7 +665,8 @@ public abstract class ClientRateLimitTests
     [TestMethod]
     public void Options_Defaults()
     {
-        var options = new ClientRateLimitOptions();
+        // As the options are created when they are bound from a configuration, without their required values.
+        var options = Activator.CreateInstance<ClientRateLimitOptions>();
 
         options.Enabled.ShouldBeTrue();
         options.PermitLimit.ShouldBe(0);

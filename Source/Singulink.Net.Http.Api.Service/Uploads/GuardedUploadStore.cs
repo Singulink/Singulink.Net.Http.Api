@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 namespace Singulink.Net.Http.Api.Service.Uploads;
 
@@ -8,12 +10,18 @@ namespace Singulink.Net.Http.Api.Service.Uploads;
 /// The upload store as the service uses it: a failure of the store, such as a share that can't be reached for a moment, is logged and reported as
 /// <see cref="UploadErrorCodes.StoreUnavailable"/>, which clients retry, rather than as a server error, which fails the upload for good.
 /// </summary>
-internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : IUploadStore
+internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger, TimeProvider timeProvider, HttpApiMetrics? metrics) : IUploadStore
 {
+    private long _failures;
+    private long _lastFailureTicks;
+
     /// <summary>
     /// The retry time of a request that the store failed.
     /// </summary>
     internal static readonly TimeSpan RetryAfter = TimeSpan.FromSeconds(2);
+
+    // The tags of the operations for the metrics, made once for each operation's name.
+    private static readonly ConcurrentDictionary<string, string> OperationTags = [];
 
     public int MinChunkSize => store.MinChunkSize;
 
@@ -21,31 +29,32 @@ internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : I
 
     public int MaxChunkCount => store.MaxChunkCount;
 
-    public async ValueTask<UploadKeyReservation> ReserveKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
+    public StoreSharingMode SharingMode => store.SharingMode;
+
+    /// <summary>
+    /// Gets the number of operations that failed and were reported as unavailable since the store was created, and when the last one failed.
+    /// </summary>
+    public (long Count, DateTimeOffset? LastUtc) Failures
     {
-        try
-        {
-            return await store.ReserveKeyAsync(userId, key, uploadId, cancellationToken);
-        }
-        catch (Exception ex) when (IsStoreFailure(ex, cancellationToken))
-        {
-            throw Unavailable(ex, nameof(ReserveKeyAsync));
+        get {
+            long lastTicks = Interlocked.Read(ref _lastFailureTicks);
+            return (Interlocked.Read(ref _failures), lastTicks is 0 ? null : new DateTimeOffset(lastTicks, TimeSpan.Zero));
         }
     }
 
-    public async ValueTask ReleaseKeyAsync(string userId, string key, string uploadId, CancellationToken cancellationToken = default)
+    public async ValueTask<UploadStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            await store.ReleaseKeyAsync(userId, key, uploadId, cancellationToken);
+            return await store.GetUsageAsync(cancellationToken);
         }
         catch (Exception ex) when (IsStoreFailure(ex, cancellationToken))
         {
-            throw Unavailable(ex, nameof(ReleaseKeyAsync));
+            throw Unavailable(ex, nameof(GetUsageAsync));
         }
     }
 
-    public async ValueTask<bool> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
+    public async ValueTask<UploadCreationResult> TryCreateAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -69,10 +78,9 @@ internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : I
         }
     }
 
-    public async IAsyncEnumerable<StoredUpload> ListAsync(
-        string? userId = null, bool withoutOutcomes = false, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<StoredUpload> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await using var uploads = store.ListAsync(userId, withoutOutcomes, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        await using var uploads = store.ListAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
 
         while (true)
         {
@@ -98,7 +106,8 @@ internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : I
         }
         catch (Exception ex) when (IsStoreFailure(ex, cancellationToken) && content is not ChunkContentStream { BodyException: not null })
         {
-            // A failure of the chunk's body, such as of a client that drops the connection, is the request's, which the chunk endpoint reports.
+            // A failure of the chunk's body, such as of a client that drops the connection, is the request's, which the chunk endpoint reports. Only the
+            // service calls this, and it always passes a ChunkContentStream.
             throw Unavailable(ex, nameof(WriteChunkAsync));
         }
     }
@@ -151,15 +160,27 @@ internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : I
         }
     }
 
-    public async ValueTask DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> DeleteAsync(UploadRecord upload, CancellationToken cancellationToken = default)
     {
         try
         {
-            await store.DeleteAsync(upload, cancellationToken);
+            return await store.DeleteAsync(upload, cancellationToken);
         }
         catch (Exception ex) when (IsStoreFailure(ex, cancellationToken))
         {
             throw Unavailable(ex, nameof(DeleteAsync));
+        }
+    }
+
+    public async ValueTask RemoveOutcomesAsync(DateTime storedBeforeUtc, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await store.RemoveOutcomesAsync(storedBeforeUtc, cancellationToken);
+        }
+        catch (Exception ex) when (IsStoreFailure(ex, cancellationToken))
+        {
+            throw Unavailable(ex, nameof(RemoveOutcomesAsync));
         }
     }
 
@@ -186,9 +207,36 @@ internal sealed class GuardedUploadStore(IUploadStore store, ILogger logger) : I
 
     private ServiceUnavailableApiException Unavailable(Exception exception, string operation)
     {
+        Interlocked.Increment(ref _failures);
+        Interlocked.Exchange(ref _lastFailureTicks, timeProvider.GetUtcNow().UtcTicks);
+        metrics?.UploadStoreFailed(OperationTags.GetOrAdd(operation, CreateOperationTag));
+
         logger.LogWarning(
             exception, "The upload store failed ({Operation}), which is reported as unavailable for a moment, so that it is tried again.", operation);
         return UploadErrors.StoreUnavailable(RetryAfter, exception);
+    }
+
+    /// <summary>
+    /// Creates the tag of an operation for the metrics, such as <c>write_chunk</c> for <see cref="WriteChunkAsync"/>.
+    /// </summary>
+    private static string CreateOperationTag(string operation)
+    {
+        var name = operation.AsSpan();
+
+        if (name.EndsWith("Async", StringComparison.Ordinal))
+            name = name[..^5];
+
+        var tag = new StringBuilder(name.Length + 4);
+
+        foreach (char c in name)
+        {
+            if (char.IsUpper(c) && tag.Length > 0)
+                tag.Append('_');
+
+            tag.Append(char.ToLowerInvariant(c));
+        }
+
+        return tag.ToString();
     }
 
     /// <summary>

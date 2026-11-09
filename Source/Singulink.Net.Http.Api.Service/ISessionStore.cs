@@ -40,9 +40,9 @@ public interface ISessionStore<TSessionToken>
 
     /// <summary>
     /// Updates the session that the specified session token belongs to with the values of <paramref name="refreshedSession"/>, if its stored generation is
-    /// still <paramref name="expectedGeneration"/>. Returns <see langword="true"/> if the session was updated, or <see langword="false"/> if it no longer
-    /// exists or its generation has changed.
+    /// still <paramref name="expectedGeneration"/>.
     /// </summary>
+    /// <returns><see langword="true"/> if the session was updated, or <see langword="false"/> if it no longer exists or its generation has changed.</returns>
     /// <param name="sessionToken">The token of the session to update.</param>
     /// <param name="refreshedSession">The values to store: <see cref="SessionRecord.Device"/>, <see cref="SessionRecord.IpAddress"/>,
     /// <see cref="SessionRecord.RefreshedUtc"/>, <see cref="SessionRecord.ExpiresUtc"/> and <see cref="SessionRecord.Generation"/>. Its

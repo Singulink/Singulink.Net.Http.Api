@@ -297,9 +297,9 @@ static Task<int> RemoveExpiredSessionsAsync(AppDbContext db, TimeProvider time)
 
 The expiry time of a record is capped at the end of the maximum lifetime that was configured when the record was written. Validation also applies the maximum lifetime that is configured now, so a session whose limit was shortened since its record was last written ends at the new limit, before its expiry time.
 
-## Upgrading from 3.x
+## Upgrading to 4.0
 
-See [Upgrading from 3.x](upgrading.md) for the changes to session tokens, session stores and the session cookie.
+See [Upgrading to 4.0](../upgrading/upgrading-to-4.md) for the changes to session tokens, session stores and the session cookie.
 
 ## Next Steps
 

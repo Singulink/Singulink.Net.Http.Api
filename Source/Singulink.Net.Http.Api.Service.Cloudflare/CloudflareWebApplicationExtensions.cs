@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Builder;
+
 namespace Singulink.Net.Http.Api.Service;
 
 /// <summary>
@@ -6,11 +8,14 @@ namespace Singulink.Net.Http.Api.Service;
 public static class CloudflareWebApplicationExtensions
 {
     /// <summary>
-    /// Adds middleware that trusts the client address and scheme forwarded by Cloudflare. Requires the services registered by <see
-    /// cref="CloudflareServiceCollectionExtensions.AddCloudflareForwarding(IServiceCollection, Action{CloudflareForwardingOptions}?)"/>.
+    /// Adds middleware that trusts the client address and scheme forwarded by Cloudflare.
     /// </summary>
     /// <param name="app">The application.</param>
     /// <remarks>
+    /// <para>
+    /// Requires the services registered by
+    /// <see cref="CloudflareServiceCollectionExtensions.AddCloudflareForwarding(IServiceCollection, Action{CloudflareForwardingOptions}?)"/>.
+    /// </para>
     /// <para>
     /// Call this first in the pipeline, before any middleware that uses the client's address or the request scheme (such as HTTPS redirection, rate limiting
     /// or request logging).
@@ -30,7 +35,7 @@ public static class CloudflareWebApplicationExtensions
     /// Until Cloudflare's IP ranges are available, requests through Cloudflare cannot be told apart from direct connections, so every request is refused
     /// with a <c>503 Service Unavailable</c> response in the toolkit's error format, with the error code
     /// <see cref="ApiErrorCodes.CloudflareRangesUnavailable"/> and a <c>Retry-After</c> header. This only happens when the ranges could not be downloaded at
-    /// startup and there is no usable saved copy (see <see cref="CloudflareForwardingOptions.SavedRangesPath"/>). The response is written before the
+    /// startup and there is no usable saved copy (see <see cref="CloudflareForwardingOptions.SavedRangesFile"/>). The response is written before the
     /// middleware that comes after this one runs, such as CORS, so it has no CORS headers and pages on other origins cannot read it.
     /// </para>
     /// </remarks>

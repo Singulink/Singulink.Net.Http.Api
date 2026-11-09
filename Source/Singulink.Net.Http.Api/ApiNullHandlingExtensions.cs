@@ -14,19 +14,20 @@ namespace Singulink.Net.Http.Api;
 /// <see cref="JsonRequiredAttribute"/>. Required members that are nullable are optional: a missing constructor parameter is read as <see langword="null"/>,
 /// and a missing property is left as it is. Rejected values throw a <see cref="JsonException"/>.</para>
 /// <para>
-/// Writing JSON rejects a <see langword="null"/> value in a property that is not nullable too, with a <see cref="JsonException"/>. Other <see
-/// langword="null"/> values are written unless <see cref="JsonSerializerOptions.DefaultIgnoreCondition"/> says otherwise, and are read back as <see
-/// langword="null"/>, also for a member whose default value is not <see langword="null"/>.</para>
+/// Writing JSON rejects a <see langword="null"/> value in a property that is not nullable too, with a <see cref="JsonException"/>. Other
+/// <see langword="null"/> values are written unless <see cref="JsonSerializerOptions.DefaultIgnoreCondition"/> says otherwise, and are read back as
+/// <see langword="null"/>, also for a member whose default value is not <see langword="null"/>.</para>
 /// </remarks>
 public static class ApiNullHandlingExtensions
 {
     /// <summary>
     /// Applies the null handling to the options and to the type info of their current type info resolvers (see <see cref="ApiNullHandlingExtensions"/>).
-    /// It must be called after the options' contexts and other resolvers are added: resolvers added afterwards are not covered.
     /// </summary>
     /// <param name="options">The options to configure.</param>
     /// <returns>The options, so that calls can be chained.</returns>
     /// <remarks>
+    /// <para>
+    /// It must be called after the options' contexts and other resolvers are added: resolvers added afterwards are not covered.</para>
     /// <para>
     /// Sets <see cref="JsonSerializerOptions.RespectNullableAnnotations"/> and <see cref="JsonSerializerOptions.RespectRequiredConstructorParameters"/> to
     /// <see langword="true"/>, and makes required members that are nullable optional in the type info that the options' resolvers provide.</para>

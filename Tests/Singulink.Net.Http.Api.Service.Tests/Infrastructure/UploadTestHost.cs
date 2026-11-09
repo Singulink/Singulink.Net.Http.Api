@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -61,6 +62,14 @@ public sealed class UploadTestHost : IAsyncDisposable
     /// <param name="configureServices">Registers more services, such as an upload store.</param>
     /// <param name="timeProvider">The time provider of the service instead of the clock, such as a <see cref="ManualClock"/>, whose time the clock then
     /// starts at.</param>
+    /// <param name="kestrel">Whether the host runs on Kestrel on a port of the loopback address rather than on the test server.</param>
+    /// <param name="backgroundCleanup">Whether the cleanup runs in the background, as on a server: at the start, and each time its interval passes on the time
+    /// provider. Without it, a cleanup only runs when a test runs one, so that nothing changes or lists the store between the steps of a test.</param>
+    /// <param name="shortLivedStore">The short-lived store, which keeps the counts of open uploads, such as one that another host uses too, as servers that
+    /// share uploads must, or <see langword="null"/> for a memory store of the host's own. The directory store is shared (see
+    /// <see cref="DirectoryUploadStoreOptions.SharingMode"/>) if the short-lived store is, such as a <see cref="DeclaredSharedShortLivedStore"/>. Otherwise it
+    /// is process-local. A store that <paramref name="configureServices"/> registers takes the directory store's place, and a call of
+    /// <see cref="ServiceCollectionExtensions.AddDirectoryUploadStore"/> there configures the directory store after these values.</param>
     public static async Task<UploadTestHost> StartAsync(
         Action<WebApplication> map,
         Action<ChunkedUploadOptions>? configure = null,
@@ -69,7 +78,10 @@ public sealed class UploadTestHost : IAsyncDisposable
         TestClock? clock = null,
         bool development = false,
         Action<IServiceCollection>? configureServices = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        bool kestrel = false,
+        bool backgroundCleanup = false,
+        IShortLivedStore? shortLivedStore = null)
     {
         bool ownsDirectory = directory is null;
         directory ??= CreateDirectoryPath();
@@ -99,17 +111,28 @@ public sealed class UploadTestHost : IAsyncDisposable
                     services.AddSingleton(dataProtection);
 
                 services.AddSingleton(timeProvider ?? clock);
+
+                if (shortLivedStore is not null)
+                    services.AddSingleton(shortLivedStore);
+
                 services.AddApiExceptionHandler();
                 services.AddAllowedOrigins("example.com");
                 services.AddSingleton(sessions);
                 services.AddHttpSessionHandling<TestSessionToken, ScopedInMemorySessionStore>();
-                services.AddChunkedUploads<TestSessionToken>(options => {
-                    options.Directory = directory;
-                    configure?.Invoke(options);
+                services.AddChunkedUploads<TestSessionToken>(options => configure?.Invoke(options));
+
+                var sharingMode = shortLivedStore is { SharingMode: StoreSharingMode.Shared } ? StoreSharingMode.Shared : StoreSharingMode.ProcessLocal;
+                services.AddDirectoryUploadStore(options => {
+                    options.Directory = TestPaths.ToDirectory(directory);
+                    options.SharingMode = sharingMode;
                 });
 
                 configureServices?.Invoke(services);
-            });
+
+                if (!backgroundCleanup)
+                    services.Remove(services.Single(s => s.ImplementationType == typeof(ChunkedUploadCleanup)));
+            },
+            kestrel: kestrel);
 
         return new UploadTestHost(web, directory, ownsDirectory, clock);
     }
@@ -144,6 +167,11 @@ public sealed class UploadTestHost : IAsyncDisposable
             body.ShouldStartWith($"[{errorCode}] ", Case.Sensitive, body);
     }
 
+    /// <summary>
+    /// Gets the lines of a completion's stream without its pings, whose number depends on timing.
+    /// </summary>
+    public static List<string> WithoutPings(List<string> lines) => [.. lines.Where(l => l != """{"ping":true}""")];
+
     public static async Task<List<string>> ReadLinesAsync(HttpResponseMessage response)
     {
         string body = await response.Content.ReadAsStringAsync();
@@ -164,6 +192,37 @@ public sealed class UploadTestHost : IAsyncDisposable
 
         return request;
     }
+
+    /// <summary>
+    /// Creates the request of a direct upload of the user: the file as the body, and the values of its creation in the creation header. The length is that of
+    /// the content, unless it is specified.
+    /// </summary>
+    public HttpRequestMessage CreateDirectRequest(
+        HttpContent content,
+        string fileName = "photo.jpg",
+        string? key = null,
+        string path = Path,
+        int userId = 1,
+        string? query = null,
+        string? contentType = null,
+        object? command = null,
+        long? length = null,
+        Guid? id = null)
+    {
+        var request = CreateRequest(HttpMethod.Post, $"{path}/uploads/direct{(query is null ? null : "?" + query)}", userId);
+        request.Content = content;
+
+        length ??= content.Headers.ContentLength ?? throw new ArgumentException("The content has no length.", nameof(content));
+        var creation = new { id, fileName, length, contentType, command, idempotencyKey = key };
+        request.Headers.TryAddWithoutValidation("Upload-Creation", EncodeHeader(JsonSerializer.SerializeToUtf8Bytes(creation, JsonOptions)));
+
+        return request;
+    }
+
+    /// <summary>
+    /// Encodes the value of the creation header of a direct upload as base64url without padding.
+    /// </summary>
+    public static string EncodeHeader(byte[] bytes) => Base64Url.EncodeToString(bytes);
 
     public Task<HttpResponseMessage> SendCreateAsync(object body, string path = Path, int userId = 1, string? query = null)
     {
@@ -263,6 +322,11 @@ public sealed class UploadTestHost : IAsyncDisposable
     /// </summary>
     public string GetUploadDirectory(UploadSession session) => System.IO.Directory.GetDirectories(Directory, session.Id, SearchOption.AllDirectories).Single();
 
+    /// <summary>
+    /// Gets the file of the outcome of a finished upload in the directory store, in the user's outcomes.
+    /// </summary>
+    public string GetOutcomeFile(UploadSession session) => System.IO.Directory.GetFiles(Directory, session.Id + ".*", SearchOption.AllDirectories).Single();
+
     public async ValueTask DisposeAsync()
     {
         await Web.DisposeAsync();
@@ -272,16 +336,26 @@ public sealed class UploadTestHost : IAsyncDisposable
     }
 
     /// <summary>
-    /// Deletes a temporary directory of a test if it can, such as when no file in it is open in another process.
+    /// Deletes a temporary directory of a test if it can, again a moment later while a file in it is open in another process, such as a virus scanner, which
+    /// leaves the file being deleted, and the directory with it.
     /// </summary>
     public static void DeleteDirectory(string directory)
     {
-        try
+        for (int attempt = 1; attempt <= 10; attempt++)
         {
-            System.IO.Directory.Delete(directory, recursive: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
+            try
+            {
+                System.IO.Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(100);
+            }
         }
     }
 }

@@ -33,7 +33,7 @@ Like the app's own contracts, they are listed in the app's `JsonSerializerContex
 
 ## The Short-Lived Store
 
-<xref:Singulink.Net.Http.Api.Service.IShortLivedStore> keeps short-lived state between requests: the toolkit keeps its sign-in codes, device links, passkey ceremonies and rate limit counts there, and your service can keep the state of its own flows, such as a setup ticket. Values are strings that expire after a lifetime.
+<xref:Singulink.Net.Http.Api.Service.IShortLivedStore> keeps short-lived state between requests: the toolkit keeps its sign-in codes, device links, passkey ceremonies, rate limit counts and the counts of open chunked uploads there, and your service can keep the state of its own flows, such as a setup ticket. Values are strings that expire after a lifetime. Each feature of the toolkit resolves its store with a key of <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys>, and your service uses the store registered without a key (see [Running Multiple Servers](multiple-servers.md#the-short-lived-store)).
 
 <xref:Singulink.Net.Http.Api.Service.ShortLivedState`1> keeps states of one type as JSON under a key prefix of your own, each for the same lifetime, with the `JsonTypeInfo<T>` of a source-generated serializer context so that trimming and AOT keep working. The prefix keeps each kind of state apart, so an ID presented to the wrong step of a flow finds nothing. <xref:Singulink.Net.Http.Api.Service.ShortLivedState`1.AddAsync*> stores a state under a new random ID and returns the ID, for the client to present in the next step. The ID is 256 bits of randomness, so it also serves as the secret that protects the state. A class derived from it can be registered as a service:
 
@@ -73,17 +73,25 @@ if (!permit.IsAcquired)
 
 Windows start at fixed times on the clock (a one-hour window starts at every full hour), so every server counts the same window. Every attempt is counted, including the ones that acquire no permit. The store only receives a hash of the key, so a key such as an email address is not kept in it. Keys are compared exactly, so the sample upper-cases the address: `A@example.com` and `a@example.com` would otherwise be counted apart, each with a limit of its own.
 
-The default store, <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStore>, keeps everything in the memory of its server, and a restart only interrupts the flows in progress. A store backed by shared storage, such as Redis or a database table, shares the state between the servers of a service; see [Running Multiple Servers](multiple-servers.md).
+The default store, <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStore>, keeps everything in the memory of its server, and a restart interrupts the flows in progress and empties the counts of open uploads until the first cleanup of uploads after the start (see [Limits of open uploads](uploads.md#limits-of-open-uploads)). A store backed by shared storage, such as Redis or a database table, shares the state between the servers of a service; see [Running Multiple Servers](multiple-servers.md).
 
 #### The memory store's size
 
-The memory store holds about 256 MiB of values and counters, set with <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStoreOptions.MaxSize> in bytes:
+With the default memory store, a service has up to four memory stores: one for the app's own values, which holds about 256 MiB of values and counters, and one for each key of <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys> that a feature in use resolves, which holds about 64 MiB, so up to about 448 MiB together. Their sizes are set with <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStoreOptions.MaxSize> in bytes:
 
 ```csharp
 builder.Services.AddShortLivedStore(options => options.MaxSize = 64 * 1024 * 1024);
 ```
 
+That sets the size of the store of the app's own values. The size of a key's memory store is set with the named options of its key:
+
+```csharp
+builder.Services.Configure<MemoryShortLivedStoreOptions>(ShortLivedStoreKeys.Uploads, options => options.MaxSize = 32 * 1024 * 1024);
+```
+
 The size is an estimate: each entry counts 2 bytes per character of its key and value, plus about 120 bytes. When adding a value or starting a counter would go over it, expired entries are removed first. If that does not make enough room, the operation throws a <xref:Singulink.Net.Http.Api.ServiceUnavailableApiException> with the error code `short-lived-store-full` and a `Retry-After` of a minute, so the request receives a `503 Service Unavailable` error, and a warning is logged, at most once a minute. A rate limit that cannot count a request refuses it with the same error. Reading, taking and removing values, and changing counters that already exist, always work.
+
+Everything that uses one store shares its size, so the app's values, the sign-in state, the rate limit counts and the counts of open uploads each have a size of their own. The store of uploads holds two counters for each user who has open uploads or had some in the last 15 minutes, and one for all users, each kept for every machine whose servers count their own open uploads. A full store fails the creation of an upload of a user who has no counts with this error, while the counts of other users keep changing.
 
 ## Sign-In Codes
 
@@ -245,7 +253,7 @@ The rules are:
 - <xref:Singulink.Net.Http.Api.Service.SignIn.DeviceLinks.CheckAsync*> checks the poll secret in fixed time and throws <xref:Singulink.Net.Http.Api.UnauthorizedApiException> (`device-link-expired`) for an unknown or expired link or a wrong secret. Once the link is approved, every check gets the same sign-in code, so the new device can simply check again if a response does not reach it; the code can be redeemed once, and only with the new device's verifier. An approval made in the last seconds of the link can still be collected for a minute after the code expires.
 - <xref:Singulink.Net.Http.Api.Service.SignIn.DeviceLinks.PollAsync*> does the same, and returns `null` instead of throwing. Its result also has the ID of the user who approved the link (<xref:Singulink.Net.Http.Api.Service.SignIn.DeviceLinkPollResult.ApproverUserId>).
 
-Links, wrong code counts and the sign-in codes are kept in the registered <xref:Singulink.Net.Http.Api.Service.IShortLivedStore>, so each step can run on a different server when the store is shared.
+Links, wrong code counts and the sign-in codes are kept in the store of <xref:Singulink.Net.Http.Api.Service.ShortLivedStoreKeys.SignIn>, so each step can run on a different server when the store is shared.
 
 ## Short Codes
 
@@ -297,7 +305,7 @@ builder.Services.Configure<SignInCodeOptions>(builder.Configuration.GetSection("
 | --- | --- | --- |
 | <xref:Singulink.Net.Http.Api.Service.SignIn.SignInCodeOptions.Lifetime?displayProperty=nameWithType> | 10 minutes | How long a sign-in code can be redeemed. A device link's code is valid for at least as long as the link can be polled. |
 | <xref:Singulink.Net.Http.Api.Service.SignIn.DeviceLinkOptions.Lifetime?displayProperty=nameWithType> | 10 minutes | How long a device link waits for approval, and how long wrong codes count against a user. |
-| <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStoreOptions.MaxSize?displayProperty=nameWithType> | 256 MiB | How much the memory store holds, in bytes (see [The memory store's size](#the-memory-stores-size)). |
+| <xref:Singulink.Net.Http.Api.Service.MemoryShortLivedStoreOptions.MaxSize?displayProperty=nameWithType> | 256 MiB, and 64 MiB for each key's store | How much a memory store holds, in bytes, set for each key with its named options (see [The memory store's size](#the-memory-stores-size)). |
 
 ## Next Steps
 

@@ -52,15 +52,20 @@ public sealed class PasskeyCeremonyPrefetch<TCeremony>
 
     /// <summary>
     /// Gets a value indicating whether the last try (see <see cref="RunAsync{TResult}"/>) sent the credential of the try before it again, instead of
-    /// showing the prompt. The service may have received that credential although its answer was lost, in which case it ended the ceremony, and the
-    /// credential that was sent again fails as expired (<see cref="PasskeyErrorCodes.CeremonyExpired"/>).
+    /// showing the prompt.
     /// </summary>
+    /// <remarks>
+    /// The service may have received that credential although its answer was lost, in which case it ended the ceremony, and the credential that was sent
+    /// again fails as expired (<see cref="PasskeyErrorCodes.CeremonyExpired"/>).
+    /// </remarks>
     public bool ResentCredential { get; private set; }
 
     /// <summary>
-    /// Begins a ceremony in the background, unless one that can still be used was begun or is being begun. A failure isn't reported: the next try begins
-    /// the ceremony again, and reports its failure.
+    /// Begins a ceremony in the background, unless one that can still be used was begun or is being begun.
     /// </summary>
+    /// <remarks>
+    /// A failure isn't reported: the next try begins the ceremony again, and reports its failure.
+    /// </remarks>
     public void Prefetch()
     {
         if (_ceremony is { IsCompleted: false })
@@ -73,9 +78,7 @@ public sealed class PasskeyCeremonyPrefetch<TCeremony>
     }
 
     /// <summary>
-    /// Shows the passkey prompt for the begun ceremony and sends the credential to the service. Begins the ceremony now if none was begun, it failed to
-    /// begin or it is about to expire. Sends the credential of the last try again instead, without showing the prompt, if sending it failed for a reason
-    /// that may not last (see <see cref="ApiFailures.IsTransient(Exception)"/>) or was cancelled, and its ceremony is not about to expire.
+    /// Shows the passkey prompt for the begun ceremony and sends the credential to the service.
     /// </summary>
     /// <typeparam name="TResult">The type of the result of finishing the ceremony.</typeparam>
     /// <param name="prompt">Shows the passkey prompt with the WebAuthn options of the ceremony (<see cref="PasskeyCeremony.OptionsJson"/>) and returns the
@@ -83,9 +86,16 @@ public sealed class PasskeyCeremonyPrefetch<TCeremony>
     /// <param name="finish">Sends the credential to the service to finish the ceremony.</param>
     /// <param name="cancellationToken">A token to cancel the try, which is passed to the delegates.</param>
     /// <remarks>
+    /// <para>
+    /// Begins the ceremony now if none was begun, it failed to begin or it is about to expire. Sends the credential of the last try again instead, without
+    /// showing the prompt, if sending it failed for a reason that may not last (see <see cref="ApiFailures.IsTransient(Exception)"/>) or was cancelled, and
+    /// its ceremony is not about to expire.
+    /// </para>
+    /// <para>
     /// A ceremony whose prompt fails or is cancelled is kept for the next try, or begun again in the background if it is about to expire. A ceremony whose
     /// credential was sent is not used again: sending it ends the ceremony on the service. When sending fails for another reason, a new ceremony is begun in
     /// the background for the next try.
+    /// </para>
     /// </remarks>
     /// <exception cref="PasskeyAuthenticatorException">The prompt failed or the person cancelled it.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>

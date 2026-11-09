@@ -23,10 +23,12 @@ public static class ShortLivedId
     /// <summary>
     /// Gets a value indicating whether the value has the form of an ID: <see cref="Length"/> base64url characters.
     /// </summary>
-    public static bool IsWellFormed([NotNullWhen(true)] string? value)
-    {
-        return value is { Length: Length } && !value.AsSpan().ContainsAnyExcept(Base64UrlChars);
-    }
+    public static bool IsWellFormed([NotNullWhen(true)] string? value) => value is not null && IsWellFormed(value.AsSpan());
+
+    /// <summary>
+    /// Gets a value indicating whether the characters have the form of an ID: <see cref="Length"/> base64url characters.
+    /// </summary>
+    internal static bool IsWellFormed(ReadOnlySpan<char> value) => value.Length is Length && !value.ContainsAnyExcept(Base64UrlChars);
 
     /// <summary>
     /// Creates a new ID: 32 random bytes, base64url encoded without padding.

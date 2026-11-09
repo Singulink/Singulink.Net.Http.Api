@@ -20,8 +20,11 @@ public interface IPasskeyAuthenticator
     bool UsesPasskeyPage { get; }
 
     /// <summary>
-    /// Loads what operations need ahead of time, so that the first operation does not wait for it. Does nothing if there is nothing to load.
+    /// Loads what operations need ahead of time, so that the first operation does not wait for it.
     /// </summary>
+    /// <remarks>
+    /// Does nothing if there is nothing to load.
+    /// </remarks>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <exception cref="PasskeyAuthenticatorException">Loading failed. The next operation tries again.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
@@ -52,14 +55,15 @@ public interface IPasskeyAuthenticator
 
     /// <summary>
     /// Tells the browser, and through it the password manager, that a passkey is not registered with the relying party, so that it can stop offering
-    /// the passkey. Does nothing if the browser can't be told, and ignores failures.
+    /// the passkey.
     /// </summary>
     /// <param name="credential">The credential of the passkey, as returned by <see cref="GetCredentialAsync"/>.</param>
     /// <param name="requestOptionsJson">The request options that the credential was returned for.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <remarks>
-    /// The service reports a passkey that is not registered with <see cref="PasskeyErrorCodes.NotRegistered"/>. A passkey that is registered to another
-    /// user, which the service reports with <see cref="PasskeyErrorCodes.WrongAccount"/>, is not unknown to the relying party.
+    /// Does nothing if the browser can't be told, and ignores failures. The service reports a passkey that is not registered with
+    /// <see cref="PasskeyErrorCodes.NotRegistered"/>. A passkey that is registered to another user, which the service reports with
+    /// <see cref="PasskeyErrorCodes.WrongAccount"/>, is not unknown to the relying party.
     /// </remarks>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     Task SignalUnknownCredentialAsync(PasskeyCredential credential, string requestOptionsJson, CancellationToken cancellationToken = default);

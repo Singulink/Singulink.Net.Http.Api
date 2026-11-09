@@ -12,7 +12,7 @@ namespace Singulink.Net.Http.Api.Service;
 /// <para>
 /// A state is kept under a key made of a prefix, which keeps the states of one flow apart from all others (for example <c>"myapp:setup-ticket:"</c>), and an
 /// ID within it: a new random one from <see cref="AddAsync{T}(IShortLivedStore, string, T, JsonTypeInfo{T}, TimeSpan, CancellationToken)"/>, or one of the
-/// app's choosing. <see cref="ShortLivedId.IsWellFormed"/> tells whether a value has the form of a random one.
+/// app's choosing. <see cref="ShortLivedId.IsWellFormed(string)"/> tells whether a value has the form of a random one.
 /// </para>
 /// <para>
 /// The typed methods take the <see cref="JsonTypeInfo{T}"/> of the state, typically from a source-generated <c>JsonSerializerContext</c>, so they work in
@@ -29,14 +29,16 @@ public static class ShortLivedStoreExtensions
     private const int MaxAddAttempts = 5;
 
     /// <summary>
-    /// Adds a value under a new random key and returns the random part of the key. The value is stored under <paramref name="keyPrefix"/> followed by the
-    /// returned value, which the next step of a flow presents.
+    /// Adds a value under a new random key and returns the random part of the key.
     /// </summary>
+    /// <remarks>
+    /// The value is stored under <paramref name="keyPrefix"/> followed by the returned value, which the next step of a flow presents.
+    /// </remarks>
     /// <param name="store">The store.</param>
     /// <param name="keyPrefix">The start of the key, which keeps the values of one flow apart from all others, for example <c>"myapp:setup-ticket:"</c>.
     /// </param>
     /// <param name="value">The value.</param>
-    /// <param name="lifetime">How long the value is kept. Must be positive.</param>
+    /// <param name="lifetime">How long the value is kept. Must be greater than zero.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The random part of the key: 256 random bits as 43 URL-safe characters. It cannot be guessed, so it can serve as the secret that a client
     /// presents to continue the flow.</returns>
@@ -58,15 +60,17 @@ public static class ShortLivedStoreExtensions
     }
 
     /// <summary>
-    /// Adds a state, as JSON, under a new random key and returns the random part of the key. The state is stored under <paramref name="keyPrefix"/>
-    /// followed by the returned value, which the next step of a flow presents.
+    /// Adds a state, as JSON, under a new random key and returns the random part of the key.
     /// </summary>
+    /// <remarks>
+    /// The state is stored under <paramref name="keyPrefix"/> followed by the returned value, which the next step of a flow presents.
+    /// </remarks>
     /// <param name="store">The store.</param>
     /// <param name="keyPrefix">The start of the key, which keeps the states of one flow apart from all others, for example <c>"myapp:setup-ticket:"</c>.
     /// </param>
     /// <param name="state">The state.</param>
     /// <param name="typeInfo">The JSON type information of the state.</param>
-    /// <param name="lifetime">How long the state is kept. Must be positive.</param>
+    /// <param name="lifetime">How long the state is kept. Must be greater than zero.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The random part of the key: 256 random bits as 43 URL-safe characters. It cannot be guessed, so it can serve as the secret that a client
     /// presents to continue the flow.</returns>
@@ -85,7 +89,7 @@ public static class ShortLivedStoreExtensions
     /// <param name="id">The ID of the state within the prefix.</param>
     /// <param name="state">The state.</param>
     /// <param name="typeInfo">The JSON type information of the state.</param>
-    /// <param name="lifetime">How long the state is kept. Must be positive.</param>
+    /// <param name="lifetime">How long the state is kept. Must be greater than zero.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns><see langword="true"/> if the state was added, or <see langword="false"/> if the key already has a value.</returns>
     public static ValueTask<bool> TryAddAsync<T>(
@@ -125,8 +129,11 @@ public static class ShortLivedStoreExtensions
 
     /// <summary>
     /// Gets and removes a state, or returns <see langword="null"/> if it does not exist or cannot be read as the state, which is logged as a warning to
-    /// <paramref name="logger"/>, if one is given. A state is returned at most once, even when it is taken by concurrent calls.
+    /// <paramref name="logger"/>, if one is given.
     /// </summary>
+    /// <remarks>
+    /// A state is returned at most once, even when it is taken by concurrent calls.
+    /// </remarks>
     /// <param name="store">The store.</param>
     /// <param name="keyPrefix">The start of the key, as the state was added with.</param>
     /// <param name="id">The ID of the state within the prefix.</param>
@@ -158,20 +165,20 @@ public static class ShortLivedStoreExtensions
     }
 
     /// <summary>
-    /// Acquires a permit from a fixed window count, unless <paramref name="permitLimit"/> permits were already acquired in the current window. Windows start
-    /// at fixed times on the clock (a one-hour window starts at every full hour), so every server that shares the store counts the same window.
+    /// Acquires a permit from a fixed window count, unless <paramref name="permitLimit"/> permits were already acquired in the current window.
     /// </summary>
     /// <param name="store">The store.</param>
     /// <param name="keyPrefix">The start of the key, which keeps the counts of one limit apart from all others, for example <c>"myapp:setup-emails:"</c>.
     /// </param>
     /// <param name="key">What the limit applies to, such as an email address. The store is given a hash of it rather than the value itself, so keys are
     /// compared exactly: <c>A@example.com</c> and <c>a@example.com</c> are counted apart.</param>
-    /// <param name="permitLimit">The number of permits that can be acquired in each window. Must be positive.</param>
-    /// <param name="window">The length of a window. Must be positive.</param>
+    /// <param name="permitLimit">The number of permits that can be acquired in each window. Must be at least 1.</param>
+    /// <param name="window">The length of a window. Must be greater than zero.</param>
     /// <param name="timeProvider">The clock that windows are measured by, such as the registered <see cref="TimeProvider"/>.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <remarks>
-    /// Every attempt is counted, including attempts that acquire no permit.
+    /// Windows start at fixed times on the clock (a one-hour window starts at every full hour), so every server that shares the store counts the same
+    /// window. Every attempt is counted, including attempts that acquire no permit.
     /// </remarks>
     public static async ValueTask<FixedWindowPermit> AcquirePermitAsync(
         this IShortLivedStore store,

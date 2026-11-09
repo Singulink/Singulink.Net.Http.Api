@@ -22,9 +22,11 @@ public sealed class DeviceLinkPollResult
     public bool IsApproved => SignInCode is not null;
 
     /// <summary>
-    /// Gets the one-time sign-in code for the new device if the link was approved, otherwise <see langword="null"/>. The code is bound to the code challenge
-    /// the link was started with, so only the new device can redeem it.
+    /// Gets the one-time sign-in code for the new device if the link was approved, otherwise <see langword="null"/>.
     /// </summary>
+    /// <remarks>
+    /// The code is bound to the code challenge the link was started with, so only the new device can redeem it.
+    /// </remarks>
     public string? SignInCode { get; }
 
     /// <summary>

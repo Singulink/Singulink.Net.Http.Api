@@ -43,9 +43,11 @@ public static class PkceChallenge
 
     /// <summary>
     /// Gets a value indicating whether the code verifier matches the code challenge, i.e. the challenge is the base64url encoded SHA-256 hash of the
-    /// verifier. Returns <see langword="false"/> if either value is malformed. The comparison takes the same time regardless of how much of the hash
-    /// matches.
+    /// verifier.
     /// </summary>
+    /// <remarks>
+    /// Returns <see langword="false"/> if either value is malformed. The comparison takes the same time regardless of how much of the hash matches.
+    /// </remarks>
     public static bool IsMatch(string codeChallenge, string codeVerifier)
     {
         if (!IsValid(codeChallenge) || codeVerifier.Length is < MinVerifierLength or > MaxVerifierLength ||

@@ -18,10 +18,12 @@ Register the services and add the middleware first in the pipeline (see [Pipelin
 var builder = WebApplication.CreateBuilder(args);
 var services = builder.Services;
 
+// A "data" folder next to the app's folder, which survives redeployments (Singulink.IO paths). The app's folder is not a root, so it has a parent.
+var dataDirectory = DirectoryPath.GetAppBase().ParentDirectory!.CombineDirectory("data");
+
 services.AddCloudflareForwarding(options => {
-    // Required: Cloudflare's IP ranges are saved here for when they cannot be downloaded at startup. Relative paths start
-    // at the content root, so this file is in a "data" folder next to the app's folder and survives redeployments.
-    options.SavedRangesPath = "../data/cloudflare-ip-ranges.txt";
+    // Required: Cloudflare's IP ranges are saved here for when they cannot be downloaded at startup.
+    options.SavedRangesFile = dataDirectory.CombineFile("cloudflare-ip-ranges.txt");
 });
 
 var app = builder.Build();
@@ -37,7 +39,7 @@ app.UseRateLimiter();
 
 <xref:Singulink.Net.Http.Api.Service.CloudflareServiceCollectionExtensions.AddCloudflareForwarding*> registers the options and a hosted service that keeps Cloudflare's IP ranges up to date. <xref:Singulink.Net.Http.Api.Service.CloudflareWebApplicationExtensions.UseCloudflareForwarding*> adds the middleware.
 
-<xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath> is required: the app fails to start with an <xref:Microsoft.Extensions.Options.OptionsValidationException> if it is not set. See [Saving the ranges](#saving-the-ranges) for where to put the file.
+<xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile> is required: the app fails to start with an <xref:Microsoft.Extensions.Options.OptionsValidationException> if it is not set. See [Saving the ranges](#saving-the-ranges) for where to put the file.
 
 > [!IMPORTANT]
 > Call <xref:Singulink.Net.Http.Api.Service.CloudflareWebApplicationExtensions.UseCloudflareForwarding*> before any other middleware. Middleware that runs earlier, such as HTTPS redirection, rate limiting or request logging, sees Cloudflare's address and scheme instead of the client's. [Pipeline order](getting-started.md#pipeline-order) lists where the other middleware goes.
@@ -89,7 +91,7 @@ Add the addresses or networks that `cloudflared` connects from to <xref:Singulin
 
 ```csharp
 services.AddCloudflareForwarding(options => {
-    options.SavedRangesPath = "../data/cloudflare-ip-ranges.txt";
+    options.SavedRangesFile = dataDirectory.CombineFile("cloudflare-ip-ranges.txt");
     options.TrustedProxyNetworks.Add("127.0.0.1");
     options.TrustedProxyNetworks.Add("::1");
 });
@@ -99,13 +101,13 @@ Any client that connects from those addresses can then send requests with a clie
 
 ## Cloudflare's IP Ranges
 
-Cloudflare publishes its IP ranges at `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/`. The middleware needs them to tell requests through Cloudflare from direct connections, so the package downloads them, keeps a saved copy at <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath> and refreshes them periodically.
+Cloudflare publishes its IP ranges at `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/`. The middleware needs them to tell requests through Cloudflare from direct connections, so the package downloads them, keeps a saved copy at <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile> and refreshes them periodically.
 
 #### At startup
 
 The ranges are downloaded at startup, or read from the saved copy if [downloads are turned off](#turning-off-downloads). In apps built with `WebApplication`, the service only starts accepting requests once this is done, so the first requests are already handled correctly. Startup never fails because of the ranges and never waits longer than <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.DownloadTimeout> for a download, which keeps it well within limits such as the 120 second startup limit of IIS's ASP.NET Core Module:
 
-1. The ranges are downloaded and saved to <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath>.
+1. The ranges are downloaded and saved to <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile>.
 2. If the download fails, the saved copy is used and a warning with the copy's date is logged.
 3. If there is no saved copy, for example on the first start on a new server, or it cannot be read, the service starts anyway and refuses every request until a download succeeds (see below). The download is retried every <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.InitialRetryInterval>.
 
@@ -132,7 +134,7 @@ Each server keeps its own ranges by design: it downloads, saves and refreshes th
 
 #### Saving the ranges
 
-<xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath> is required. A file outside the folder that a deployment replaces survives restarts and redeployments, and the app needs permission to write it. Relative paths are resolved against the app's content root, so `../data/cloudflare-ip-ranges.txt` puts the file in a `data` folder next to the app's folder.
+<xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile> is required. A file outside the folder that a deployment replaces survives restarts and redeployments, and the app needs permission to write it. It is an absolute path of [Singulink.IO.FileSystem](https://github.com/Singulink/Singulink.IO.FileSystem) (`IAbsoluteFilePath`) with friendly names: a name with a leading or trailing space, a trailing dot, a control character or, on Windows, a reserved device name such as `CON` is rejected on every platform, since a typo such as a trailing space would otherwise create a file or directory with that name, which many tools handle badly. The reflection-based configuration binder binds it from a string through Singulink.IO.FileSystem's type converters, which read it as a path of the platform the app runs on. The configuration binding source generator, used by trimmed and native AOT apps, doesn't use type converters and leaves the file unset, so such an app parses the path itself, such as with `FilePath.ParseAbsolute(builder.Configuration["Cloudflare:SavedRangesFile"])`.
 
 Every successful download replaces the file in a single step: neither a failed write nor a power loss leaves a partly written copy behind, and other processes or servers that read the file never see one. If the file cannot be written, for example on a read-only deployment, a warning is logged and the downloaded ranges are used from memory.
 
@@ -164,7 +166,7 @@ With <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.DownloadRa
 
 ```csharp
 services.AddCloudflareForwarding(options => {
-    options.SavedRangesPath = "cloudflare-ip-ranges.txt";
+    options.SavedRangesFile = dataDirectory.CombineFile("cloudflare-ip-ranges.txt");
     options.DownloadRanges = false;
 
     // Changes to the file are picked up within 5 minutes.
@@ -172,7 +174,7 @@ services.AddCloudflareForwarding(options => {
 });
 ```
 
-The ranges are then read from <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath> at startup and again every <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.RefreshInterval>, and are never downloaded or saved. When the file changes, the new ranges replace the old ones for all requests at once. Reading the small file is cheap, so the interval can be much shorter than the default of a day in this mode.
+The ranges are then read from <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile> at startup and again every <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.RefreshInterval>, and are never downloaded or saved. When the file changes, the new ranges replace the old ones for all requests at once. Reading the small file is cheap, so the interval can be much shorter than the default of a day in this mode.
 
 If the file cannot be read, for example while a network share is unavailable, or it is not a complete list, the ranges in use are kept, a warning is logged and the file is read again after <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.RetryInterval>. Without any ranges, for example when the file is missing at startup, the service refuses every request as described in [Requests before the ranges are available](#requests-before-the-ranges-are-available) and reads the file again every <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.InitialRetryInterval>. <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.DownloadTimeout> and <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.StaleWarningAge> have no effect, so no out of date warnings are logged.
 
@@ -203,7 +205,7 @@ Cloudflare rarely changes its ranges, so a few failed downloads are harmless. Ra
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesPath> | none | File the ranges are saved to after each download and read from when a download at startup fails. With downloads turned off, the only source of the ranges. Required. |
+| <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.SavedRangesFile> | none | File the ranges are saved to after each download and read from when a download at startup fails. With downloads turned off, the only source of the ranges. Required. |
 | <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.DownloadRanges> | `true` | Whether the ranges are downloaded. When `false`, they are read from the saved copy instead. |
 | <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.TrustedProxyNetworks> | none | Addresses and networks whose connections are handled like connections from Cloudflare (see [Cloudflare Tunnel](#cloudflare-tunnel)). |
 | <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.RefreshInterval> | 1 day | How often the ranges are downloaded again, or read again from the saved copy when downloads are turned off. |
@@ -212,7 +214,7 @@ Cloudflare rarely changes its ranges, so a few failed downloads are harmless. Ra
 | <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.DownloadTimeout> | 10 seconds | How long a download may take, which also bounds how long startup waits. |
 | <xref:Singulink.Net.Http.Api.Service.CloudflareForwardingOptions.StaleWarningAge> | 7 days | How old the ranges in use can get before failed downloads also log that they are out of date. Not used with downloads turned off. |
 
-The options can also be bound from configuration, including the required path, with `services.Configure<CloudflareForwardingOptions>(configuration.GetSection("Cloudflare"))`.
+The options can also be bound from configuration, including the required path, with `services.Configure<CloudflareForwardingOptions>(configuration.GetSection("Cloudflare"))`; the configuration binding source generator leaves the path unset (see [Saving the ranges](#saving-the-ranges)).
 
 #### Customizing downloads
 

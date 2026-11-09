@@ -11,43 +11,59 @@ public static class PasskeyErrorCodes
 {
     /// <summary>
     /// The ceremony is unknown, expired, already finished, or was started for something else (such as another user).
-    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins, and a <see cref="ValidationApiException"/> for verifications and registrations.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins, and a <see cref="ValidationApiException"/> for verifications and registrations.
+    /// </remarks>
     public const string CeremonyExpired = "passkey-ceremony-expired";
 
     /// <summary>
     /// The ceremony was bound to a code challenge and the code verifier is missing or does not match it, so the credential did not come back to the app
-    /// that started the sign-in. Thrown as an <see cref="UnauthorizedApiException"/>.
+    /// that started the sign-in.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/>.
+    /// </remarks>
     public const string CodeVerifierMismatch = "passkey-code-verifier-mismatch";
 
     /// <summary>
-    /// The user has no passkeys to sign in or verify with. Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins and a
-    /// <see cref="ConflictApiException"/> for verifications.
+    /// The user has no passkeys to sign in or verify with.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins and a <see cref="ConflictApiException"/> for verifications.
+    /// </remarks>
     public const string NoPasskeys = "passkey-none";
 
     /// <summary>
-    /// The passkey is not registered with the relying party, for example because it was removed. Thrown as an <see cref="UnauthorizedApiException"/> for
-    /// sign-ins and a <see cref="ValidationApiException"/> for verifications. A passkey that is registered to another user is reported with
-    /// <see cref="WrongAccount"/> instead.
+    /// The passkey is not registered with the relying party, for example because it was removed.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins and a <see cref="ValidationApiException"/> for verifications. A passkey that is
+    /// registered to another user is reported with <see cref="WrongAccount"/> instead.
+    /// </remarks>
     public const string NotRegistered = "passkey-not-registered";
 
     /// <summary>
-    /// The passkey is registered, but to a different user than the one the sign-in or verification is for. Thrown as an
-    /// <see cref="UnauthorizedApiException"/> for sign-ins and a <see cref="ValidationApiException"/> for verifications.
+    /// The passkey is registered, but to a different user than the one the sign-in or verification is for.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins and a <see cref="ValidationApiException"/> for verifications.
+    /// </remarks>
     public const string WrongAccount = "passkey-wrong-account";
 
     /// <summary>
-    /// The credential failed verification. Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins, and a <see cref="ValidationApiException"/>
-    /// for verifications and registrations.
+    /// The credential failed verification.
     /// </summary>
+    /// <remarks>
+    /// Thrown as an <see cref="UnauthorizedApiException"/> for sign-ins, and a <see cref="ValidationApiException"/> for verifications and registrations.
+    /// </remarks>
     public const string VerificationFailed = "passkey-verification-failed";
 
     /// <summary>
-    /// The new passkey is already registered. Thrown as a <see cref="ConflictApiException"/>.
+    /// The new passkey is already registered.
     /// </summary>
+    /// <remarks>
+    /// Thrown as a <see cref="ConflictApiException"/>.
+    /// </remarks>
     public const string AlreadyRegistered = "passkey-already-registered";
 }

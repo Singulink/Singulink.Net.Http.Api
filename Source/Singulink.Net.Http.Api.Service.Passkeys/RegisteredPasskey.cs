@@ -24,8 +24,11 @@ public sealed class RegisteredPasskey
     }
 
     /// <summary>
-    /// Gets the new passkey's data. It has not been stored: the app stores it, usually with values of its own such as a name and the time it was created.
+    /// Gets the new passkey's data.
     /// </summary>
+    /// <remarks>
+    /// It has not been stored: the app stores it, usually with values of its own such as a name and the time it was created.
+    /// </remarks>
     public PasskeyRecord Passkey { get; }
 
     /// <summary>

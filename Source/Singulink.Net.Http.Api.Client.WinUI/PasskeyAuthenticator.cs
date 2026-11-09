@@ -24,9 +24,11 @@ namespace Singulink.Net.Http.Api.Client.Passkeys;
 public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="PasskeyAuthenticator"/> class with default options. Without a passkey page address
-    /// (<see cref="PasskeyAuthenticatorOptions.PageUri"/>), it only runs passkey operations on WebAssembly.
+    /// Initializes a new instance of the <see cref="PasskeyAuthenticator"/> class with default options.
     /// </summary>
+    /// <remarks>
+    /// Without a passkey page address (<see cref="PasskeyAuthenticatorOptions.PageUri"/>), it only runs passkey operations on WebAssembly.
+    /// </remarks>
     public PasskeyAuthenticator() : this(new PasskeyAuthenticatorOptions())
     {
     }
@@ -37,6 +39,7 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
     /// <param name="options">The options. Later changes to them apply to subsequent operations.</param>
     public PasskeyAuthenticator(PasskeyAuthenticatorOptions options)
     {
+        options.Freeze();
         Options = options;
     }
 
@@ -88,8 +91,11 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
 #endif
 
     /// <summary>
-    /// Gets a value indicating whether passkeys can be used on this platform. On WebAssembly, this depends on the browser.
+    /// Gets a value indicating whether passkeys can be used on this platform.
     /// </summary>
+    /// <remarks>
+    /// On WebAssembly, this depends on the browser.
+    /// </remarks>
     public bool IsSupported =>
 #if __WASM__
         PasskeyInterop.IsSupported;
@@ -109,9 +115,11 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
 #endif
 
     /// <summary>
-    /// Loads what operations need ahead of time, so that the first operation does not wait for it: the passkeys script on WebAssembly. Does nothing on
-    /// other platforms.
+    /// Loads what operations need ahead of time, so that the first operation does not wait for it: the passkeys script on WebAssembly.
     /// </summary>
+    /// <remarks>
+    /// Does nothing on other platforms.
+    /// </remarks>
     /// <param name="cancellationToken">A token to cancel the operation. On WebAssembly, cancellation stops waiting but doesn't stop the script from
     /// loading.</param>
     /// <exception cref="PasskeyAuthenticatorException">The passkeys script could not be loaded. The next operation tries again.</exception>
@@ -176,15 +184,15 @@ public sealed class PasskeyAuthenticator : IPasskeyAuthenticator
 
     /// <summary>
     /// Tells the browser, and through it the password manager, that a passkey is not registered with the relying party, so that it can stop offering
-    /// the passkey. On WebAssembly, this uses the WebAuthn Signal API in browsers that have it. Does nothing on other platforms or in other browsers,
-    /// and ignores failures.
+    /// the passkey.
     /// </summary>
     /// <param name="credential">The credential of the passkey, as returned by <see cref="GetCredentialAsync"/>.</param>
     /// <param name="requestOptionsJson">The request options that the credential was returned for, which name the relying party.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <remarks>
-    /// The service reports a passkey that is not registered with <see cref="PasskeyErrorCodes.NotRegistered"/>. A passkey that is registered to another
-    /// user, which the service reports with <see cref="PasskeyErrorCodes.WrongAccount"/>, is not unknown to the relying party.
+    /// On WebAssembly, this uses the WebAuthn Signal API in browsers that have it. Does nothing on other platforms or in other browsers, and ignores
+    /// failures. The service reports a passkey that is not registered with <see cref="PasskeyErrorCodes.NotRegistered"/>. A passkey that is registered to
+    /// another user, which the service reports with <see cref="PasskeyErrorCodes.WrongAccount"/>, is not unknown to the relying party.
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="requestOptionsJson"/> is empty.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>

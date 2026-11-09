@@ -50,6 +50,7 @@ public sealed class LoopbackWebAuthenticationBrokerProvider : IWebAuthentication
     /// <summary>
     /// Gets or sets the message shown in the browser after it returns to the app. Default is <c>"You can close this tab and return to the app."</c>.
     /// </summary>
+    /// <exception cref="ArgumentException">The value is empty.</exception>
     public string CompletedMessage {
         get => _flow.CompletedMessage;
         set {
@@ -59,10 +60,11 @@ public sealed class LoopbackWebAuthenticationBrokerProvider : IWebAuthentication
     }
 
     /// <summary>
-    /// Gets or sets how long <see cref="AuthenticateAsync"/> waits for the browser to return before it reports <see
-    /// cref="WebAuthenticationStatus.UserCancel"/>. Default is <see langword="null"/>, which uses Uno's
+    /// Gets or sets how long <see cref="AuthenticateAsync"/> waits for the browser to return before it reports
+    /// <see cref="WebAuthenticationStatus.UserCancel"/>. Must be greater than zero. Default is <see langword="null"/>, which uses Uno's
     /// <c>WinRTFeatureConfiguration.WebAuthenticationBroker.AuthenticationTimeout</c>.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public TimeSpan? Timeout {
         get => _flow.Timeout;
         set {
@@ -75,8 +77,9 @@ public sealed class LoopbackWebAuthenticationBrokerProvider : IWebAuthentication
 
     /// <summary>
     /// Gets or sets how long <see cref="AuthenticateAsync"/> waits for the browser to open before it reports <see cref="WebAuthenticationStatus.ErrorHttp"/>.
-    /// Default is 30 seconds.
+    /// Must be greater than zero. Default is 30 seconds.
     /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public TimeSpan StartTimeout {
         get => _flow.StartTimeout;
         set {
@@ -92,9 +95,11 @@ public sealed class LoopbackWebAuthenticationBrokerProvider : IWebAuthentication
     internal static bool IsRegistered { get; private set; }
 
     /// <summary>
-    /// Registers this provider as the app's web authentication broker provider. Call it at startup (e.g. in the desktop <c>Program.Main</c>), before
-    /// <c>WebAuthenticationBroker</c> is first used.
+    /// Registers this provider as the app's web authentication broker provider.
     /// </summary>
+    /// <remarks>
+    /// Call it at startup (e.g. in the desktop <c>Program.Main</c>), before <c>WebAuthenticationBroker</c> is first used.
+    /// </remarks>
     /// <param name="configure">An optional action that configures the provider instance.</param>
     /// <exception cref="InvalidOperationException">A web authentication broker provider is already registered.</exception>
     public static void Register(Action<LoopbackWebAuthenticationBrokerProvider>? configure = null)

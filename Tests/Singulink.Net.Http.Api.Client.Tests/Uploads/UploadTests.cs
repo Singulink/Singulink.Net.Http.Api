@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Singulink.Net.Http.Api.DataContracts;
+using static Singulink.Net.Http.Api.Client.CancellationAssertions;
 
 namespace Singulink.Net.Http.Api.Client;
 
@@ -18,7 +19,8 @@ public sealed class UploadTests
     [TestMethod]
     public async Task Upload_CreatesTheUploadSendsItsChunksInOrderAndCompletesIt()
     {
-        var service = new FakeUploadService();
+        // A service of an older version chooses the upload's ID, which the paths of the upload's requests then have, escaped.
+        var service = new FakeUploadService { ChoosesIds = true };
         var client = new TestApiClient(service, sessionToken: "token");
 
         var result = await client.UploadFileAsync<TestItem>(
@@ -46,6 +48,20 @@ public sealed class UploadTests
         upload.Command.ChunkSize.ShouldBeNull();
         upload.Command.Command.ShouldBeNull();
         upload.IsAborted.ShouldBeFalse();
+    }
+
+    [TestMethod]
+    public async Task Upload_HasTheIdThatTheClientChose_InTheCreationAndThePathsOfItsRequests()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+
+        await client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: CancellationToken);
+
+        var id = ReadCreation(service.Requests[0]).Id.ShouldNotBeNull();
+        id.ToString("D")[14].ShouldBe('4');
+        ReadCreation(service.Requests[0]).IdempotencyKey.ShouldBeNull();
+        service.Requests.Skip(1).ShouldAllBe(r => r.Uri.AbsolutePath.StartsWith($"/v1/files/uploads/{id:D}", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -80,7 +96,7 @@ public sealed class UploadTests
     }
 
     [TestMethod]
-    public async Task CreationWhoseResponseIsLost_IsMadeAgainWithTheSameIdempotencyKey_AndGetsTheSameUpload()
+    public async Task CreationWhoseResponseIsLost_IsMadeAgainWithTheSameId_AndGetsTheSameUpload()
     {
         var time = new ManualTimeProvider(manualTimers: true);
         var service = new FakeUploadService();
@@ -97,11 +113,10 @@ public sealed class UploadTests
 
         (await WithinTimeout(upload)).Name.ShouldBe(Content);
 
-        string?[] keys = [.. service.RequestsOf(UploadRequestKind.Create).Select(r => ReadCreation(r).IdempotencyKey)];
-        keys.Length.ShouldBe(2);
-        keys[0].ShouldNotBeNullOrEmpty();
-        keys[0]!.Length.ShouldBeLessThanOrEqualTo(128);
-        keys[1].ShouldBe(keys[0]);
+        Guid?[] ids = [.. service.RequestsOf(UploadRequestKind.Create).Select(r => ReadCreation(r).Id)];
+        ids.Length.ShouldBe(2);
+        ids[0].ShouldNotBeNull();
+        ids[1].ShouldBe(ids[0]);
 
         service.SingleUpload.Text.ShouldBe(Content);
         service.Requests.Select(r => r.Kind).Skip(2).ShouldBe([
@@ -109,7 +124,7 @@ public sealed class UploadTests
     }
 
     [TestMethod]
-    public async Task EachUpload_HasAnIdempotencyKeyOfItsOwn()
+    public async Task EachUpload_HasAnIdOfItsOwn()
     {
         var service = new FakeUploadService();
         var client = new TestApiClient(service);
@@ -121,7 +136,7 @@ public sealed class UploadTests
         await ReadAllAsync(items);
 
         service.Uploads.Count.ShouldBe(4);
-        service.Uploads.Select(u => u.Command.IdempotencyKey).Distinct().Count().ShouldBe(4);
+        service.Uploads.Select(u => u.Command.Id).Distinct().Count().ShouldBe(4);
     }
 
     [TestMethod]
@@ -139,26 +154,26 @@ public sealed class UploadTests
             : null);
 
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken);
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1));
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1.5));
 
         (await WithinTimeout(upload)).Name.ShouldBe(Content);
         creates.ShouldBe(2);
-        service.RequestsOf(UploadRequestKind.Create).Select(r => ReadCreation(r).IdempotencyKey).Distinct().Count().ShouldBe(1);
+        service.RequestsOf(UploadRequestKind.Create).Select(r => ReadCreation(r).Id).Distinct().ShouldHaveSingleItem().ShouldNotBeNull();
     }
 
     [TestMethod]
-    public async Task KeyConflict_IsThrownWithoutRetrying()
+    public async Task IdConflict_IsThrownWithoutRetrying()
     {
         var service = new FakeUploadService();
         var client = new TestApiClient(service);
 
         service.Before = (request, _) => Task.FromResult<HttpResponseMessage?>(
-            ApiErrorResponse.Create(new ConflictApiException("The key is the key of another upload.") { ErrorCode = UploadErrorCodes.KeyConflict }));
+            ApiErrorResponse.Create(new ConflictApiException("The ID is the ID of another upload.") { ErrorCode = UploadErrorCodes.IdConflict }));
 
         var ex = await Should.ThrowAsync<ConflictApiException>(
             () => client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: CancellationToken));
 
-        ex.ErrorCode.ShouldBe(UploadErrorCodes.KeyConflict);
+        ex.ErrorCode.ShouldBe(UploadErrorCodes.IdConflict);
         service.Requests.Select(r => r.Kind).ShouldBe([UploadRequestKind.Create]);
     }
 
@@ -251,12 +266,12 @@ public sealed class UploadTests
 
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken);
 
-        // The wait of 30 seconds is still pending after 29.
+        // The wait of 30 seconds, raised by up to half at random, is still pending after 29.
         await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(29));
         time.PendingTimerCount.ShouldBe(1);
         Volatile.Read(ref creates).ShouldBe(1);
 
-        time.Advance(TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromSeconds(16));
         (await WithinTimeout(upload)).Name.ShouldBe(Content);
         creates.ShouldBe(2);
     }
@@ -281,7 +296,7 @@ public sealed class UploadTests
             request.Kind is UploadRequestKind.Chunk && Interlocked.Increment(ref chunks) is 1 ? ApiErrorResponse.Create(failure) : null);
 
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken);
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1));
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1.5));
 
         (await WithinTimeout(upload)).Name.ShouldBe(Content);
         chunks.ShouldBe(4);
@@ -303,6 +318,7 @@ public sealed class UploadTests
         };
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             ChunkTimeout = TimeSpan.FromMilliseconds(200), TimeProvider = time, CompletionIdleTimeout = Timeout.InfiniteTimeSpan,
         };
 
@@ -325,6 +341,7 @@ public sealed class UploadTests
         var client = new TestApiClient(gate);
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             TimeProvider = time, ChunkTimeout = TimeSpan.FromMinutes(1), CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = true,
         };
 
@@ -365,6 +382,56 @@ public sealed class UploadTests
     }
 
     [TestMethod]
+    public async Task LimitReachedWithARetryAfter_IsMadeAgainAfterIt()
+    {
+        var time = new ManualTimeProvider(manualTimers: true);
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        int creations = 0;
+
+        // The service has the user's other uploads in progress for the first creation.
+        service.Before = (request, _) => Task.FromResult(request.Kind is UploadRequestKind.Create && Interlocked.Increment(ref creations) is 1
+            ? ApiErrorResponse.Create(new TooManyRequestsApiException("Too many uploads.") {
+                ErrorCode = UploadErrorCodes.LimitReached, RetryAfter = TimeSpan.FromSeconds(1),
+            })
+            : null);
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: CancellationToken);
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(1.5));
+
+        (await WithinTimeout(upload)).ShouldBe(new TestItem(1, Content));
+        service.RequestsOf(UploadRequestKind.Create).Count().ShouldBe(2);
+    }
+
+    [TestMethod]
+    public async Task ChunkOfAnUploadWhoseHandlerRuns_IsLeft_AndTheUploadIsCompleted()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        byte[] content = Encoding.UTF8.GetBytes(Content);
+
+        // The upload that the creation got has all its chunks, and its handler runs, such as for a direct upload of an earlier attempt.
+        service.Before = (request, _) => {
+            if (request.Kind is not UploadRequestKind.Chunk)
+                return Task.FromResult<HttpResponseMessage?>(null);
+
+            var upload = service.SingleUpload;
+
+            for (int i = 0; i < upload.ChunkCount; i++)
+                upload.Receive(i, content.Skip(i * upload.ChunkSize).Take(upload.ChunkSize).ToArray());
+
+            upload.IsCompleted = true;
+            return Task.FromResult<HttpResponseMessage?>(Responses.Error(HttpStatusCode.Conflict, UploadErrorCodes.Closed, "The upload is closed."));
+        };
+
+        (await client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: CancellationToken))
+            .ShouldBe(new TestItem(1, Content));
+
+        service.Requests.Select(r => r.Kind).ShouldBe([UploadRequestKind.Create, UploadRequestKind.Chunk, UploadRequestKind.Complete]);
+        service.SingleUpload.IsAborted.ShouldBeFalse();
+    }
+
+    [TestMethod]
     public async Task FailuresForLongerThanTheRetryTimeout_AreThrownAndAbortTheUpload()
     {
         var time = new ManualTimeProvider(manualTimers: true);
@@ -382,6 +449,7 @@ public sealed class UploadTests
         };
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             RetryTimeout = TimeSpan.FromSeconds(10),
             TimeProvider = time,
             ChunkTimeout = Timeout.InfiniteTimeSpan,
@@ -390,9 +458,10 @@ public sealed class UploadTests
 
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
 
-        // Attempts at 0, 4 and 8 seconds. Another wait would end 12 seconds after the upload was created.
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(4));
-        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(4));
+        // Attempts at 0 seconds, 4 to 6 seconds later, and at the end of the retry timeout, which the wait of the third doesn't go past. Another wait would
+        // end after it.
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(6));
+        await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(6));
 
         await Should.ThrowAsync<ServiceUnavailableApiException>(() => WithinTimeout(upload));
         chunks.ShouldBe(3);
@@ -449,6 +518,7 @@ public sealed class UploadTests
         };
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             MaxConcurrency = 3, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false,
         };
 
@@ -475,7 +545,9 @@ public sealed class UploadTests
         var client = new TestApiClient(service);
         var progress = new RecordingProgress<UploadProgress>();
 
-        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = true };
+        var options = new UploadOptions {
+            AllowsDirectUpload = false, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = true,
+        };
         await client.UploadFileAsync<TestItem>("files", BytesSource(200 * KiB), options: options, cancellationToken: CancellationToken);
 
         progress.Reports.ShouldBe([
@@ -490,7 +562,9 @@ public sealed class UploadTests
         var client = new TestApiClient(service);
         var progress = new RecordingProgress<UploadProgress>();
 
-        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false };
+        var options = new UploadOptions {
+            AllowsDirectUpload = false, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false,
+        };
         await client.UploadFileAsync<TestItem>("files", BytesSource(200 * KiB), options: options, cancellationToken: CancellationToken);
 
         progress.Reports.ShouldBe([new(160 * KiB, 200 * KiB, false), new(200 * KiB, 200 * KiB, false), new(200 * KiB, 200 * KiB, true)]);
@@ -517,6 +591,7 @@ public sealed class UploadTests
             : response;
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             Progress = progress, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, CompletionIdleTimeout = Timeout.InfiniteTimeSpan,
             CountsWrittenBytes = true,
         };
@@ -554,6 +629,7 @@ public sealed class UploadTests
         var progress = new ThrowingProgress(_ => failure);
 
         var options = new UploadOptions {
+            AllowsDirectUpload = false,
             Progress = progress, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, CompletionIdleTimeout = Timeout.InfiniteTimeSpan,
             CountsWrittenBytes = true,
         };
@@ -574,12 +650,71 @@ public sealed class UploadTests
         var failure = new InvalidOperationException("The progress could not be shown.");
         var progress = new ThrowingProgress(p => p.IsProcessing ? failure : null);
 
-        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false };
+        var options = new UploadOptions {
+            AllowsDirectUpload = false, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false,
+        };
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
 
         (await Should.ThrowAsync<InvalidOperationException>(() => WithinTimeout(upload))).ShouldBeSameAs(failure);
         service.RequestsOf(UploadRequestKind.Abort).ShouldHaveSingleItem();
         service.RequestsOf(UploadRequestKind.Complete).ShouldBeEmpty();
+    }
+
+    [TestMethod]
+    public async Task ProgressThatThrowsWhenADirectUploadsResponseStarts_FailsTheUploadWithItsException_AndAbortsIt()
+    {
+        var service = new FakeUploadService { HasDirectUploads = true };
+        var client = new TestApiClient(service);
+        var failure = new InvalidOperationException("The progress could not be shown.");
+        var progress = new ThrowingProgress(p => p.IsProcessing ? failure : null);
+        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false };
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
+
+        (await Should.ThrowAsync<InvalidOperationException>(() => WithinTimeout(upload))).ShouldBeSameAs(failure);
+        service.Requests.Select(r => r.Kind).ShouldBe([UploadRequestKind.Direct, UploadRequestKind.Abort]);
+    }
+
+    [TestMethod]
+    public async Task ProgressThatThrowsWhileADirectUploadIsSent_FailsTheUploadWithItsException_AndAbortsIt()
+    {
+        var service = new FakeUploadService { HasDirectUploads = true };
+        var client = new TestApiClient(service);
+        var failure = new InvalidOperationException("The progress could not be shown.");
+        var progress = new ThrowingProgress(p => p.BytesUploaded > 0 && !p.IsProcessing ? failure : null);
+        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = true };
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
+
+        (await Should.ThrowAsync<InvalidOperationException>(() => WithinTimeout(upload))).ShouldBeSameAs(failure);
+        service.RequestsOf(UploadRequestKind.Abort).ShouldHaveSingleItem();
+        service.RequestsOf(UploadRequestKind.Complete).ShouldBeEmpty();
+    }
+
+    [TestMethod]
+    public async Task ProgressThatThrowsWhenADirectUploadIsCancelledAfterItsBodyWasSent_FailsTheUploadWithItsException_AndCancelsIt()
+    {
+        var service = new FakeUploadService { HasDirectUploads = true };
+        var client = new TestApiClient(service);
+
+        // The handler has finished.
+        service.Before = (request, _) => Task.FromResult(request.Kind is UploadRequestKind.Abort
+            ? ApiErrorResponse.Create(new ConflictApiException("The upload has finished.") { ErrorCode = UploadErrorCodes.Finished })
+            : null);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+
+        var progress = new ThrowingProgress(p => {
+            if (!p.IsProcessing)
+                return null;
+
+            cancellation.Cancel();
+            return new InvalidOperationException("The progress could not be shown.");
+        });
+
+        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false };
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: cancellation.Token);
+
+        // The service had the file, and its handler finished, so the upload fails with the report's exception.
+        (await Should.ThrowAsync<InvalidOperationException>(() => WithinTimeout(upload))).Message.ShouldBe("The progress could not be shown.");
+        service.Requests.Select(r => r.Kind).ShouldBe([UploadRequestKind.Direct, UploadRequestKind.Abort]);
     }
 
     [TestMethod]
@@ -698,7 +833,7 @@ public sealed class UploadTests
             ? live.CreateResponse()
             : Responses.Stream(FakeUploadService.ItemRecord(1, "done"), FakeUploadService.EndRecord);
 
-        var options = new UploadOptions { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
 
         live.WriteRecord(FakeUploadService.PingRecord);
@@ -734,7 +869,7 @@ public sealed class UploadTests
             ? live.CreateResponse()
             : Responses.Stream(FakeUploadService.ItemRecord(1, "again"), FakeUploadService.EndRecord);
 
-        var options = new UploadOptions { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
         var items = client.UploadItemsAsync<TestItem>(TextSource(Content), options).GetAsyncEnumerator(CancellationToken);
 
         try
@@ -790,7 +925,7 @@ public sealed class UploadTests
             return null;
         };
 
-        var options = new UploadOptions { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
         var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
 
         await AdvanceWhenWaitingAsync(time, TimeSpan.FromSeconds(60));
@@ -822,7 +957,7 @@ public sealed class UploadTests
                 time.Advance(TimeSpan.FromSeconds(61));
         };
 
-        var options = new UploadOptions { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
         var items = ReadAllAsync(
             client.UploadFileStreamingAsync<LateItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken));
 
@@ -843,7 +978,7 @@ public sealed class UploadTests
         service.Complete = _ => live.CreateResponse();
         live.WriteRecord(FakeUploadService.ItemRecord(1, "converting"));
 
-        var options = new UploadOptions { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan };
         var items = client.UploadFileStreamingAsync<TestItem>("files", TextSource(Content), options: options).GetAsyncEnumerator(CancellationToken);
 
         try
@@ -895,7 +1030,9 @@ public sealed class UploadTests
             return Task.FromResult<Stream>(stream);
         });
 
-        var options = new UploadOptions { Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false };
+        var options = new UploadOptions {
+            AllowsDirectUpload = false, Progress = progress, CompletionIdleTimeout = Timeout.InfiniteTimeSpan, CountsWrittenBytes = false,
+        };
         var result = await client.UploadFileAsync<TestItem>("files", source, options: options, cancellationToken: CancellationToken);
 
         result.Name.ShouldBe(Content);
@@ -1202,19 +1339,31 @@ public sealed class UploadTests
     }
 
     [TestMethod]
-    public async Task CancellationDuringTheCompletion_AbortsTheUpload()
+    public async Task CancellationDuringTheCompletion_StopsIt_AndThrowsOnceTheCompletionMadeAgainEndsAsCancelled()
     {
         var service = new FakeUploadService();
         var client = new TestApiClient(service);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
         var live = new LiveRecordStream();
 
-        service.Complete = _ => live.CreateResponse();
+        // The service accepts the cancellation of the running handler, which stops, and the completion made again ends as cancelled.
+        service.Complete = completion => completion.Index is 1
+            ? live.CreateResponse()
+            : Responses.Stream(FakeUploadService.ErrorRecord(409, UploadErrorCodes.Cancelled, "The upload was cancelled."));
+
         live.WriteRecord(FakeUploadService.ItemRecord(1, "converting"));
+
+        service.Before = (request, _) => Task.FromResult(request.Kind is UploadRequestKind.Abort
+            ? new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new ByteArrayContent([]) }
+            : null);
 
         var received = new List<TestItem>();
 
-        await Should.ThrowAsync<OperationCanceledException>(async () => {
+        // Awaited without Shouldly, which replaces the exception of a cancelled task with one of its own.
+        OperationCanceledException? exception = null;
+
+        try
+        {
             var items = client.UploadFileStreamingAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: cancellation.Token);
 
             await foreach (var item in items)
@@ -1222,10 +1371,217 @@ public sealed class UploadTests
                 received.Add(item);
                 cancellation.Cancel();
             }
-        });
+        }
+        catch (OperationCanceledException caught)
+        {
+            exception = caught;
+        }
 
+        exception.ShouldNotBeNull().CancellationToken.ShouldBe(cancellation.Token);
+        exception.InnerException.ShouldBeOfType<ConflictApiException>().ErrorCode.ShouldBe(UploadErrorCodes.Cancelled);
         received.Select(i => i.Id).ShouldBe([1]);
+        service.Requests.Select(r => r.Kind).Skip(service.Requests.Count - 3)
+            .ShouldBe([UploadRequestKind.Complete, UploadRequestKind.Abort, UploadRequestKind.Complete]);
+        live.IsWaiting.ShouldBeFalse();
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_OfAnUploadThatHasFinished_ReturnsItsResult()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+
+        // The cancellation arrives once the handler has finished, and the completion made again gets its outcome.
+        service.Complete = completion => {
+            if (completion.Index is not 1)
+                return Responses.Stream(FakeUploadService.ItemRecord(7, "saved"), FakeUploadService.EndRecord);
+
+            cancellation.Cancel();
+            return new LiveRecordStream().CreateResponse();
+        };
+
+        service.Before = (request, _) => Task.FromResult(request.Kind is UploadRequestKind.Abort
+            ? ApiErrorResponse.Create(new ConflictApiException("The upload has finished.") { ErrorCode = UploadErrorCodes.Finished })
+            : null);
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: cancellation.Token);
+
+        (await WithinTimeout(upload)).ShouldBe(new TestItem(7, "saved"));
+        service.Requests.Select(r => r.Kind).Skip(service.Requests.Count - 3)
+            .ShouldBe([UploadRequestKind.Complete, UploadRequestKind.Abort, UploadRequestKind.Complete]);
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_OfAHandlerThatFinishesAnyway_ReturnsItsResult()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+        var live = new LiveRecordStream();
+
+        service.Complete = _ => {
+            cancellation.Cancel();
+            return live.CreateResponse();
+        };
+
+        live.WriteRecord(FakeUploadService.PingRecord);
+
+        // The service accepts the cancellation, and the handler finishes all the same.
+        service.Before = (request, _) => {
+            if (request.Kind is not UploadRequestKind.Abort)
+                return Task.FromResult<HttpResponseMessage?>(null);
+
+            live.WriteRecord(FakeUploadService.ItemRecord(7, "saved"));
+            live.WriteRecord(FakeUploadService.EndRecord);
+            return Task.FromResult<HttpResponseMessage?>(new HttpResponseMessage(HttpStatusCode.Accepted) { Content = new ByteArrayContent([]) });
+        };
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: cancellation.Token);
+
+        (await WithinTimeout(upload)).ShouldBe(new TestItem(7, "saved"));
+        service.RequestsOf(UploadRequestKind.Abort).ShouldHaveSingleItem();
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_ThatTheServiceAnswersWithNoContent_StopsTheCompletion_AndThrows()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+        bool isCompletionStopped = false;
+
+        // The completion is cancelled while it waits for its response, which the cancellation stops, and the service deletes the upload, which no handler runs
+        // on (204).
+        service.Before = async (request, cancellationToken) => {
+            if (request.Kind is UploadRequestKind.Complete)
+            {
+                cancellation.Cancel();
+
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    isCompletionStopped = true;
+                    throw;
+                }
+            }
+
+            return null;
+        };
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: cancellation.Token);
+
+        var exception = await ShouldBeCancelledAsync(WithinTimeout(upload));
+        exception.CancellationToken.ShouldBe(cancellation.Token);
+        exception.InnerException.ShouldBeNull();
+        isCompletionStopped.ShouldBeTrue();
+        service.SingleUpload.IsAborted.ShouldBeTrue();
+        service.Requests.Select(r => r.Kind).Skip(service.Requests.Count - 2).ShouldBe([UploadRequestKind.Complete, UploadRequestKind.Abort]);
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringACompletionThatFindsChunksMissing_WaitsForTheCancellationsAnswer_WhichItSendsAgain()
+    {
+        var time = new ManualTimeProvider(manualTimers: true);
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+        int aborts = 0;
+
+        // The completion finds a chunk missing just as the upload is cancelled, and the first cancellation gets no response.
+        service.Before = (request, _) => {
+            if (request.Kind is UploadRequestKind.Complete)
+            {
+                cancellation.Cancel();
+                return Task.FromResult<HttpResponseMessage?>(
+                    ApiErrorResponse.Create(new ConflictApiException("Chunks are missing.") { ErrorCode = UploadErrorCodes.Incomplete }));
+            }
+
+            if (request.Kind is UploadRequestKind.Abort && Interlocked.Increment(ref aborts) is 1)
+                throw new HttpRequestException("The connection was reset.");
+
+            return Task.FromResult<HttpResponseMessage?>(null);
+        };
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: cancellation.Token);
+        await AdvanceUntilCompletedAsync(time, upload, toNextTimer: true);
+
+        // The upload ends once the cancellation was answered, rather than leave it to a request that the end of the upload would stop.
+        await ShouldBeCancelledAsync(upload);
+        aborts.ShouldBe(2);
+        service.SingleUpload.IsAborted.ShouldBeTrue();
+    }
+
+    [TestMethod]
+    public async Task CancellationDuringTheCompletion_SendsTheCancellationAgainUntilTheServiceAnswersIt()
+    {
+        var time = new ManualTimeProvider(manualTimers: true);
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+        var live = new LiveRecordStream();
+        int aborts = 0;
+
+        service.Complete = _ => {
+            cancellation.Cancel();
+            return live.CreateResponse();
+        };
+
+        live.WriteRecord(FakeUploadService.PingRecord);
+
+        // The first cancellation gets no response and the second a 503, and the third is answered, which stops the handler.
+        service.Before = (request, _) => {
+            if (request.Kind is not UploadRequestKind.Abort)
+                return Task.FromResult<HttpResponseMessage?>(null);
+
+            switch (Interlocked.Increment(ref aborts))
+            {
+                case 1:
+                    throw new HttpRequestException("The connection was reset.");
+                case 2:
+                    return Task.FromResult<HttpResponseMessage?>(Responses.Error(HttpStatusCode.ServiceUnavailable, "Try again."));
+                default:
+                    live.WriteRecord(FakeUploadService.ErrorRecord(409, UploadErrorCodes.Cancelled, "The upload was cancelled."));
+                    return Task.FromResult<HttpResponseMessage?>(null);
+            }
+        };
+
+        var upload = client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(time), cancellationToken: cancellation.Token);
+        await AdvanceUntilCompletedAsync(time, upload, toNextTimer: true);
+
+        await Should.ThrowAsync<OperationCanceledException>(() => upload);
+        aborts.ShouldBe(3);
+    }
+
+    [TestMethod]
+    public async Task CancellationWhileMissingChunksAreSentAgain_CancelsTheUploadOnTheService_AndThrows()
+    {
+        var service = new FakeUploadService();
+        var client = new TestApiClient(service);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken);
+
+        // The service lost a chunk, and the chunk sent again is cancelled. A completion was sent, so the service is asked to cancel the upload.
+        service.Before = async (request, cancellationToken) => {
+            if (request.Kind is UploadRequestKind.Complete && service.RequestsOf(UploadRequestKind.Complete).Count() is 1)
+                service.SingleUpload.MarkMissing(1);
+
+            if (request.Kind is UploadRequestKind.Chunk && service.RequestsOf(UploadRequestKind.Complete).Any())
+            {
+                cancellation.Cancel();
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return null;
+        };
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => WithinTimeout(client.UploadFileAsync<TestItem>("files", TextSource(Content), options: Options(), cancellationToken: cancellation.Token)));
+
         await WaitUntilAsync(() => service.SingleUpload.IsAborted);
+        service.RequestsOf(UploadRequestKind.Complete).ShouldHaveSingleItem();
     }
 
     [TestMethod]
@@ -1255,7 +1611,7 @@ public sealed class UploadTests
             return null;
         };
 
-        var options = new UploadOptions { MaxConcurrency = 3, CompletionIdleTimeout = Timeout.InfiniteTimeSpan };
+        var options = new UploadOptions { AllowsDirectUpload = false, MaxConcurrency = 3, CompletionIdleTimeout = Timeout.InfiniteTimeSpan };
 
         await Should.ThrowAsync<BadRequestApiException>(
             () => WithinTimeout(client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken)));
@@ -1522,8 +1878,22 @@ public sealed class UploadTests
         }
     }
 
+    [TestMethod]
+    public async Task Upload_FreezesItsOptions()
+    {
+        var client = new TestApiClient(new FakeUploadService());
+        var options = Options();
+
+        options.IsFrozen.ShouldBeFalse();
+        await client.UploadFileAsync<TestItem>("files", TextSource(Content), options: options, cancellationToken: CancellationToken);
+        OptionsAssertions.ShouldBeFrozen(options);
+    }
+
     private static UploadOptions Options(ManualTimeProvider? time = null, int? chunkSize = null) =>
-        new() { TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, ChunkSize = chunkSize, CompletionIdleTimeout = Timeout.InfiniteTimeSpan };
+        new() {
+            TimeProvider = time, ChunkTimeout = Timeout.InfiniteTimeSpan, ChunkSize = chunkSize, CompletionIdleTimeout = Timeout.InfiniteTimeSpan,
+            AllowsDirectUpload = false,
+        };
 
     private static CreateUploadCommand ReadCreation(UploadRequest request) =>
         JsonSerializer.Deserialize(request.Body!, UploadTestJsonContext.Default.CreateUploadCommand).ShouldNotBeNull();

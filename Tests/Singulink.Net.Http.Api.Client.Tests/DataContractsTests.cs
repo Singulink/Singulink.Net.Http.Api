@@ -17,6 +17,8 @@ public sealed partial class DataContractsTests
 {
     private static readonly DateTime SampleUtc = new(2026, 10, 22, 12, 30, 0, DateTimeKind.Utc);
 
+    private static readonly Guid SampleId = new("0f8fad5b-d9cb-469f-a165-70867728950e");
+
     // Samples of every public type in the namespace, with every property set, and with each nullable property null, and the JSON of each.
     private static readonly (object Sample, string Json)[] GoldenSamples = [
         (new PasskeyCeremony("ceremony-id", """{"challenge":"abc"}""", TimeSpan.FromMinutes(5)),
@@ -42,11 +44,11 @@ public sealed partial class DataContractsTests
         (PasskeyAttachment.Platform, "\"Platform\""),
         (PasskeyAttachment.CrossPlatform, "\"CrossPlatform\""),
         (PasskeyAttachment.Unknown, "\"Unknown\""),
-        (new CreateUploadCommand("video.mp4", 12_345_678, "video/mp4", 8_388_608, JsonDocument.Parse("""{"folderId":5}""").RootElement, "upload-key"),
-            """{"fileName":"video.mp4","length":12345678,"contentType":"video/mp4","chunkSize":8388608,"command":{"folderId":5},""" +
-            "\"idempotencyKey\":\"upload-key\"}"),
-        (new CreateUploadCommand("notes.txt", 0),
-            """{"fileName":"notes.txt","length":0,"contentType":null,"chunkSize":null,"command":null,"idempotencyKey":null}"""),
+        (new CreateUploadCommand("video.mp4", 12_345_678, "video/mp4", 8_388_608, JsonDocument.Parse("""{"folderId":5}""").RootElement, id: SampleId),
+            """{"id":"0f8fad5b-d9cb-469f-a165-70867728950e","fileName":"video.mp4","length":12345678,"contentType":"video/mp4","chunkSize":8388608,""" +
+            "\"command\":{\"folderId\":5},\"idempotencyKey\":null}"),
+        (new CreateUploadCommand("notes.txt", 0, idempotencyKey: "upload-key"),
+            """{"id":null,"fileName":"notes.txt","length":0,"contentType":null,"chunkSize":null,"command":null,"idempotencyKey":"upload-key"}"""),
         (new UploadSession("upload-id", 5_242_880, SampleUtc), """{"id":"upload-id","chunkSize":5242880,"expiresUtc":"2026-10-22T12:30:00Z"}"""),
         (new UploadStatus(UploadState.Receiving, 12_345_678, 5_242_880, [new ChunkRange(0, 1), new ChunkRange(2, 2)], SampleUtc),
             """{"state":"Receiving","length":12345678,"chunkSize":5242880,"missingChunks":[{"first":0,"last":1},{"first":2,"last":2}],""" +

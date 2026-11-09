@@ -10,12 +10,12 @@ namespace Singulink.Net.Http.Api.Service;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Values only exist in the process that added them, so the other servers of a service do not see them. A restart loses them, which only interrupts the
-/// flows in progress and resets rate limit counts.
+/// Values only exist in the process that added them, so the other servers of a service do not see them. A restart loses them, which interrupts the flows
+/// in progress, resets rate limit counts, and empties the counts of open chunked uploads until the first cleanup of uploads after the start.
 /// </para>
 /// <para>
-/// When the store is full, adding a value or a counter throws a <see cref="ServiceUnavailableApiException"/> (see <see
-/// cref="MemoryShortLivedStoreOptions.MaxSize"/>).
+/// When the store is full, adding a value or a counter throws a <see cref="ServiceUnavailableApiException"/> (see
+/// <see cref="MemoryShortLivedStoreOptions.MaxSize"/>).
 /// </para>
 /// </remarks>
 public sealed partial class MemoryShortLivedStore : IShortLivedStore
@@ -36,6 +36,8 @@ public sealed partial class MemoryShortLivedStore : IShortLivedStore
     private readonly ILogger _logger;
 
     private long _size;
+    private long _refusedWrites;
+    private long _lastRefusedTicks;
     private long _nextSweepTicks;
     private long _nextFullSweepTicks;
     private long _nextFullWarningTicks;
@@ -58,14 +60,35 @@ public sealed partial class MemoryShortLivedStore : IShortLivedStore
     public MemoryShortLivedStore(TimeProvider timeProvider, IOptions<MemoryShortLivedStoreOptions> options, ILogger<MemoryShortLivedStore> logger)
     {
         _timeProvider = timeProvider;
+        options.Value.Freeze();
         _maxSize = options.Value.MaxSize;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Gets who sees the store's values: only this process (<see cref="StoreSharingMode.ProcessLocal"/>), since they exist only in its memory.
+    /// </summary>
+    public StoreSharingMode SharingMode => StoreSharingMode.ProcessLocal;
+
+    /// <summary>
+    /// Gets the number of entries, including expired entries that have not been swept out yet (every minute while values are written, and at once when
+    /// the store is full), their estimated size, the store's <see cref="MemoryShortLivedStoreOptions.MaxSize"/>, and the writes the store refused because
+    /// it was full.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    public ValueTask<ShortLivedStoreUsage> GetUsageAsync(CancellationToken cancellationToken = default) => new(GetUsage());
 
     /// <inheritdoc/>
     public ValueTask<bool> TryAddAsync(string key, string value, TimeSpan lifetime, CancellationToken cancellationToken = default)
     {
         return new(TryAdd(key, value, lifetime));
+    }
+
+    /// <inheritdoc/>
+    public ValueTask SetAsync(string key, string value, TimeSpan lifetime, CancellationToken cancellationToken = default)
+    {
+        Set(key, value, lifetime);
+        return default;
     }
 
     /// <inheritdoc/>
@@ -87,6 +110,27 @@ public sealed partial class MemoryShortLivedStore : IShortLivedStore
     public ValueTask<long> IncrementAsync(string key, long amount, TimeSpan lifetime, CancellationToken cancellationToken = default)
     {
         return new(Increment(key, amount, lifetime));
+    }
+
+    internal long EntryCount => _entries.Count;
+
+    internal long UsedBytes => Interlocked.Read(ref _size);
+
+    internal long MaxBytes => _maxSize;
+
+    internal long RefusedWrites => Interlocked.Read(ref _refusedWrites);
+
+    internal ShortLivedStoreUsage GetUsage()
+    {
+        long lastRefusedTicks = Interlocked.Read(ref _lastRefusedTicks);
+
+        return new ShortLivedStoreUsage {
+            EntryCount = EntryCount,
+            UsedBytes = UsedBytes,
+            MaxBytes = MaxBytes,
+            RefusedWrites = RefusedWrites,
+            LastRefusedWriteUtc = lastRefusedTicks is 0 ? null : new DateTimeOffset(lastRefusedTicks, TimeSpan.Zero),
+        };
     }
 
     internal bool TryAdd(string key, string value, TimeSpan lifetime)
@@ -119,6 +163,37 @@ public sealed partial class MemoryShortLivedStore : IShortLivedStore
             {
                 AddSize(entry.Size - existing.Size);
                 return true;
+            }
+        }
+    }
+
+    internal void Set(string key, string value, TimeSpan lifetime)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var entry = Entry.ForValue(key, value, GetExpiry(now, lifetime));
+        SweepIfDue(ref _nextSweepTicks, SweepInterval, now);
+
+        while (true)
+        {
+            if (!_entries.TryGetValue(key, out var existing))
+            {
+                EnsureRoom(entry.Size, now);
+
+                if (_entries.TryAdd(key, entry))
+                {
+                    AddSize(entry.Size);
+                    return;
+                }
+
+                continue;
+            }
+
+            EnsureRoom(entry.Size - existing.Size, now);
+
+            if (_entries.TryUpdate(key, entry, existing))
+            {
+                AddSize(entry.Size - existing.Size);
+                return;
             }
         }
     }
@@ -195,6 +270,9 @@ public sealed partial class MemoryShortLivedStore : IShortLivedStore
 
         if (SweepIfDue(ref _nextFullSweepTicks, FullSweepInterval, now) && Interlocked.Read(ref _size) + growth <= _maxSize)
             return;
+
+        Interlocked.Increment(ref _refusedWrites);
+        Interlocked.Exchange(ref _lastRefusedTicks, now.UtcTicks);
 
         if (IsDue(ref _nextFullWarningTicks, FullWarningInterval, now))
             LogFull(Interlocked.Read(ref _size), _maxSize);

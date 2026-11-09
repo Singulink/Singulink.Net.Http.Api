@@ -5,6 +5,10 @@ namespace Singulink.Net.Http.Api.Service;
 /// registered <see cref="IApiExceptionHandler"/> (if any); otherwise <see cref="ApiException"/> instances are reported as-is, requests that ASP.NET Core
 /// could not read (<see cref="BadHttpRequestException"/>) are reported with their status code, and other exceptions propagate. Requests that ASP.NET Core
 /// answers with an empty error response, a request body that is too large or a content type the endpoint does not accept, are reported in the same format.
+/// When the client has aborted the request before the response started, an <see cref="OperationCanceledException"/> or <see cref="IOException"/> (which
+/// includes <see cref="BadHttpRequestException"/>) propagates without the <see cref="IApiExceptionHandler"/> being called. Any other exception is still
+/// resolved, through the handler if one is registered: one that resolves to an API error ends the request without a response, and neither the middleware
+/// nor the server logs it, and the rest propagate.
 /// </summary>
 public class ApiExceptionMiddleware
 {
@@ -27,14 +31,18 @@ public class ApiExceptionMiddleware
         {
             await _next(context);
         }
-        catch (Exception ex) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
+        catch (Exception ex) when (!context.Response.HasStarted && !IsCausedByAbort(context, ex))
         {
-            var apiException = await ApiExceptionHandling.ResolveAsync(context, ex);
+            bool isAborted = context.RequestAborted.IsCancellationRequested;
+            var apiException = await ApiExceptionHandling.ResolveAsync(context, ex, traceExpected: !isAborted);
 
             if (apiException is null)
                 throw;
 
-            await context.Response.WriteApiErrorAsync(apiException);
+            // An API error is an intended response, and nobody can receive the response of a request that the client aborted: nothing to write or log.
+            if (!isAborted)
+                await context.Response.WriteApiErrorAsync(apiException);
+
             return;
         }
 
@@ -43,4 +51,9 @@ public class ApiExceptionMiddleware
         if (!context.RequestAborted.IsCancellationRequested && BadRequestMapping.FromEmptyResponse(context) is { } emptyResponseException)
             await context.Response.WriteApiErrorAsync(emptyResponseException);
     }
+
+    // A cancellation or I/O failure of a request that the client aborted comes from the abort itself. It propagates as it is, without the exception
+    // handler, and the server doesn't log it as an error.
+    private static bool IsCausedByAbort(HttpContext context, Exception exception) =>
+        context.RequestAborted.IsCancellationRequested && exception is OperationCanceledException or IOException;
 }

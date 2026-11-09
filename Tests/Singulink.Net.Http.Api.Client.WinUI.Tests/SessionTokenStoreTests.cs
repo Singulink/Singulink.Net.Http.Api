@@ -1,3 +1,5 @@
+using Singulink.IO;
+
 namespace Singulink.Net.Http.Api.Client;
 
 [PrefixTestClass]
@@ -134,8 +136,9 @@ public sealed class SessionTokenStoreTests
         var store = new SessionTokenStore();
         store.FolderPath.ShouldBeNull();
 
-        store = new SessionTokenStore { FolderPath = Path.Combine(Path.GetTempPath(), "MyApp") };
-        store.FolderPath.ShouldBe(Path.Combine(Path.GetTempPath(), "MyApp"));
+        var folder = DirectoryPath.GetTemp().CombineDirectory("MyApp", PathOptions.None);
+        store = new SessionTokenStore { FolderPath = folder };
+        store.FolderPath.ShouldBeSameAs(folder);
     }
 
     [TestMethod]

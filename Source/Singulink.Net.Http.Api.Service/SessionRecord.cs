@@ -44,9 +44,12 @@ public class SessionRecord
     public required DateTime ExpiresUtc { get; init; }
 
     /// <summary>
-    /// Gets the generation of the session. This value is incremented each time the session is refreshed, and a session cookie from the previous generation
-    /// is accepted for a short grace period to allow for concurrent refresh requests.
+    /// Gets the generation of the session.
     /// </summary>
+    /// <remarks>
+    /// This value is incremented each time the session is refreshed, and a session cookie from the previous generation is accepted for a short grace period
+    /// to allow for concurrent refresh requests.
+    /// </remarks>
     public required int Generation { get; init; }
 
     /// <summary>
@@ -55,9 +58,11 @@ public class SessionRecord
     public required bool IsPersistent { get; init; }
 
     /// <summary>
-    /// Gets the date and time when the session was created, when the user signed in (in UTC). The maximum session lifetimes configured in
-    /// <see cref="SessionHandlingOptions"/> are measured from it.
+    /// Gets the date and time when the session was created, when the user signed in (in UTC).
     /// </summary>
+    /// <remarks>
+    /// The maximum session lifetimes configured in <see cref="SessionHandlingOptions"/> are measured from it.
+    /// </remarks>
     public required DateTime CreatedUtc { get; init; }
 
     /// <summary>

@@ -19,19 +19,30 @@ public sealed class UploadSession
     }
 
     /// <summary>
-    /// Gets the upload ID: 256 random bits as 43 base64url characters.
+    /// Gets the upload ID: the ID of the creation (see <see cref="CreateUploadCommand.Id"/>), or a GUID that the service chose for a creation without one,
+    /// in its 36-character form.
     /// </summary>
+    /// <remarks>
+    /// An upload that a 4.x service created has an ID of 43 base64url characters, which a service of a later version still uses while the upload is in
+    /// progress.
+    /// </remarks>
     public string Id { get; }
 
     /// <summary>
-    /// Gets the chunk size in bytes. Every chunk of the upload has this length, except the last, which has the rest of the file.
+    /// Gets the chunk size in bytes.
     /// </summary>
+    /// <remarks>
+    /// Every chunk of the upload has this length, except the last, which has the rest of the file.
+    /// </remarks>
     public int ChunkSize { get; }
 
     /// <summary>
     /// Gets the time the upload expires, in UTC: while it is receiving chunks, the time it expires if no chunk arrives before it, which each chunk moves
-    /// later. A repeated creation (see <see cref="CreateUploadCommand.IdempotencyKey"/>) can get an upload whose handler is running, or has finished, whose
-    /// expiry is the time its handler is stopped, or the time its outcome is no longer kept, as in its status (see <see cref="UploadStatus.ExpiresUtc"/>).
+    /// later.
     /// </summary>
+    /// <remarks>
+    /// A repeated creation (see <see cref="CreateUploadCommand.Id"/>) can get an upload whose handler is running, or has finished, whose expiry is the time
+    /// its handler is stopped, or the time its outcome is no longer kept, as in its status (see <see cref="UploadStatus.ExpiresUtc"/>).
+    /// </remarks>
     public DateTime ExpiresUtc { get; }
 }

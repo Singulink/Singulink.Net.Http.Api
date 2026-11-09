@@ -413,7 +413,7 @@ public sealed partial class UploadEndToEndTests
     }
 
     [TestMethod]
-    public async Task DirectUploadCancelledWhileItsHandlerRuns_WithoutItsResponse_StopsTheHandler_AndThrowsOnceTheCompletionEndsAsCancelled()
+    public async Task DirectUploadCancelledWhileItsHandlerRuns_WithoutItsResponse_StopsTheHandler_AndThrowsOnceTheCompletionEnds()
     {
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -437,7 +437,14 @@ public sealed partial class UploadEndToEndTests
         await cancellation.CancelAsync();
 
         var exception = await CancellationAssertions.ShouldBeCancelledAsync(upload.WaitAsync(WaitTimeout));
-        exception.InnerException.ShouldBeOfType<ConflictApiException>().ErrorCode.ShouldBe(UploadErrorCodes.Cancelled);
+
+        // The handler stops at once, so the completion made after the 202 attaches to the run (upload-cancelled) or finds that the run deleted the upload
+        // (upload-not-found), whichever comes first. Either says that the handler didn't finish.
+        var error = exception.InnerException.ShouldBeAssignableTo<ApiException>().ShouldNotBeNull();
+        (error.GetType(), error.ErrorCode).ShouldBeOneOf(
+            (typeof(ConflictApiException), UploadErrorCodes.Cancelled),
+            (typeof(NotFoundApiException), UploadErrorCodes.NotFound));
+
         await stopped.Task.WaitAsync(WaitTimeout);
         CountUploads(host).ShouldBe(0);
         Describe(faults).ShouldBe(["POST direct", "DELETE upload", "POST complete"]);

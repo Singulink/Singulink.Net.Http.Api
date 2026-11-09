@@ -327,6 +327,38 @@ public sealed class UploadTestHost : IAsyncDisposable
     /// </summary>
     public string GetOutcomeFile(UploadSession session) => System.IO.Directory.GetFiles(Directory, session.Id + ".*", SearchOption.AllDirectories).Single();
 
+    /// <summary>
+    /// Counts the uploads in the directory store, each once: the open ones, by their records, the finished ones, by their outcomes, and the ones being
+    /// created, by the records in the directories of their creations, <c>{uploadId}.{random}.new</c>. For a moment, a finishing upload has its record next
+    /// to its outcome, a deleted one its record next to the marker of its deletion, and an upload that two requests create its record in the directory of
+    /// the creation that lost too, until these directories are removed.
+    /// </summary>
+    public int CountUploads()
+    {
+        if (!System.IO.Directory.Exists(Directory))
+            return 0;
+
+        // On Windows, a directory that is being removed cannot be listed for a moment.
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+
+        // A deletion creates its marker before it removes the record, and removes the marker with the directory, so a record that is still there once the
+        // marker isn't is of an upload that isn't deleted.
+        var records = System.IO.Directory.GetFiles(Directory, "upload.json", options)
+            .Select(f => System.IO.Path.GetDirectoryName(f)!)
+            .Where(d => !File.Exists(System.IO.Path.Combine(d, "deleted")) && File.Exists(System.IO.Path.Combine(d, "upload.json")))
+            .Select(d => GetUploadKey(System.IO.Path.GetDirectoryName(d)!, System.IO.Path.GetFileName(d)));
+
+        // The outcomes, {uploadId}.{ticks}.json, are in the user's directory, as the directories of the user's uploads are.
+        var outcomes = System.IO.Directory.GetDirectories(Directory, "outcomes", options)
+            .SelectMany(d => System.IO.Directory.GetFiles(d, "*.json"))
+            .Select(f => GetUploadKey(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(f))!, System.IO.Path.GetFileName(f)));
+
+        return records.Concat(outcomes).Distinct(StringComparer.Ordinal).Count();
+
+        // IDs have no dots, so the name of an upload's directory, of a creation's directory or of an outcome starts with the ID up to its first dot.
+        static string GetUploadKey(string userDirectory, string name) => System.IO.Path.Combine(userDirectory, name.Split('.')[0]);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await Web.DisposeAsync();

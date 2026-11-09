@@ -81,7 +81,7 @@ public sealed partial class UploadEndToEndTests
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note("done"));
         Describe(faults).ShouldBe(["POST direct", "POST direct"]);
         runs.ShouldBe(1);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
     }
 
     [TestMethod]
@@ -158,7 +158,7 @@ public sealed partial class UploadEndToEndTests
 
         ex.Message.ShouldBe("Not this file.");
         Describe(faults).ShouldBe(["POST direct"]);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
     }
 
     [TestMethod]
@@ -173,7 +173,7 @@ public sealed partial class UploadEndToEndTests
 
         ex.Message.ShouldBe("The folder is read-only.");
         Describe(faults).ShouldBe(["POST direct", "DELETE upload"]);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         static Task<Note> HandleAsync(UploadedFile file) => throw new ForbiddenApiException("The folder is read-only.");
     }
@@ -340,7 +340,7 @@ public sealed partial class UploadEndToEndTests
         // The service deleted the upload, whose body was still arriving, so no handler runs on it.
         await Should.ThrowAsync<OperationCanceledException>(() => upload.WaitAsync(WaitTimeout));
         unanswered.Aborted.IsCompleted.ShouldBeTrue();
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
         Describe(faults).ShouldBe(["POST direct", "DELETE upload"]);
         faults.Requests[1].RequestUri!.AbsolutePath.ShouldEndWith($"/uploads/{filter.Id:D}");
 
@@ -351,7 +351,7 @@ public sealed partial class UploadEndToEndTests
 
         var store = host.Services.GetRequiredService<IUploadStore>();
         (await store.GetAsync("1", filter.Id.ShouldNotBeNull().ToString("D"))).ShouldBeNull();
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
         runs.ShouldBe(0);
     }
 
@@ -376,7 +376,7 @@ public sealed partial class UploadEndToEndTests
 
             await Should.ThrowAsync<OperationCanceledException>(() => upload.WaitAsync(WaitTimeout));
             unanswered.Aborted.IsCompleted.ShouldBeTrue();
-            CountUploads(host).ShouldBe(0);
+            host.CountUploads().ShouldBe(0);
 
             // The next upload takes the user's one slot at once, while the request of the first one still runs.
             var faults = CreateFaults(host);
@@ -409,7 +409,7 @@ public sealed partial class UploadEndToEndTests
 
         await Should.ThrowAsync<OperationCanceledException>(() => upload.WaitAsync(WaitTimeout));
         Describe(faults).ShouldBe(["DELETE upload"]);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
     }
 
     [TestMethod]
@@ -446,7 +446,7 @@ public sealed partial class UploadEndToEndTests
             (typeof(NotFoundApiException), UploadErrorCodes.NotFound));
 
         await stopped.Task.WaitAsync(WaitTimeout);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
         Describe(faults).ShouldBe(["POST direct", "DELETE upload", "POST complete"]);
 
         using var response = await unanswered.Sent!.WaitAsync(WaitTimeout);

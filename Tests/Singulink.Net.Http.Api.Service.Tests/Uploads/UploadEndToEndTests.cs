@@ -227,7 +227,7 @@ public sealed partial class UploadEndToEndTests
 
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note($"file.bin {file.Length} {UploadTestHost.Hash(file)}"));
         validations.ShouldBe(1);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
         Describe(faults).ShouldBe(["POST uploads", "POST uploads", "PUT 0", "POST complete"]);
 
         Task ValidateAsync(UploadRequest upload)
@@ -262,7 +262,7 @@ public sealed partial class UploadEndToEndTests
 
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note($"file.bin {file.Length} {UploadTestHost.Hash(file)}"));
         validations.ShouldBe(2);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
         Describe(faults).ShouldBe(["POST uploads", "POST uploads", "PUT 0", "POST complete"]);
 
         async Task ValidateAsync(UploadRequest upload)
@@ -333,7 +333,7 @@ public sealed partial class UploadEndToEndTests
             Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload"]);
 
             // The abort finds the upload finished, and leaves its outcome.
-            CountUploads(second).ShouldBe(1);
+            second.CountUploads().ShouldBe(1);
         }
         finally
         {
@@ -362,7 +362,7 @@ public sealed partial class UploadEndToEndTests
 
         ex.Message.ShouldBe("Files of this type can't be uploaded.");
         Describe(faults).ShouldBe(["POST uploads"]);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
 
         static Task ValidateAsync(UploadRequest upload) => upload.FileName.EndsWith(".exe", StringComparison.Ordinal)
             ? throw new ValidationApiException("Files of this type can't be uploaded.")
@@ -381,7 +381,7 @@ public sealed partial class UploadEndToEndTests
 
         ex.Message.ShouldBe("The folder is read-only.");
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload"]);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         static Task<Note> HandleAsync(UploadedFile file) => throw new ForbiddenApiException("The folder is read-only.");
     }
@@ -447,7 +447,7 @@ public sealed partial class UploadEndToEndTests
         var upload = client.UploadFileAsync<Note>(Source(file), options: Options(progress: progress), cancellationToken: cancellation.Token);
         await Should.ThrowAsync<OperationCanceledException>(() => upload.WaitAsync(WaitTimeout));
 
-        await WaitUntilAsync(() => CountUploads(host) is 0);
+        await WaitUntilAsync(() => host.CountUploads() is 0);
         Describe(faults).ShouldNotContain("POST complete");
         Describe(faults)[^1].ShouldBe("DELETE upload");
         runs.ShouldBe(0);
@@ -470,7 +470,7 @@ public sealed partial class UploadEndToEndTests
         // The cancellation stops the completion, and the completion made again once the service accepted the cancellation gets the handler's result.
         (await upload.WaitAsync(WaitTimeout)).ShouldBe(new Note("saved"));
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload", "POST complete"]);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         // The handler is past its last check of its token when the upload is cancelled, and finishes all the same.
         async Task<Note> HandleAsync(UploadedFile file, CancellationToken cancellationToken)
@@ -505,7 +505,7 @@ public sealed partial class UploadEndToEndTests
         });
 
         await handlerCancelled.Task.WaitAsync(WaitTimeout);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "DELETE upload", "POST complete"]);
 
         async IAsyncEnumerable<Note> StreamAsync(UploadedFile file, [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -667,22 +667,6 @@ public sealed partial class UploadEndToEndTests
             $"{request.Method} upload";
 
         return query.Length > 0 ? $"{what}?{query}" : what;
-    }
-
-    /// <summary>
-    /// Counts the uploads in the directory store: the open ones, by their records, and the finished ones, by their outcomes.
-    /// </summary>
-    private static int CountUploads(UploadTestHost host)
-    {
-        if (!Directory.Exists(host.Directory))
-            return 0;
-
-        // On Windows, a directory that is being removed cannot be listed for a moment.
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        int open = Directory.GetFiles(host.Directory, "upload.json", options).Length;
-        int finished = Directory.GetDirectories(host.Directory, "outcomes", options).Sum(d => Directory.GetFiles(d, "*.json").Length);
-
-        return open + finished;
     }
 
     private static async Task<List<T>> ReadAllAsync<T>(IAsyncEnumerable<T> items, List<T>? received = null)

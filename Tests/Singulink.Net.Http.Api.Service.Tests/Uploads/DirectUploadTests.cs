@@ -102,7 +102,7 @@ public sealed class DirectUploadTests
 
         await UploadTestHost.ShouldBeErrorAsync(response, HttpStatusCode.UnprocessableContent, "app-file-rejected");
         response.Headers.Location.ShouldBeNull();
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
     }
 
     [TestMethod]
@@ -135,7 +135,7 @@ public sealed class DirectUploadTests
         using var response = await host.Client.SendAsync(request);
 
         await UploadTestHost.ShouldBeErrorAsync(response, HttpStatusCode.BadRequest, UploadErrorCodes.ChunkInvalid);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
     }
 
     [TestMethod]
@@ -490,7 +490,7 @@ public sealed class DirectUploadTests
         await connection.CancelAsync();
         await Should.ThrowAsync<OperationCanceledException>(() => send);
         await WaitUntilAsync(() => !HasChunkWrites(host));
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         using var again = await SendDirectAsync(host, new ByteArrayContent(file), key: key).WaitAsync(WaitTimeout);
         again.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -514,17 +514,17 @@ public sealed class DirectUploadTests
         await connection.CancelAsync();
         await Should.ThrowAsync<OperationCanceledException>(() => send);
         await WaitUntilAsync(() => !HasChunkWrites(host));
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         var options = host.Services.GetRequiredService<IOptions<ChunkedUploadOptions>>().Value;
         var uploads = host.Services.GetRequiredService<ChunkedUploads>();
         host.Clock.Advance(options.UnstartedExpiry + TimeSpan.FromMinutes(1));
         await uploads.CleanUpAsync(CancellationToken.None);
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         host.Clock.Advance(options.IdleExpiry);
         await uploads.CleanUpAsync(CancellationToken.None);
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
     }
 
     [TestMethod]
@@ -550,7 +550,7 @@ public sealed class DirectUploadTests
         }
 
         await WaitUntilAsync(() => !HasChunkWrites(host));
-        CountUploads(host).ShouldBe(1);
+        host.CountUploads().ShouldBe(1);
 
         using var again = await SendDirectAsync(host, new ByteArrayContent(file), key: key).WaitAsync(WaitTimeout);
         again.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -637,7 +637,7 @@ public sealed class DirectUploadTests
         using (var abort = await host.AbortAsync(session))
             abort.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
-        await WaitUntilAsync(() => CountUploads(host) is 0);
+        await WaitUntilAsync(() => host.CountUploads() is 0);
 
         held.Release();
 
@@ -646,7 +646,7 @@ public sealed class DirectUploadTests
 
         var store = host.Services.GetRequiredService<IUploadStore>();
         (await store.GetAsync("1", session.Id)).ShouldBeNull();
-        CountUploads(host).ShouldBe(0);
+        host.CountUploads().ShouldBe(0);
         runs.ShouldBe(0);
     }
 
@@ -785,18 +785,6 @@ public sealed class DirectUploadTests
     private static async Task<Note> HashAsync(UploadedFile file, CancellationToken cancellationToken)
     {
         return new Note(await UploadTestHost.HashAsync(file, cancellationToken));
-    }
-
-    private static int CountUploads(UploadTestHost host)
-    {
-        if (!Directory.Exists(host.Directory))
-            return 0;
-
-        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
-        int open = Directory.GetFiles(host.Directory, "upload.json", options).Length;
-        int finished = Directory.GetDirectories(host.Directory, "outcomes", options).Sum(d => Directory.GetFiles(d, "*.json").Length);
-
-        return open + finished;
     }
 
     /// <summary>

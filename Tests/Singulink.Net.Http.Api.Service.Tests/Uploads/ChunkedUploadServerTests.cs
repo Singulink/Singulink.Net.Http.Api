@@ -421,6 +421,31 @@ public sealed class ChunkedUploadServerTests
     }
 
     [TestMethod]
+    [OSCondition(OperatingSystems.Windows)]
+    [SupportedOSPlatform("windows")]
+    public async Task DeletedUploadWhoseRecordCannotBeRemoved_StaysGone_AndIsRemovedByTheCleanup()
+    {
+        await using var host = await StartAsync(null, HashAsync);
+        var session = await host.CreateUploadAsync("a", 10);
+        await host.PutChunksAsync(session, UploadTestHost.CreateFile(10));
+        string directory = host.GetUploadDirectory(session);
+        var store = host.Services.GetRequiredService<IUploadStore>();
+
+        // Another process, such as a virus scanner, has the record open and doesn't let it be removed while the upload is deleted and the cleanup runs.
+        using (new FileStream(Path.Combine(directory, "upload.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            (await host.AbortAsync(session)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            (await store.GetAsync("1", session.Id)).ShouldBeNull();
+
+            await store.CleanUpAsync();
+            (await store.GetAsync("1", session.Id)).ShouldBeNull();
+        }
+
+        await store.CleanUpAsync();
+        Directory.Exists(directory).ShouldBeFalse();
+    }
+
+    [TestMethod]
     public async Task ClaimThatCannotBeRead_EndsUploadAsInterrupted()
     {
         await using var host = await StartAsync(null, HashAsync);

@@ -81,7 +81,14 @@ internal sealed partial class DirectoryUploadStore
         bool isDeleted = Exists(directory.CombineFile(DeletedFileName, PathOptions.None));
         bool hasRecord = Exists(recordFile);
 
-        if (isDeleted || (!hasRecord && Directory.GetCreationTimeUtc(directory.PathExport) < strayFilesBeforeUtc))
+        if (isDeleted)
+        {
+            // The record goes first, as in a deletion, so that the upload stays gone.
+            await RemoveUploadDirectoryAsync(directory);
+            return;
+        }
+
+        if (!hasRecord && Directory.GetCreationTimeUtc(directory.PathExport) < strayFilesBeforeUtc)
         {
             TryDeleteDirectory(directory);
             return;

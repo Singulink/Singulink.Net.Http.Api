@@ -12,7 +12,8 @@ namespace Singulink.Net.Http.Api.Service.Uploads;
 /// and every server that copies an outcome writes the same file. The names of the outcomes tell which ones to remove without opening them, and the open
 /// uploads are the only directories that a listing of them reads. Reading a finished upload looks for its outcome by its ID among the names of the user's
 /// outcomes, which on a share lists them over the network. A directory that still has its <c>finished.json</c>, such as of a server that stopped while it
-/// finished the upload, reads as finished, and is moved on by the next attempt to store an outcome or the next cleanup.
+/// finished the upload, or whose record another process had open while it was removed, reads as finished, and is moved on by the next attempt to store an
+/// outcome or the next cleanup.
 /// </content>
 internal sealed partial class DirectoryUploadStore
 {
@@ -71,15 +72,15 @@ internal sealed partial class DirectoryUploadStore
         await PublishOutcomeAsync(userDirectory, finished, cancellationToken);
 
         // A deletion of the upload that started in the meantime may have looked for its outcome before it was there, and is completed here. Only a
-        // deletion creates the marker: a server that moves the upload on removes the record and then the directory, whose files can't be opened for a
-        // moment on Windows while it is removed.
+        // deletion, or a creation that gives up the directory, creates the marker: a server that moves the upload on removes the record and then the
+        // directory, whose files can't be opened for a moment on Windows while it is removed.
         if (await ExistsAsync(deletedFile, cancellationToken))
         {
             await RemoveOutcomeFilesAsync(userDirectory, upload.Id, cancellationToken);
             return false;
         }
 
-        await RemoveFinishedDirectoryAsync(directory);
+        await RemoveUploadDirectoryAsync(directory);
         return true;
     }
 
@@ -122,8 +123,7 @@ internal sealed partial class DirectoryUploadStore
         if (await ExistsAsync(deletedFile, cancellationToken))
         {
             // The record goes first, as in a deletion, so that a store of the outcome that no longer finds the marker finds no record either.
-            TryDeleteFile(directory.CombineFile(RecordFileName, PathOptions.None));
-            await RemoveDirectoryAsync(directory);
+            await RemoveUploadDirectoryAsync(directory);
             return;
         }
 
@@ -162,7 +162,7 @@ internal sealed partial class DirectoryUploadStore
             }
         }
 
-        await RemoveFinishedDirectoryAsync(directory);
+        await RemoveUploadDirectoryAsync(directory);
     }
 
     /// <summary>
@@ -215,16 +215,6 @@ internal sealed partial class DirectoryUploadStore
             {
             }
         }
-    }
-
-    /// <summary>
-    /// Removes the directory of a finished upload, whose outcome is in the user's outcomes: the record first, after which the upload reads as finished
-    /// from its outcome, and then the rest. What can't be removed yet is removed by a later cleanup.
-    /// </summary>
-    private static async Task RemoveFinishedDirectoryAsync(IAbsoluteDirectoryPath directory)
-    {
-        TryDeleteFile(directory.CombineFile(RecordFileName, PathOptions.None));
-        await RemoveDirectoryAsync(directory);
     }
 
     private static async Task RemoveOutcomeFilesAsync(IAbsoluteDirectoryPath userDirectory, string uploadId, CancellationToken cancellationToken)

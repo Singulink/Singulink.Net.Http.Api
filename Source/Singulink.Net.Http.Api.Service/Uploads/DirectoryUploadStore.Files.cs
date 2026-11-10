@@ -14,14 +14,17 @@ namespace Singulink.Net.Http.Api.Service.Uploads;
 /// file can find it taken over, and two servers then have the claim or the reservation. The other files, such as the record, the write markers and the
 /// claims that are renewed, are written under a temporary name and moved to their name, replacing a file of that name, so they are complete whenever they
 /// can be read. A release of a reservation creates a marker of its own, <c>{key}.{reservationId}.released</c>, which only one release can do, and then
-/// removes the reservation. A deleted upload gets a <c>deleted</c> marker, which only one deletion can create, before its files are removed, so it is gone even
-/// if some of them cannot be removed yet. The directory of a finished upload gets none: its record is removed first, and then the rest, so that a store of an
-/// outcome that meets the marker knows that the upload was deleted rather than finished. A store of an outcome looks for the marker again once it has created
-/// <c>finished.json</c>, and stores nothing if a deletion has marked the upload or removed its record. It looks again once it has copied the outcome, and
-/// removes the copy if it finds the marker. A server that moves a finished upload on looks for the marker before and after it copies the outcome in the same
-/// way. A deletion that has removed the whole directory by then, having found <c>finished.json</c>, leaves the store to succeed, and removes the upload's
+/// removes the reservation. A deleted upload gets a <c>deleted</c> marker, which only one request can create, before its files are removed, so it is gone even
+/// if some of them cannot be removed yet. A creation that gives up its directory, since an earlier upload with the ID finished in the meantime, marks it in the
+/// same way, and keeps that upload's outcome. The directory of a finished upload gets none: its record is removed first, and then the rest, so that a store of
+/// an outcome that meets the marker knows that the upload was deleted rather than finished. A store of an outcome looks for the marker again once it has
+/// created <c>finished.json</c>, and stores nothing if a deletion has marked the upload or removed its record. It looks again once it has copied the outcome,
+/// and removes the copy if it finds the marker. A server that moves a finished upload on looks for the marker before and after it copies the outcome in the
+/// same way. A deletion that has removed the whole directory by then, having found <c>finished.json</c>, leaves the store to succeed, and removes the upload's
 /// outcomes after it has removed the directory: a copy written before then is removed, so the upload reads as gone, and one written after stays, so the upload
-/// reads as finished, with the outcome of its handler, which did finish.
+/// reads as finished, with the outcome of its handler, which did finish. A removal of the whole directory goes on past a file that can't be removed, so a
+/// directory whose record can't be removed, such as while another process has it open, is left as it is, with its marker or its <c>finished.json</c>, to a
+/// later cleanup, which removes the record first too.
 /// </para>
 /// <para>
 /// The checks for files that another server may have created open them rather than ask whether they exist, which clients of file shares can answer from
@@ -127,6 +130,17 @@ internal sealed partial class DirectoryUploadStore
         {
             _logger.LogError(ex, "{What} in {Path} could not be removed, so it is left to expire.", what, file.PathDisplay);
         }
+    }
+
+    /// <summary>
+    /// Removes the directory of an upload that is no longer open: its record first, and then the rest. A removal of the whole directory goes on past a file
+    /// that can't be removed, and could remove the upload's <c>finished.json</c> or <c>deleted</c> marker and leave its record, which then reads as open, so a
+    /// directory whose record can't be removed yet, such as while another process has it open, is left as it is to a later cleanup.
+    /// </summary>
+    private static async Task RemoveUploadDirectoryAsync(IAbsoluteDirectoryPath directory)
+    {
+        if (TryDeleteFile(directory.CombineFile(RecordFileName, PathOptions.None)))
+            await RemoveDirectoryAsync(directory);
     }
 
     /// <summary>
@@ -571,15 +585,22 @@ internal sealed partial class DirectoryUploadStore
             cancellationToken);
     }
 
-    private static void TryDeleteFile(IAbsoluteFilePath file)
+    /// <summary>
+    /// Deletes a file if it can, and leaves it to a later cleanup otherwise.
+    /// </summary>
+    /// <returns><see langword="true"/> if the file was deleted or was not in its directory, or <see langword="false"/> if it could not be deleted, also when
+    /// its directory does not exist.</returns>
+    private static bool TryDeleteFile(IAbsoluteFilePath file)
     {
         try
         {
             file.Delete();
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Removed by a later cleanup.
+            return false;
         }
     }
 

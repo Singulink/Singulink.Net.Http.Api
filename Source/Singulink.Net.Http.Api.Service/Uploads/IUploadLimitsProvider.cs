@@ -20,7 +20,7 @@ public interface IUploadLimitsProvider
     /// <param name="cancellationToken">A token that is cancelled when the request is aborted.</param>
     /// <returns>The limits of the user, or <see langword="null"/> for the limits of the options.</returns>
     /// <remarks>
-    /// It is called once for each creation and each direct upload whose file name, length, content type and idempotency key are valid, before the limits
+    /// It is called once for each creation and each direct upload whose ID, file name, length, content type and idempotency key are valid, before the limits
     /// are checked and anything is stored. An exception that it throws fails the request, as an exception of an endpoint does.
     /// </remarks>
     ValueTask<UploadLimits?> GetLimitsAsync(HttpContext context, string userId, CancellationToken cancellationToken);

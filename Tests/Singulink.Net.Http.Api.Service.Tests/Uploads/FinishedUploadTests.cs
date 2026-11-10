@@ -226,6 +226,34 @@ public sealed class FinishedUploadTests
     [TestMethod]
     [OSCondition(OperatingSystems.Windows)]
     [SupportedOSPlatform("windows")]
+    public async Task FinishedUploadWhoseRecordCannotBeRemoved_ReadsAsFinished_AndIsMovedOnByTheCleanup()
+    {
+        await using var host = await StartAsync();
+        var session = await CreateAsync(host, null);
+        await host.PutChunksAsync(session, UploadTestHost.CreateFile(10));
+        string uploadDirectory = host.GetUploadDirectory(session);
+        var store = host.Services.GetRequiredService<IUploadStore>();
+        string outcome = """{"hasItem":true,"item":{"text":"done"}}""";
+
+        // Another process, such as a virus scanner, has the record open and doesn't let it be removed while the upload finishes and the cleanup runs.
+        using (new FileStream(Path.Combine(uploadDirectory, "upload.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            UploadTestHost.WithoutPings(await host.CompleteAndReadAsync(session)).ShouldBe(["""{"item":{"text":"done"}}""", """{"end":true}"""]);
+            (await store.GetAsync("1", session.Id)).ShouldNotBeNull().Outcome.ShouldBe(outcome);
+
+            await store.CleanUpAsync();
+            (await store.GetAsync("1", session.Id)).ShouldNotBeNull().Outcome.ShouldBe(outcome);
+        }
+
+        await store.CleanUpAsync();
+
+        Directory.Exists(uploadDirectory).ShouldBeFalse();
+        (await store.GetAsync("1", session.Id)).ShouldNotBeNull().Outcome.ShouldBe(outcome);
+    }
+
+    [TestMethod]
+    [OSCondition(OperatingSystems.Windows)]
+    [SupportedOSPlatform("windows")]
     public async Task RemovingOutcomes_RemovesTheOlderOnes_WithoutOpeningTheOthers()
     {
         await using var host = await StartAsync();

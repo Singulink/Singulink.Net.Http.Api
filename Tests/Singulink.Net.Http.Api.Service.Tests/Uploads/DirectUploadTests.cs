@@ -356,10 +356,27 @@ public sealed class DirectUploadTests
         string item = $$$"""{"item":{"text":"{{{UploadTestHost.Hash(file)}}}"}}""";
         using var againResponse = await again.WaitAsync(WaitTimeout);
         using var firstResponse = await first.WaitAsync(WaitTimeout);
+        var againLines = UploadTestHost.WithoutPings(await UploadTestHost.ReadLinesAsync(againResponse));
+        var firstLines = UploadTestHost.WithoutPings(await UploadTestHost.ReadLinesAsync(firstResponse));
 
-        UploadTestHost.WithoutPings(await UploadTestHost.ReadLinesAsync(againResponse)).ShouldBe([item, """{"end":true}"""]);
-        UploadTestHost.WithoutPings(await UploadTestHost.ReadLinesAsync(firstResponse)).ShouldBe([item, """{"end":true}"""]);
+        (await CompleteAgainIfIncompleteAsync(againResponse, againLines)).ShouldBe([item, """{"end":true}"""]);
+        (await CompleteAgainIfIncompleteAsync(firstResponse, firstLines)).ShouldBe([item, """{"end":true}"""]);
         runs.ShouldBe(1);
+
+        // A write of a chunk removes the chunk's marker first, so a completion that reads the chunks while the other request writes the chunk again finds it
+        // missing, and ends with upload-incomplete. A client then reads the upload's status, sends the chunks that it lists as missing, and completes the
+        // upload again. Both writes have ended once both responses have, so the status lists none, and the completion made again gets the item.
+        async Task<List<string>> CompleteAgainIfIncompleteAsync(HttpResponseMessage response, List<string> lines)
+        {
+            if (lines is not ["""{"error":{"status":409,"code":"upload-incomplete","message":"Chunks of the upload are missing."}}"""])
+                return lines;
+
+            string location = response.Headers.Location.ShouldNotBeNull().OriginalString;
+            var session = new UploadSession(location[(location.LastIndexOf('/') + 1)..], file.Length, DateTime.UtcNow);
+            (await host.GetStatusAsync(session)).MissingChunks.ShouldBeEmpty();
+
+            return UploadTestHost.WithoutPings(await host.CompleteAndReadAsync(session));
+        }
     }
 
     [TestMethod]

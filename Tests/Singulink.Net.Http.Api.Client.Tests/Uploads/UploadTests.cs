@@ -891,10 +891,13 @@ public sealed class UploadTests
             (await WithinTimeout(next)).ShouldBeTrue();
             items.Current.Name.ShouldBe("done");
         }
-        finally
+        catch
         {
-            await items.DisposeAsync();
+            await items.DisposeAfterFailureAsync();
+            throw;
         }
+
+        await items.DisposeAsync();
 
         service.RequestsOf(UploadRequestKind.Complete).Count().ShouldBe(1);
     }
@@ -995,10 +998,13 @@ public sealed class UploadTests
             items.Current.Id.ShouldBe(2);
             (await WithinTimeout(items.MoveNextAsync().AsTask())).ShouldBeFalse();
         }
-        finally
+        catch
         {
-            await items.DisposeAsync();
+            await items.DisposeAfterFailureAsync();
+            throw;
         }
+
+        await items.DisposeAsync();
 
         service.RequestsOf(UploadRequestKind.Complete).Count().ShouldBe(1);
     }

@@ -235,11 +235,20 @@ internal sealed partial class DirectoryUploadStore : IUploadStore, IDisposable
         }
 
         // An earlier upload with the ID that finished in the meantime copied its outcome to the user's outcomes before it removed its directory, which had to
-        // be gone for the move to succeed, so its outcome is there now.
+        // be gone for the move to succeed, so its outcome is there now. The directory gets the deleted marker first, so that it reads as gone and the earlier
+        // upload as finished even if the record can't be removed yet. A deletion would also remove the earlier upload's outcome.
         if (HasOutcome(userDirectory, upload.Id))
         {
-            TryDeleteFile(directory.CombineFile(RecordFileName, PathOptions.None));
-            await RemoveDirectoryAsync(directory);
+            try
+            {
+                await TryCreateEmptyFileAsync(directory.CombineFile(DeletedFileName, PathOptions.None));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // The directory is removed without the marker.
+            }
+
+            await RemoveUploadDirectoryAsync(directory);
             return UploadCreationResult.Exists;
         }
 
@@ -315,8 +324,7 @@ internal sealed partial class DirectoryUploadStore : IUploadStore, IDisposable
         if (isRemoving)
         {
             // The record goes first, so that the upload stays gone even if the marker is removed before files that cannot be removed yet.
-            TryDeleteFile(recordFile);
-            await RemoveDirectoryAsync(directory);
+            await RemoveUploadDirectoryAsync(directory);
         }
 
         await RemoveOutcomeFilesAsync(GetUserDirectory(upload.UserId), upload.Id, cancellationToken);

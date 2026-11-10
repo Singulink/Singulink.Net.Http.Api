@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\AsyncEnumeratorExtensions.cs" Link="Infrastructure\AsyncEnumeratorExtensions.cs" />
     <Compile Include="..\Singulink.Net.Http.Api.Service.Tests\Infrastructure\OptionsAssertions.cs" Link="Infrastructure\OptionsAssertions.cs" />
   </ItemGroup>
 </Project>

@@ -173,10 +173,13 @@ public sealed partial class UploadEndToEndTests
 
             (await items.MoveNextAsync().AsTask().WaitAsync(WaitTimeout)).ShouldBeFalse();
         }
-        finally
+        catch
         {
-            await items.DisposeAsync();
+            await items.DisposeAfterFailureAsync();
+            throw;
         }
+
+        await items.DisposeAsync();
 
         runs.ShouldBe(1);
         Describe(faults).ShouldBe(["POST uploads", "PUT 0", "POST complete", "POST complete"]);
@@ -568,10 +571,13 @@ public sealed partial class UploadEndToEndTests
                 items.Current.ShouldBe(new Note(UploadTestHost.Hash(file)));
                 (await items.MoveNextAsync().AsTask().WaitAsync(WaitTimeout)).ShouldBeFalse();
             }
-            finally
+            catch
             {
-                await items.DisposeAsync();
+                await items.DisposeAfterFailureAsync();
+                throw;
             }
+
+            await items.DisposeAsync();
 
             runs.ShouldBe(1);
             Describe(faults).ShouldBe(["POST uploads", "PUT 0", "PUT 1", "PUT 2", "POST complete", "POST complete"]);

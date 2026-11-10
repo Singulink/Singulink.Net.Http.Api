@@ -192,9 +192,12 @@ public sealed class UploadTestingHelperTests
         var again = host.CreateRequest(HttpMethod.Post, $"{UploadTestHost.Path}/uploads/{session.Id}/complete");
         using var repeated = await client.SendAsync(again);
 
-        (await repeated.Content.ReadAsStringAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        string[] records = (await repeated.Content.ReadAsStringAsync()).Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l != """{"ping":true}""")
-            .ShouldBe(["""{"item":{"text":"done"}}""", """{"end":true}"""]);
+            .ToArray();
+
+        // If the run hasn't yielded "done" yet, the completion attaches to it and starts with its latest item.
+        (records[0] is """{"item":{"text":"working"}}""" ? records[1..] : records).ShouldBe(["""{"item":{"text":"done"}}""", """{"end":true}"""]);
 
         runs.ShouldBe(1);
 

@@ -73,12 +73,11 @@ jobs:
       run: dotnet build Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-restore
     - name: Test
       run: dotnet test Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-build --verbosity normal
-    # The same tests on the .NET 11 runtime: the .NET 10 builds roll forward to the latest major runtime, including a prerelease one.
+    # The same tests on the .NET 11 runtime: the .NET 10 builds roll forward to the latest major runtime.
     - name: Test on .NET 11
       run: dotnet test Singulink.Net.Http.Api.Tests.slnf --configuration ${{ matrix.configuration }} --no-build --verbosity normal
       env:
         DOTNET_ROLL_FORWARD: LatestMajor
-        DOTNET_ROLL_FORWARD_TO_PRERELEASE: 1
 
   # Publishes a web app that uses the server packages with Native AOT (Release builds fail on trim and AOT warnings), then runs the published executable's
   # self-check, which makes requests to it.
